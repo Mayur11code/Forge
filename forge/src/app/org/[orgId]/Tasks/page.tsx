@@ -11,8 +11,7 @@ export default async function TasksPage({
    
     return (
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold">Tasks for Organization: <span className="font-mono text-blue-600">{orgId}</span></h2>
-          <p className="text-gray-600">This is where tasks related to the organization will be displayed.</p>
+        <p className="text-gray-600">This is where tasks related to the organization will be displayed.</p>
             <TaskbBox param={{ orgId }} />
         </div>
     )}
