@@ -25,7 +25,7 @@ async function main() {
     update: { password: hashedPassword }, // Update password to hash if user exists
     create: {
       email,
-      name: "Root Admin",
+      name: "Mayur Dev",
       password: hashedPassword, // Store the hash
     },
   });

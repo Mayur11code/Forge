@@ -4,13 +4,16 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { clsx } from 'clsx';
+import { signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
 // Note: I'm adding logical spacing for icons if you choose to add them later
-import { LayoutDashboard, CheckSquare, Settings, Command } from "lucide-react"; 
+import { LayoutDashboard, CheckSquare, Settings, Command } from "lucide-react";
 
 export function Sidebar({ orgId }: { orgId: string }) {
   const pathname = usePathname();
+  const { data: session } = useSession();
 
-  const links = [ 
+  const links = [
     { label: "Dashboard", href: `/org/${orgId}/dashboard`, icon: LayoutDashboard },
     { label: "Tasks", href: `/org/${orgId}/Tasks`, icon: CheckSquare },
     { label: "Settings", href: `/org/${orgId}/settings`, icon: Settings },
@@ -31,7 +34,7 @@ export function Sidebar({ orgId }: { orgId: string }) {
         <p className="px-3 text-[10px] font-bold uppercase tracking-widest text-zinc-500 mb-4">
           Main Menu
         </p>
-        
+
         {links.map((link) => {
           const isActive = pathname === link.href;
           const Icon = link.icon;
@@ -42,8 +45,8 @@ export function Sidebar({ orgId }: { orgId: string }) {
               href={link.href}
               className={clsx(
                 "group flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ease-in-out font-medium text-sm",
-                isActive 
-                  ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/50" 
+                isActive
+                  ? "bg-zinc-800 text-white shadow-sm ring-1 ring-zinc-700/50"
                   : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/50"
               )}
             >
@@ -52,7 +55,7 @@ export function Sidebar({ orgId }: { orgId: string }) {
                 "w-5 h-5 transition-colors",
                 isActive ? "text-blue-500" : "text-zinc-500 group-hover:text-zinc-300"
               )} />
-              
+
               {link.label}
 
               {/* Active Indicator Dot */}
@@ -60,17 +63,24 @@ export function Sidebar({ orgId }: { orgId: string }) {
                 <div className="ml-auto w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
               )}
             </Link>
+
           );
         })}
       </nav>
+      <button onClick={() => signOut({ redirectTo: "/login" })} className="px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Sign Out</button>
 
       {/* Sidebar Footer / User section placeholder */}
       <div className="p-4 mt-auto border-t border-zinc-800/50">
         <div className="flex items-center gap-3 px-2 py-2 rounded-lg bg-zinc-800/30">
           <div className="h-8 w-8 rounded-full bg-gradient-to-tr from-zinc-700 to-zinc-600 border border-zinc-600" />
+
           <div className="flex flex-col overflow-hidden">
-            <span className="text-xs font-medium text-zinc-200 truncate">John Doe</span>
-            <span className="text-[10px] text-zinc-500 truncate">Admin Plan</span>
+            <span className="text-xs font-medium text-zinc-200 truncate">
+              {session?.user?.name || "User"}
+            </span>
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">
+              {session?.user?.role || "Member"}
+            </span>
           </div>
         </div>
       </div>
