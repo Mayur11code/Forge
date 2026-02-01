@@ -22,10 +22,10 @@ async function main() {
 
   const user = await prisma.user.upsert({
     where: { email },
-    update: { password: hashedPassword }, // Update password to hash if user exists
+    update: { password: hashedPassword, name: "Mayur Dev" }, // Update password to hash if user exists
     create: {
       email,
-      name: "Mayur Dev",
+      name: "Mayur",
       password: hashedPassword, // Store the hash
     },
   });

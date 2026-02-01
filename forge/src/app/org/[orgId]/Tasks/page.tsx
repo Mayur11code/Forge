@@ -28,7 +28,7 @@ export default async function TasksPage({
             </p>
             
             {/* Pass the role to your Client Component if it needs to hide/show buttons */}
-            <TaskbBox param={{ orgId }} userRole={session?.user?.role} />
+            <TaskbBox param={{ orgId }}  />
         </div>
     );
 }
