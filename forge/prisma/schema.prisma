@@ -17,6 +17,7 @@ model User {
   id          String       @id @default(uuid())
   email       String       @unique
   name        String?      // Added to support the "name" field in your seed script
+  password    String?
   memberships Membership[]
 }
 

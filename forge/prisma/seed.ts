@@ -2,8 +2,8 @@
 import { PrismaClient } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
+import bcrypt from "bcryptjs"; // Import bcrypt for password hashing
 
-// Note: We initialize a local client here to avoid path resolution errors during seeding
 const connectionString = `${process.env.DATABASE_URL}`;
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
@@ -11,16 +11,22 @@ const prisma = new PrismaClient({ adapter });
 
 async function main() {
   const email = "admin@forge.com"; 
+  const password = "securepassword"; // Use this to log in
   const orgSlug = "forge-hq";
 
   console.log("🚀 Starting seed...");
 
+  // 1. HASH THE PASSWORD 
+  // auth.ts uses bcrypt.compare, so the DB MUST store a hash, not plain text.
+  const hashedPassword = await bcrypt.hash(password, 10);
+
   const user = await prisma.user.upsert({
     where: { email },
-    update: {},
+    update: { password: hashedPassword }, // Update password to hash if user exists
     create: {
       email,
       name: "Root Admin",
+      password: hashedPassword, // Store the hash
     },
   });
 
@@ -48,7 +54,11 @@ async function main() {
     },
   });
 
+  console.log("-----------------------------------------");
   console.log(`✅ Seeded: User(${user.email}) as ADMIN in Org(${org.slug})`);
+  console.log(`🔑 Login Email: ${email}`);
+  console.log(`🔑 Login Password: ${password}`);
+  console.log("-----------------------------------------");
 }
 
 main()
