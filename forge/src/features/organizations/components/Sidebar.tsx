@@ -17,6 +17,7 @@ export function Sidebar({ orgId }: { orgId: string }) {
     { label: "Dashboard", href: `/org/${orgId}/dashboard`, icon: LayoutDashboard },
     { label: "Tasks", href: `/org/${orgId}/Tasks`, icon: CheckSquare },
     { label: "Settings", href: `/org/${orgId}/settings`, icon: Settings },
+    { label : "Projects", href: `/org/${orgId}/projects`, icon: Command },
   ];
 
   return (

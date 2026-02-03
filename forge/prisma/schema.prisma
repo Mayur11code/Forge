@@ -26,6 +26,8 @@ model Organization {
   slug        String       @unique
   name        String
   memberships Membership[]
+  projects    Project[]
+
 }
 
 model Membership {
@@ -38,4 +40,15 @@ model Membership {
   organization   Organization @relation(fields: [orgId], references: [id])
 
   @@unique([userId, orgId]) // Fixed the syntax error on line 33
+}
+
+model Project {
+  id          String       @id @default(uuid())
+  name        String
+  description String?
+  orgId       String
+  createdAt   DateTime     @default(now())
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade )
+  
 }
