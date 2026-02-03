@@ -101,8 +101,37 @@ async function main() {
     },
   });
 
+
+
+
   // ❌ Admin is NOT a member of other-org (cross-tenant test)
   // ❌ Member is NOT a member of other-org
+
+
+
+    // -----------------------------
+  // PROJECTS
+  // -----------------------------
+  await prisma.project.createMany({
+    data: [
+      {
+        name: "Forge Core",
+        description: "Main platform and architecture for Forge",
+        orgId: forgeOrg.id,
+      },
+      {
+        name: "Auth & RBAC",
+        description: "Authentication and role-based access control system",
+        orgId: forgeOrg.id,
+      },
+      {
+        name: "Dashboard UI",
+        description: "Organization and project dashboard experience",
+        orgId: forgeOrg.id,
+      },
+    ],
+    skipDuplicates: true,
+  });
 
   console.log("-----------------------------------------");
   console.log("✅ Seed complete!");
