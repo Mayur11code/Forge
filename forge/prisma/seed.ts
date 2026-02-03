@@ -2,62 +2,118 @@
 import { PrismaClient } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import bcrypt from "bcryptjs"; // Import bcrypt for password hashing
+import bcrypt from "bcryptjs";
 
-const connectionString = `${process.env.DATABASE_URL}`;
+const connectionString = process.env.DATABASE_URL!;
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  const email = "admin@forge.com"; 
-  const password = "securepassword"; // Use this to log in
-  const orgSlug = "forge-hq";
-
   console.log("🚀 Starting seed...");
 
-  // 1. HASH THE PASSWORD 
-  // auth.ts uses bcrypt.compare, so the DB MUST store a hash, not plain text.
+  // -----------------------------
+  // USERS
+  // -----------------------------
+  const adminEmail = "admin@forge.com";
+  const memberEmail = "member@forge.com";
+  const password = "securepassword";
+
   const hashedPassword = await bcrypt.hash(password, 10);
 
-  const user = await prisma.user.upsert({
-    where: { email },
-    update: { password: hashedPassword, name: "Mayur Dev" }, // Update password to hash if user exists
+  const adminUser = await prisma.user.upsert({
+    where: { email: adminEmail },
+    update: {
+      password: hashedPassword,
+      name: "Mayur Admin",
+    },
     create: {
-      email,
-      name: "Mayur",
-      password: hashedPassword, // Store the hash
+      email: adminEmail,
+      name: "Mayur Admin",
+      password: hashedPassword,
     },
   });
 
-  const org = await prisma.organization.upsert({
-    where: { slug: orgSlug },
+  const memberUser = await prisma.user.upsert({
+    where: { email: memberEmail },
+    update: {
+      password: hashedPassword,
+      name: "Test Member",
+    },
+    create: {
+      email: memberEmail,
+      name: "Test Member",
+      password: hashedPassword,
+    },
+  });
+
+  // -----------------------------
+  // ORGANIZATIONS
+  // -----------------------------
+  const forgeOrg = await prisma.organization.upsert({
+    where: { slug: "forge-hq" },
     update: {},
     create: {
-      slug: orgSlug,
+      slug: "forge-hq",
       name: "Forge HQ",
+    },
+  });
+
+  const otherOrg = await prisma.organization.upsert({
+    where: { slug: "other-org" },
+    update: {},
+    create: {
+      slug: "other-org",
+      name: "Other Organization",
+    },
+  });
+
+  // -----------------------------
+  // MEMBERSHIPS
+  // -----------------------------
+  await prisma.membership.upsert({
+    where: {
+      userId_orgId: {
+        userId: adminUser.id,
+        orgId: forgeOrg.id,
+      },
+    },
+    update: { role: "ADMIN" },
+    create: {
+      userId: adminUser.id,
+      orgId: forgeOrg.id,
+      role: "ADMIN",
     },
   });
 
   await prisma.membership.upsert({
     where: {
       userId_orgId: {
-        userId: user.id,
-        orgId: org.id,
+        userId: memberUser.id,
+        orgId: forgeOrg.id,
       },
     },
-    update: { role: "ADMIN" },
+    update: { role: "MEMBER" },
     create: {
-      userId: user.id,
-      orgId: org.id,
-      role: "ADMIN",
+      userId: memberUser.id,
+      orgId: forgeOrg.id,
+      role: "MEMBER",
     },
   });
 
+  // ❌ Admin is NOT a member of other-org (cross-tenant test)
+  // ❌ Member is NOT a member of other-org
+
   console.log("-----------------------------------------");
-  console.log(`✅ Seeded: User(${user.email}) as ADMIN in Org(${org.slug})`);
-  console.log(`🔑 Login Email: ${email}`);
-  console.log(`🔑 Login Password: ${password}`);
+  console.log("✅ Seed complete!");
+  console.log("");
+  console.log("🧪 TEST ACCOUNTS:");
+  console.log(`ADMIN  → ${adminEmail} / ${password}`);
+  console.log(`MEMBER → ${memberEmail} / ${password}`);
+  console.log("");
+  console.log("🏢 ORGS:");
+  console.log("• forge-hq (admin + member)");
+  console.log("• other-org (no memberships)");
   console.log("-----------------------------------------");
 }
 

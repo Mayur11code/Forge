@@ -11,6 +11,7 @@ declare module "next-auth" {
       id: string
       role: string
       orgId: string | null
+      orgSlug: string | null
     } & DefaultSession["user"] // This merges your fields with the default ones
   }
 
@@ -19,6 +20,7 @@ declare module "next-auth" {
   interface User {
     role?: string
     orgId?: string | null
+    orgSlug?: string | null
   }
 }
 
@@ -28,5 +30,6 @@ declare module "next-auth/jwt" {
     role?: string
     orgId?: string | null
     id?: string
+    orgSlug?: string | null
   }
 }

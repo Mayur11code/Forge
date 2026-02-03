@@ -41,6 +41,7 @@ export const authConfig = {
         session.user.id = token.id as string;
         session.user.role = token.role as string;
         session.user.orgId = token.orgId as string;
+        session.user.orgSlug = token.orgSlug as string;
       }
       return session;
     },

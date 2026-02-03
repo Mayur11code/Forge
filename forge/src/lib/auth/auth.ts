@@ -5,6 +5,7 @@ import { db } from "@/lib/prisma/db" // Ensure this path points to your Prisma c
 import bcrypt from "bcryptjs"
 import { authConfig } from "./auth.config"
 
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
   debug:true,
@@ -58,20 +59,32 @@ async jwt({ token, user }) {
     try {
       // Logic Test: Attempt to find the tenant context
       const membership = await db.membership.findFirst({
-        where: { userId: user.id },
-      });
+            where: { userId: user.id },
+            include: {
+              organization: true, // This gets the slug without a second query
+            },
+          });
+
+        const slug = membership?.organization;
 
       token.id = user.id;
       token.role = membership?.role || "USER";
       token.orgId = membership?.orgId || null;
+      token.orgSlug = slug?.slug || null;
     } catch (dbError) {
       console.error("CRITICAL DB ERROR IN JWT CALLBACK:", dbError);
       // Fallback so the app doesn't crash
       token.role = "USER";
       token.orgId = null;
+      token.orgSlug = null;
     }
   }
   return token;
-}
-  },
+},
+async redirect({ url, baseUrl }) {
+    // Just allow the default behavior or force a specific landing page
+    // We do NOT handle the "slug" logic here anymore.
+    return `${baseUrl}/router`; 
+  }
+},
 })
