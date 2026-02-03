@@ -1,5 +1,6 @@
 // src/app/org/[orgId]/dashboard/page.tsx
 import { mockTasks } from "@/features/tasks/mockData";
+import { requireOrgAccess } from "../../require-org-access";
 import { Activity, LayoutGrid, Users, Zap } from "lucide-react"; // Icons for metrics
 
 export default async function DashboardPage({ 
@@ -15,6 +16,10 @@ export default async function DashboardPage({
     { label: "Active Members", value: "12", icon: Users, color: "text-emerald-500", bg: "bg-emerald-500/10" },
     { label: "Events Logged", value: "124", icon: Zap, color: "text-amber-500", bg: "bg-amber-500/10" },
   ];
+
+  // 1️⃣ Authenticate user and verify org access
+    const { organization, membership } = await requireOrgAccess(orgId);
+    console.log("Organization in Dashboard Page:", organization);
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">

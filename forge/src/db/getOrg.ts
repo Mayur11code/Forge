@@ -1,3 +1,7 @@
+// THIS WAS NOT USED BECAUSE OF ISSUES
+
+
+import { sl } from "zod/locales";
 import { db } from "../lib/prisma/db";
 import {z}  from "zod";
 // import schema.prisma from "../lib/prisma/schema.prisma";
@@ -9,6 +13,7 @@ const User = z.object({
     name: z.string().nullable(),
     email: z.email(),
     password: z.string().nullable(),
+    slug: z.string().nullable(),
 });
 
 type User = z.infer<typeof User>;
@@ -35,3 +40,6 @@ export async function getOrg(email: Email): Promise<null | User> {
 
     return { ...user, slug: orgSlug?.slug || null } as User;
 }
+
+
+

@@ -33,6 +33,7 @@ model Membership {
   role           Role         @default(MEMBER)
   userId         String
   orgId          String
+  createdAt      DateTime     @default(now())
   user           User         @relation(fields: [userId], references: [id])
   organization   Organization @relation(fields: [orgId], references: [id])
 

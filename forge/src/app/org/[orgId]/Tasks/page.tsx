@@ -3,13 +3,15 @@ import { mockTasks } from "@/features/tasks/mockData";
 import TaskCard from "@/features/organizations/components/TaskCard";
 import React from "react";
 import TaskbBox from "@/features/organizations/components/TaskBox";
+import { requireOrgAccess } from "../../require-org-access";
 
 export default async function TasksPage({ 
   params 
 }: { params: Promise<{ orgId: string }> }) {
     const { orgId } = await params;
     
-    // 1. Fetch the session on the server
+    // 1. AUTHENTICATION CHECK
+    const { organization, membership } = await requireOrgAccess(orgId);
     const session = await auth();
 
     // 2. THE LOGIC TEST: This will print in your TERMINAL

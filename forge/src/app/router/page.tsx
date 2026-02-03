@@ -1,20 +1,42 @@
 // src/app/dashboard/page.tsx
 import { auth } from "@/lib/auth/auth";
 import { redirect } from "next/navigation";
+import { db } from "@/lib/prisma/db";
 
-export default async function DashboardRouter() {
+export default async function DashboardEntryPage() {
   const session = await auth();
 
-  // 1. Security Check
-  if (!session?.user) {
+  if (!session?.user?.id) {
     redirect("/login");
   }
 
-  // 2. The Logic: Redirect based on the slug we stored in the session
-  if (session.user.orgSlug) {
-    redirect(`/org/${session.user.orgSlug}/dashboard`);
+  // Fetch memberships (by USER ID)
+  const memberships = await db.membership.findMany({
+    where: {
+      userId: session.user.id,
+    },
+    include: {
+      organization: {
+        select: {
+          slug: true,
+        },
+      },
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+  });
+
+  // No orgs → onboarding
+  if (memberships.length === 0) {
+    redirect("/onboarding");
   }
 
-  // 3. Fallback: If they have no org, send them to onboarding or a default
-  redirect("/onboarding");
+  // One org → auto-redirect
+  if (memberships.length === 1) {
+    redirect(`/org/${memberships[0].organization.slug}/dashboard`);
+  }
+
+  // Multiple orgs → org selector
+  redirect("/select-org");
 }
