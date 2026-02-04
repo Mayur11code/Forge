@@ -1,5 +1,7 @@
 import { db } from "@/lib/prisma/db";
-import { requireOrgAccess } from "@/app/org/require-org-access";
+import { requireOrgAccess } from "@/features/organizations/require-org-access";
+import ProjectsMetaRefresh from "@/features/organizations/components/projects/projects-meta-refresh";
+
 import Link from "next/link";
 
 
@@ -19,6 +21,15 @@ export default async function ProjectsPage({ params }: { params: Promise<{ orgId
         },
     });
 
+    const initialMeta = {
+        latestCreatedAt: projects[0]?.createdAt
+            ? projects[0].createdAt.toISOString()
+            : null,
+        totalCount: projects.length,
+    };
+
+    // META HANDLING FOR NEW PROJECTS UPDATE LIVE TO USER
+
     const canCreateProject =
         membership.role === "ADMIN" || membership.role === "MANAGER";
 
@@ -28,6 +39,11 @@ export default async function ProjectsPage({ params }: { params: Promise<{ orgId
                 <h1 className="text-2xl font-semibold">
                     Projects · {organization.name}
                 </h1>
+
+                <ProjectsMetaRefresh
+                orgSlug={orgId}
+                initialMeta={initialMeta}
+            />
 
                 {canCreateProject && (
                     <Link
@@ -40,6 +56,7 @@ export default async function ProjectsPage({ params }: { params: Promise<{ orgId
                 )}
 
             </div>
+            
 
             {projects.length === 0 ? (
                 <p className="text-sm text-muted-foreground">

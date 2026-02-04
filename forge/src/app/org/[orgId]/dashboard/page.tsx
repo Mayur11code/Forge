@@ -1,6 +1,6 @@
 // src/app/org/[orgId]/dashboard/page.tsx
 import { mockTasks } from "@/features/tasks/mockData";
-import { requireOrgAccess } from "../../require-org-access";
+import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
 import { Activity, LayoutGrid, Users, Zap } from "lucide-react"; // Icons for metrics
 
 export default async function DashboardPage({ 

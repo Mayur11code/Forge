@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireOrgAccess } from "@/app/org/require-org-access";
+import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import NewProjectForm from "@/features/organizations/components/new-project-form";
 
 export default async function NewProjectModal({
