@@ -13,16 +13,13 @@ export default function NewProjectForm({ orgSlug }: { orgSlug: string }) {
     setLoading(true);
     setError(null);
 
-    try {
+  
       await createProject(orgSlug, {
         name: formData.get("name") as string,
         description: formData.get("description") as string,
       });
       // redirect handled by server action
-    } catch {
-      setError("Failed to create project");
-      setLoading(false);
-    }
+   
   }
 
   return (

@@ -1,4 +1,4 @@
-import { requireOrgAccess } from "../../require-org-access";
+import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
 import OrgSettingsForm from "@/features/organizations/components/org-settings-form";
 
 export default async function SettingsPage({

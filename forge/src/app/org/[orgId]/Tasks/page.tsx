@@ -3,7 +3,7 @@ import { mockTasks } from "@/features/tasks/mockData";
 import TaskCard from "@/features/organizations/components/TaskCard";
 import React from "react";
 import TaskbBox from "@/features/organizations/components/TaskBox";
-import { requireOrgAccess } from "../../require-org-access";
+import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
 
 export default async function TasksPage({ 
   params 

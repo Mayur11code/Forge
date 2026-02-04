@@ -54,4 +54,7 @@ const membership = await db.membership.findUnique({
   }
 
     return { organization, membership };
-}
+} 
+
+
+

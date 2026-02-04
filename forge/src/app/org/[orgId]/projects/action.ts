@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { db } from "@/lib/prisma/db";
-import { requireOrgAccess } from "@/app/org/require-org-access";
+import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
