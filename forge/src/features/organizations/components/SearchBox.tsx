@@ -4,11 +4,11 @@ import React from "react";
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useDebouncedCallback } from 'use-debounce';
 import { Search as SearchIcon, XCircle } from "lucide-react"; // Matching our icon style
-
+import { Task } from "@prisma/client";
 import { mockTasks } from "@/features/tasks/mockData";
 import TaskCard from "@/features/organizations/components/TaskCard";
 
-export default function Search({ filter }: { filter: string }) {
+export default function Search({ filter, initialtasks }: { filter: string;     initialtasks: Task[]  }) {
   const pathname = usePathname();
   const { replace } = useRouter();
   const searchParams = useSearchParams();
@@ -25,13 +25,13 @@ export default function Search({ filter }: { filter: string }) {
     replace(`${pathname}?${params.toString()}`);
   }, 300);
 
-  const filteredTasks = mockTasks.filter((task) => {
+  const filteredTasks = initialtasks.filter((task) => {
     const matchesStatus = filter === "ALL" || task.status === filter;
     const matchesSearch = 
-      task.title.toLowerCase().includes(query.toLowerCase()) || 
-      task.description?.toLowerCase().includes(query.toLowerCase());
+      task.title.toLowerCase().includes(query.toLowerCase()) || false; // Currently only searching by title, can expand to description/tags later
     
-    return matchesStatus && matchesSearch;
+    
+    return (matchesStatus && matchesSearch);
   });
 
   return (

@@ -15,33 +15,24 @@ async function main() {
   // -----------------------------
   // USERS
   // -----------------------------
-  const adminEmail = "admin@forge.com";
-  const memberEmail = "member@forge.com";
   const password = "securepassword";
-
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const adminUser = await prisma.user.upsert({
-    where: { email: adminEmail },
-    update: {
-      password: hashedPassword,
-      name: "Mayur Admin",
-    },
+    where: { email: "admin@forge.com" },
+    update: {},
     create: {
-      email: adminEmail,
+      email: "admin@forge.com",
       name: "Mayur Admin",
       password: hashedPassword,
     },
   });
 
   const memberUser = await prisma.user.upsert({
-    where: { email: memberEmail },
-    update: {
-      password: hashedPassword,
-      name: "Test Member",
-    },
+    where: { email: "member@forge.com" },
+    update: {},
     create: {
-      email: memberEmail,
+      email: "member@forge.com",
       name: "Test Member",
       password: hashedPassword,
     },
@@ -101,33 +92,68 @@ async function main() {
     },
   });
 
-
-
-
-  // ❌ Admin is NOT a member of other-org (cross-tenant test)
-  // ❌ Member is NOT a member of other-org
-
-
-
-    // -----------------------------
-  // PROJECTS
   // -----------------------------
-  await prisma.project.createMany({
+  // PROJECTS (capture references)
+  // -----------------------------
+  const forgeCore = await prisma.project.upsert({
+    where: { name_orgId: { name: "Forge Core", orgId: forgeOrg.id } },
+    update: {},
+    create: {
+      name: "Forge Core",
+      description: "Main platform and architecture for Forge",
+      orgId: forgeOrg.id,
+    },
+  });
+
+  const authProject = await prisma.project.upsert({
+    where: { name_orgId: { name: "Auth & RBAC", orgId: forgeOrg.id } },
+    update: {},
+    create: {
+      name: "Auth & RBAC",
+      description: "Authentication and authorization system",
+      orgId: forgeOrg.id,
+    },
+  });
+
+  // -----------------------------
+  // TASKS (CORE OF THIS UPDATE)
+  // -----------------------------
+  await prisma.task.createMany({
     data: [
       {
-        name: "Forge Core",
-        description: "Main platform and architecture for Forge",
-        orgId: forgeOrg.id,
+        title: "Design event-driven architecture",
+        status: "IN_PROGRESS",
+        priority: "HIGH",
+        projectId: forgeCore.id,
+        assigneeId: adminUser.id,
       },
       {
-        name: "Auth & RBAC",
-        description: "Authentication and role-based access control system",
-        orgId: forgeOrg.id,
+        title: "Set up optimistic UI flow",
+        status: "TODO",
+        priority: "HIGH",
+        projectId: forgeCore.id,
+        assigneeId: adminUser.id,
       },
       {
-        name: "Dashboard UI",
-        description: "Organization and project dashboard experience",
-        orgId: forgeOrg.id,
+        title: "Implement RBAC middleware",
+        status: "IN_PROGRESS",
+        priority: "MEDIUM",
+        projectId: authProject.id,
+        assigneeId: adminUser.id,
+      },
+      {
+        title: "Write permission tests",
+        status: "TODO",
+        priority: "LOW",
+        projectId: authProject.id,
+        assigneeId: memberUser.id,
+      },
+      {
+        title: "Audit login flow",
+        status: "DONE",
+        priority: "MEDIUM",
+        projectId: authProject.id,
+        assigneeId: memberUser.id,
       },
     ],
     skipDuplicates: true,
@@ -137,12 +163,12 @@ async function main() {
   console.log("✅ Seed complete!");
   console.log("");
   console.log("🧪 TEST ACCOUNTS:");
-  console.log(`ADMIN  → ${adminEmail} / ${password}`);
-  console.log(`MEMBER → ${memberEmail} / ${password}`);
+  console.log("ADMIN  → admin@forge.com / securepassword");
+  console.log("MEMBER → member@forge.com / securepassword");
   console.log("");
   console.log("🏢 ORGS:");
-  console.log("• forge-hq (admin + member)");
-  console.log("• other-org (no memberships)");
+  console.log("• forge-hq (projects + tasks)");
+  console.log("• other-org (empty, isolation test)");
   console.log("-----------------------------------------");
 }
 

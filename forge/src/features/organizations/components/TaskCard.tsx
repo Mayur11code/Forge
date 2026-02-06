@@ -1,6 +1,6 @@
 "use client";
 
-import { Task } from "@/core/domain";
+import { Task } from "@prisma/client";
 import React from "react";
 import { Calendar, Clock, CheckCircle2, AlertCircle, ArrowUpRight } from "lucide-react";
 import { clsx } from "clsx";
@@ -52,9 +52,9 @@ export default function TaskCard({ task }: { task : Task }) {
         </button>
       </div>
 
-      {/* Description: Truncated for layout consistency */}
+      Description: Truncated for layout consistency
       <p className="text-zinc-400 text-sm leading-relaxed mb-6 line-clamp-2 flex-grow">
-        {task.description || "No description provided for this task."}
+         No description provided for this task.
       </p>
 
       {/* Footer: Status and Meta */}
@@ -71,14 +71,18 @@ export default function TaskCard({ task }: { task : Task }) {
           {task.status}
         </div>
 
-        {/* Due Date */}
-        {task.dueDate && (
-          <div className="flex items-center gap-1.5 text-zinc-500 text-xs font-medium">
-            <Calendar className="w-3.5 h-3.5" />
-            <span>{new Date(task.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+        {/*Assiginee and created At */}
+        <div className="flex items-center gap-4 text-zinc-500 text-xs">
+          <div className="flex items-center gap-1">
+            <Calendar className="w-3 h-3" />
+            {new Date(task.createdAt).toLocaleDateString()}
           </div>
-        )}
+          <p className="text-zinc-400">{task.assigneeId || "Unassigned"}</p>
+          <div className="flex items-center gap-1">
+            <Clock className="w-3 h-3" />
+      </div>
       </div>
     </div>
+      </div>
   );
 }
