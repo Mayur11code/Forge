@@ -1,11 +1,9 @@
-datasource db {
-  provider = "postgresql"
-
-}
-
-generator client {
-  provider = "prisma-client-js"
-}
+datasource db { 
+  provider = "postgresql" 
+  } 
+generator client { 
+  provider = "prisma-client-js" 
+  }
 
 enum Role {
   ADMIN
@@ -13,42 +11,85 @@ enum Role {
   MEMBER
 }
 
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Task {
+  id          String        @id @default(cuid())
+  title       String
+
+  status      TaskStatus    @default(TODO)
+  priority    TaskPriority  @default(MEDIUM)
+
+  projectId   String
+  project     Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  assigneeId  String?
+ assignee     User?         @relation("UserTasks", fields: [assigneeId], references: [id])
+
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([projectId])
+  @@index([assigneeId])
+  @@index([status])
+}
+
+
 model User {
-  id          String       @id @default(uuid())
+  id          String       @id @default(cuid())
   email       String       @unique
-  name        String?      // Added to support the "name" field in your seed script
+  name        String?
   password    String?
+
   memberships Membership[]
-}
-
-model Organization {
-  id          String       @id @default(uuid())
-  slug        String       @unique
-  name        String
-  memberships Membership[]
-  projects    Project[]
-
-}
-
-model Membership {
-  id             String       @id @default(uuid())
-  role           Role         @default(MEMBER)
-  userId         String
-  orgId          String
-  createdAt      DateTime     @default(now())
-  user           User         @relation(fields: [userId], references: [id])
-  organization   Organization @relation(fields: [orgId], references: [id])
-
-  @@unique([userId, orgId]) // Fixed the syntax error on line 33
+  tasks       Task[]       @relation("UserTasks")
 }
 
 model Project {
-  id          String       @id @default(uuid())
-  name        String
-  description String?
-  orgId       String
-  createdAt   DateTime     @default(now())
+  id            String        @id @default(cuid())
+  name          String
+  description   String?
+  orgId         String
+  createdAt     DateTime      @default(now())
 
-  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade )
-  
+  tasks         Task[]
+
+  organization  Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([name, orgId])
+  @@index([orgId])
 }
+
+
+model Organization { 
+  id          String      @id @default(uuid()) 
+  slug        String      @unique 
+  name        String 
+  memberships Membership[] 
+  projects    Project[]
+}
+
+model Membership {
+  id      String    @id @default(uuid()) 
+  role    Role      @default(MEMBER) 
+  userId  String    
+  orgId   String 
+  createdAt DateTime @default(now()) 
+  user    User        @relation(fields: [userId], references: [id]) 
+  organization Organization @relation(fields: [orgId], references: [id])    
+  
+  
+  @@unique([userId, orgId]) // Fixed the syntax error on line 33
+  
+   }

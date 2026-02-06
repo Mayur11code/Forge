@@ -47,7 +47,7 @@ export default function ProjectsMetaRefresh({
       } catch {
         // silent polling failure
       }
-    }, 5000);
+    }, 30000);
 
     return () => clearInterval(interval);
   }, [orgSlug]);

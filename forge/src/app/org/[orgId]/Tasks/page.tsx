@@ -1,36 +1,58 @@
-import { auth } from "@/lib/auth/auth"; // Import the heavy auth
-import { mockTasks } from "@/features/tasks/mockData";
-import TaskCard from "@/features/organizations/components/TaskCard";
-import React from "react";
-import TaskbBox from "@/features/organizations/components/TaskBox";
-import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
+import { auth } from "@/lib/auth/auth";
+import { requireOrgAccess } from "@/features/organizations/require-org-access";
+import TaskBox from "@/features/organizations/components/TaskBox";
+import { db } from "@/lib/prisma/db";
 
-export default async function TasksPage({ 
-  params 
-}: { params: Promise<{ orgId: string }> }) {
-    const { orgId } = await params;
-    
-    // 1. AUTHENTICATION CHECK
-    const { organization, membership } = await requireOrgAccess(orgId);
-    const session = await auth();
+export default async function TasksPage({
+  params,
+}: {
+  params: Promise<{ orgId: string }>;
+}) {
+  const { orgId } = await params;
 
-    // 2. THE LOGIC TEST: This will print in your TERMINAL
-    console.log("-----------------------------------------");
-    console.log("🚀 SERVER LOG - TASKS PAGE");
-    console.log("USER:", session?.user?.name);
-    console.log("ROLE:", session?.user?.role);
-    console.log("ORG ID:", orgId);
-    console.log("-----------------------------------------");
-   
-    return (
-        <div className="space-y-4">
-            <h1 className="text-2xl font-bold">Organization: {orgId}</h1>
-            <p className="text-gray-600">
-                Logged in as: <span className="font-mono text-blue-500">{session?.user?.role}</span>
-            </p>
-            
-            {/* Pass the role to your Client Component if it needs to hide/show buttons */}
-            <TaskbBox param={{ orgId }}  />
-        </div>
-    );
+  // 🔐 Auth + org guard
+  const { membership } = await requireOrgAccess(orgId);
+  const session = await auth();
+
+  const organization = await db.organization.findUnique({
+    where: { slug: orgId },
+  });
+
+  if (!organization) {
+    throw new Error("Organization not found");
+  }
+
+  // 📦 Fetch ALL tasks across ALL projects in this org
+  const tasks = await db.task.findMany({
+    where: {
+      project: {
+        orgId: organization.id,
+      },
+    },
+    include: {
+      project: {
+        select: { id: true, name: true },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-bold">All Tasks</h1>
+
+      <p className="text-gray-600">
+        Logged in as{" "}
+        <span className="font-mono text-blue-500">
+          {session?.user?.role}
+        </span>
+      </p>
+
+      <TaskBox
+        mode = "org"
+        param={{ orgId }}
+        initialtasks={tasks}
+      />
+    </div>
+  );
 }
