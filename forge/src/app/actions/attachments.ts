@@ -2,6 +2,7 @@
 
 import { UTApi } from "uploadthing/server";
 import { db } from "@/lib/prisma/db";
+const utapi = new UTApi();
 
 export async function createAttachment({
   taskId,
@@ -57,9 +58,8 @@ export async function getAttachments(taskId: string) {
 
 
 
-const utapi = new UTApi();
 
-export async function getSignedDownloadUrl(fileKey: string) {
+export async function getSignedDownloadUrl(fileKey: string | null) {
   if (!fileKey) {
     throw new Error("Missing fileKey");
   }
@@ -67,6 +67,8 @@ export async function getSignedDownloadUrl(fileKey: string) {
   const { url } = await utapi.getSignedURL(fileKey, {
     expiresIn: 60, // seconds
   });
+
+  console.log( "💕💕");
 
   return url;
 }

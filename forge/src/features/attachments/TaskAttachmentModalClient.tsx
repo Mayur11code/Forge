@@ -13,7 +13,7 @@ type Attachment = {
   url: string;
   name: string;
   size: number;
-  fileKey : string;
+  fileKey: string | null;
 };
 
 export function TaskAttachmentsModalClient({ taskId }: { taskId: string }) {
@@ -89,7 +89,11 @@ export function TaskAttachmentsModalClient({ taskId }: { taskId: string }) {
                           <button
                             onClick={async () => {
                               const signedUrl = await getSignedDownloadUrl(file.fileKey);
+
+                              console.log("💕💕SIGNED DOWNLOAD URL:", signedUrl);
+
                               window.open(signedUrl, "_blank");
+
                             }}
                             className="
     flex w-full items-center gap-2
