@@ -1,28 +1,29 @@
 "use server";
 
+import { UTApi } from "uploadthing/server";
 import { db } from "@/lib/prisma/db";
 
 export async function createAttachment({
   taskId,
+  fileKey,
   url,
   name,
   size,
 }: {
   taskId: string;
+  fileKey: string;
   url: string;
   name: string;
   size: number;
 }) {
-
-
-
-  if (!taskId || !url || !name) {
-    throw new Error("Missing required attachment data");
+  if (!fileKey) {
+    throw new Error("Missing fileKey");
   }
 
   return db.attachment.create({
     data: {
       taskId,
+      fileKey,
       url,
       name,
       size,
@@ -49,6 +50,23 @@ export async function getAttachments(taskId: string) {
       name: true,
       size: true,
       createdAt: true,
+      fileKey : true
     },
   });
+}
+
+
+
+const utapi = new UTApi();
+
+export async function getSignedDownloadUrl(fileKey: string) {
+  if (!fileKey) {
+    throw new Error("Missing fileKey");
+  }
+
+  const { url } = await utapi.getSignedURL(fileKey, {
+    expiresIn: 60, // seconds
+  });
+
+  return url;
 }
