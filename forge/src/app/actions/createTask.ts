@@ -30,16 +30,15 @@ export async function createTask(input: unknown) {
   if (!project) {
     throw new Error("Project not found");
   }
-  console.log("🚀 Creating task in project:", data.projectId, "with title:", data.title);
+  
   const organization = await db.organization.findUnique({
     where: { id: project.orgId }
   });
   if (!organization) {
     throw new Error("Organization not found");
   }
-  console.log("💕 Found organization for task:", organization.name);
   await requireOrgAccess(organization.slug);
-console.log("💕 User has access to organization:", organization.name);
+
   // 4️⃣ Create task
   const task = await db.task.create({
     data: {

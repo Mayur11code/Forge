@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth/auth";
 import { db } from "@/lib/prisma/db";
 import { notFound } from "next/navigation";
-import TaskBox from "@/features/organizations/components/TaskBox";
+import TaskBox from "@/features/organizations/components/Taskbox";
 import { requireOrgAccess } from "@/features/organizations/require-org-access";
 
 export default async function ProjectTasksPage({
@@ -46,6 +46,7 @@ if(organization === null){return notFound();}
       <p className="text-gray-500">{project.description}</p>
 
       <TaskBox
+      mode = "project"
         param={{ orgId }}
         projectId={project.id}
         initialtasks={project.tasks}

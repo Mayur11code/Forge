@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { unstable_noStore as noStore } from "next/cache";
 import { db } from "@/lib/prisma/db";
-import { requireOrgAccess } from "@/features/organizations/require-org-access-api";
+import { requireOrgAccess } from "@/features/organizations/require-org-access";
 
 /* ----------------------------------------
    GET /api/org/[orgId]/projects/meta

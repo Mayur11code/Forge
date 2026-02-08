@@ -16,7 +16,7 @@ export default function CreateTaskForm({ onCreate }: CreateTaskFormProps) {
     if (title.trim().length < 3) return;
 
     setIsSubmitting(true);
-   
+
     await onCreate(title.trim());
     setTitle("");
     setIsSubmitting(false);
@@ -29,7 +29,23 @@ export default function CreateTaskForm({ onCreate }: CreateTaskFormProps) {
         placeholder="Add a new task…"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
-        className="flex-1 rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring"
+
+        className="
+    w-full
+    bg-zinc-950/80
+    border border-zinc-800/60
+    text-zinc-200
+    shadow-[0_20px_60px_-20px_rgba(0,0,0,0.9)]
+    px-3 py-2
+    rounded-lg
+    text-sm
+    outline-none
+    focus:border-zinc-600
+    focus:ring-0
+    placeholder:text-zinc-600
+    transition-all
+    
+  "
       />
 
       <button

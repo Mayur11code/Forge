@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import mainlogo from "@/lib/icons/mainlogo.png";
 import { clsx } from 'clsx';
 import { signOut } from "next-auth/react";
 import { useSession } from "next-auth/react";
@@ -12,6 +13,7 @@ import { LayoutDashboard, CheckSquare, Settings, Command } from "lucide-react";
 export function Sidebar({ orgId }: { orgId: string }) {
   const pathname = usePathname();
   const { data: session } = useSession();
+  
 
   const links = [
     { label: "Dashboard", href: `/org/${orgId}/dashboard`, icon: LayoutDashboard },
@@ -24,9 +26,13 @@ export function Sidebar({ orgId }: { orgId: string }) {
     <aside className="w-64 flex flex-col h-full bg-zinc-900/50 border-r border-zinc-800/50">
       {/* Brand Section */}
       <div className="p-6 mb-2 flex items-center gap-3">
-        <div className="h-8 w-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
-          <Command className="text-white w-5 h-5" />
-        </div>
+       
+          <img
+    src={mainlogo.src}
+    alt="Engineered Forge"
+    className="h-9 w-9 object-contain"
+  />
+       
         <span className="font-bold tracking-tight text-zinc-100 text-lg">FORGE</span>
       </div>
 
@@ -37,7 +43,7 @@ export function Sidebar({ orgId }: { orgId: string }) {
         </p>
 
         {links.map((link) => {
-          const isActive = pathname === link.href;
+          const isActive = pathname === link.href || pathname.startsWith(link.href + "/");
           const Icon = link.icon;
 
           return (

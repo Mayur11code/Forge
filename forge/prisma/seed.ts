@@ -116,6 +116,40 @@ async function main() {
   });
 
   // -----------------------------
+  //  ATTSACHMENTS
+  const tasks = await prisma.task.findMany({
+    take: 3,
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (tasks.length === 0) {
+    console.warn("⚠️ No tasks found, skipping attachment seed");
+  } else {
+    await prisma.attachment.createMany({
+      data: [
+        {
+          taskId: tasks[0].id,
+          name: "architecture-overview.pdf",
+          url: "https://utfs.io/f/architecture-overview.pdf",
+          size: 1_245_000, // ~1.2MB
+        },
+        {
+          taskId: tasks[0].id,
+          name: "event-flow-diagram.png",
+          url: "https://utfs.io/f/event-flow-diagram.png",
+          size: 842_000,
+        },
+        {
+          taskId: tasks[1].id,
+          name: "rbac-matrix.pdf",
+          url: "https://utfs.io/f/rbac-matrix.pdf",
+          size: 560_000,
+        },
+      ],
+    });
+  }
+
+  // -----------------------------
   // TASKS (CORE OF THIS UPDATE)
   // -----------------------------
   await prisma.task.createMany({
@@ -171,6 +205,8 @@ async function main() {
   console.log("• other-org (empty, isolation test)");
   console.log("-----------------------------------------");
 }
+
+
 
 main()
   .catch((e) => {
