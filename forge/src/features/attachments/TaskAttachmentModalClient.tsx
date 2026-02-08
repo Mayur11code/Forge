@@ -5,12 +5,15 @@ import { ModalPortal } from "../organizations/components/ui/ModalPortal";
 import { AttachmentUploader } from "./AttachmentUploader";
 import { getAttachments } from "@/app/actions/attachments";
 import { FileText, Image as ImageIcon } from "lucide-react";
+// import { getAttachments } from "@/app/actions/attachments";
+import { getSignedDownloadUrl } from "@/app/actions/attachments";
 
 type Attachment = {
   id: string;
   url: string;
   name: string;
   size: number;
+  fileKey : string;
 };
 
 export function TaskAttachmentsModalClient({ taskId }: { taskId: string }) {
@@ -19,9 +22,9 @@ export function TaskAttachmentsModalClient({ taskId }: { taskId: string }) {
   const [loading, setLoading] = useState(false);
 
 
-//If we didn;t want the useEffevct
-//  ( which we don;t need because useEffect is buggy, You may use SWR or tanstack instead)
-//You would have to use the other type of modal (intercepting routes)
+  //If we didn;t want the useEffevct
+  //  ( which we don;t need because useEffect is buggy, You may use SWR or tanstack instead)
+  //You would have to use the other type of modal (intercepting routes)
 
   async function loadAttachments() {
     setLoading(true);
@@ -83,25 +86,27 @@ export function TaskAttachmentsModalClient({ taskId }: { taskId: string }) {
 
                       return (
                         <li key={file.id}>
-                          <a
-                            href={file.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                          <button
+                            onClick={async () => {
+                              const signedUrl = await getSignedDownloadUrl(file.fileKey);
+                              window.open(signedUrl, "_blank");
+                            }}
                             className="
-                              flex items-center gap-2
-                              rounded-md border border-zinc-800
-                              bg-zinc-900/40 px-3 py-2
-                              text-sm text-zinc-300
-                              hover:bg-zinc-800/50
-                              transition
-                            "
+    flex w-full items-center gap-2
+    rounded-md border border-zinc-800
+    bg-zinc-900/40 px-3 py-2
+    text-sm text-zinc-300
+    hover:bg-zinc-800/50
+    transition
+  "
                           >
                             <Icon className="w-4 h-4 text-zinc-400" />
                             <span className="truncate">{file.name}</span>
                             <span className="ml-auto text-xs text-zinc-500">
                               {(file.size / 1024 / 1024).toFixed(1)} MB
                             </span>
-                          </a>
+                          </button>
+
                         </li>
                       );
                     })}

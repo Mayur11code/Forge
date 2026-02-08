@@ -18,6 +18,7 @@ export function AttachmentUploader({ taskId }: { taskId: string }) {
           url: file.url,
           name: file.name,
           size: file.size,
+          fileKey : file.key,
         });
       }}
       onUploadError={(error) => {

@@ -99,6 +99,7 @@ model Membership {
 
 model Attachment {
   id        String   @id @default(cuid())
+  fileKey   String?   // 👈 NEW (required for signed downloads)
   url       String
   name      String
   size      Int

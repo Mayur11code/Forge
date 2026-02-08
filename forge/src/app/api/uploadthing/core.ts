@@ -18,6 +18,7 @@
         url: file.url,
         name: file.name,
         size: file.size,
+        fileKey : file.key
       };
     }),
   } satisfies FileRouter;
