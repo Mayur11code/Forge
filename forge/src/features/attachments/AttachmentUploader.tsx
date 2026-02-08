@@ -1,0 +1,29 @@
+"use client";
+
+import { UploadButton } from "@uploadthing/react";
+import type { UploadRouter } from "@/app/api/uploadthing/core";
+import { createAttachment } from "@/app/actions/attachments";
+
+export function AttachmentUploader({ taskId }: { taskId: string }) {
+  return (
+    <UploadButton<UploadRouter, "taskAttachment">
+      endpoint="taskAttachment"
+      onClientUploadComplete={async (res) => {
+        if (!res?.length) return;
+
+        const file = res[0];
+
+        await createAttachment({
+          taskId,
+          url: file.url,
+          name: file.name,
+          size: file.size,
+        });
+      }}
+      onUploadError={(error) => {
+        console.error(error);
+        alert("Upload failed");
+      }}
+    />
+  );
+}

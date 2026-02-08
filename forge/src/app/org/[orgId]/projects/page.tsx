@@ -75,7 +75,16 @@ export default async function ProjectsPage({ params }: { params: Promise<{ orgId
                                 <p className="text-sm text-muted-foreground">
                                     {project.description}
                                 </p>
+
+
                             )}
+                            <Link
+                                href={`/org/${orgId}/projects/${project.id}`}
+                                className="text-sm text-blue-500 hover:underline mt-2 inline-block"
+                            >
+                                View Tasks &rarr;
+                            </Link>
+
                         </li>
                     ))}
                 </ul>

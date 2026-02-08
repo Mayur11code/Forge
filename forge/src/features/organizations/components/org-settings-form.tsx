@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateOrgName } from "@/app/org/[orgId]/settings/actions";
+import { updateOrgName } from "@/app/actions/updateOrg";
 
 interface OrgSettingsFormProps {
   orgId: string;
