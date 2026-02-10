@@ -2,7 +2,8 @@ import { auth } from "@/lib/auth/auth";
 import { db } from "@/lib/prisma/db";
 import { notFound } from "next/navigation";
 import TaskBox from "@/features/organizations/components/Taskbox";
-import { requireOrgAccess } from "@/features/organizations/require-org-access";
+// import { requireOrgAccess } from "@/features/organizations/require-org-access";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 
 export default async function ProjectTasksPage({
   params,
@@ -12,7 +13,10 @@ export default async function ProjectTasksPage({
   const { orgId, projectId } = await params;
 
   // 1️⃣ Org access (RBAC boundary)
-  await requireOrgAccess(orgId);
+  // await requireOrgAccess(orgId);
+   const access = await getOrgAccess(orgId);
+  if (!access) notFound();
+  
 
   // 1. Fetch the organization using the slug from the URL
 const organization = await db.organization.findUnique({

@@ -1,7 +1,9 @@
 // src/app/org/[orgId]/dashboard/page.tsx
 import { mockTasks } from "@/features/tasks/mockData";
-import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
+// import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
 import { Activity, LayoutGrid, Users, Zap } from "lucide-react"; // Icons for metrics
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
+import { notFound } from "next/navigation";
 
 export default async function DashboardPage({ 
   params 
@@ -18,8 +20,12 @@ export default async function DashboardPage({
   ];
 
   // 1️⃣ Authenticate user and verify org access
-    const { organization, membership } = await requireOrgAccess(orgId);
+    // const { organization, membership } = await requireOrgAccess(orgId);
+     const access = await getOrgAccess(orgId );
+    if (!access) notFound();
+    const organization = access.organization;
     console.log("Organization in Dashboard Page:", organization);
+
 
   return (
     <div className="space-y-10 animate-in fade-in slide-in-from-bottom-4 duration-700">

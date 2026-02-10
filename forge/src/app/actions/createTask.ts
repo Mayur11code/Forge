@@ -3,8 +3,10 @@
 import { db } from "@/lib/prisma/db";
 import { auth } from "@/lib/auth/auth";
 import { createTaskSchema } from "@/core/domain";
-import { requireOrgAccess } from "@/features/organizations/require-org-access";
+// import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { revalidatePath } from "next/cache";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
+import { notFound } from "next/navigation";
 
 export async function createTask(input: unknown) {
   // 1️⃣ Auth
@@ -37,7 +39,10 @@ export async function createTask(input: unknown) {
   if (!organization) {
     throw new Error("Organization not found");
   }
-  await requireOrgAccess(organization.slug);
+  // await requireOrgAccess(organization.slug);
+  const access = await getOrgAccess(organization.slug);
+if (!access) notFound();
+
 
   // 4️⃣ Create task
   const task = await db.task.create({

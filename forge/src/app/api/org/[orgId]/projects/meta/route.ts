@@ -4,7 +4,9 @@ export const dynamic = "force-dynamic";
 import { NextResponse } from "next/server";
 import { unstable_noStore as noStore } from "next/cache";
 import { db } from "@/lib/prisma/db";
-import { requireOrgAccess } from "@/features/organizations/require-org-access";
+// import { requireOrgAccess } from "@/features/organizations/require-org-access";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
+import { notFound } from "next/navigation";
 
 /* ----------------------------------------
    GET /api/org/[orgId]/projects/meta
@@ -18,7 +20,10 @@ export async function GET(
   console.log("🔥 META ROUTE HIT");
 
   // RBAC + tenant isolation
-  const { organization } = await requireOrgAccess((await params).orgId);
+  // const { organization } = await requireOrgAccess((await params).orgId);
+   const access = await getOrgAccess((await params).orgId);
+  if (!access) notFound();
+  const organization = access.organization;
 
   const [latestProject, totalCount] = await Promise.all([
     db.project.findFirst({

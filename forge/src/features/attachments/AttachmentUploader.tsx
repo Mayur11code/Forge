@@ -3,11 +3,18 @@
 import { UploadButton } from "@uploadthing/react";
 import type { UploadRouter } from "@/app/api/uploadthing/core";
 import { createAttachment } from "@/app/actions/attachments";
+import { useOrgSlug } from "@/contexts/OrgContext";
 
 export function AttachmentUploader({ taskId }: { taskId: string }) {
+  const orgSlug = useOrgSlug();
+
   return (
     <UploadButton<UploadRouter, "taskAttachment">
       endpoint="taskAttachment"
+      input={{
+    orgSlug: orgSlug,
+    taskId: taskId,
+  }}
       onClientUploadComplete={async (res) => {
         if (!res?.length) return;
 
