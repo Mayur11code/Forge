@@ -1,7 +1,9 @@
 import { auth } from "@/lib/auth/auth";
-import { requireOrgAccess } from "@/features/organizations/require-org-access";
+// import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import TaskBox from "@/features/organizations/components/Taskbox";
 import { db } from "@/lib/prisma/db";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
+import {notFound} from "next/navigation";
 
 
 
@@ -13,7 +15,9 @@ export default async function TasksPage({
   const { orgId } = await params;
 
   // 🔐 Auth + org guard
-  const { membership } = await requireOrgAccess(orgId);
+  // const { membership } = await requireOrgAccess(orgId);
+    const access = await getOrgAccess(orgId);
+  if (!access) notFound();
   const session = await auth();
 
   const organization = await db.organization.findUnique({

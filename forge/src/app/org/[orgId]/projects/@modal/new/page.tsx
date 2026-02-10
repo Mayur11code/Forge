@@ -1,15 +1,19 @@
 import { notFound } from "next/navigation";
-import { requireOrgAccess } from "@/features/organizations/require-org-access";
+// import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import NewProjectForm from "@/features/organizations/components/new-project-form";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 
 export default async function NewProjectModal({
   params,
 }: {
   params: Promise<{ orgId: string }>;
 }) {
-  const { membership } = await requireOrgAccess((await params).orgId);
+  // const { membership } = await requireOrgAccess((await params).orgId);
+   const access = await getOrgAccess((await params).orgId);
+if (!access) notFound();
 
-  if (membership.role === "MEMBER") {
+
+  if (access.membership.role === "MEMBER") {
     notFound();
   }
 

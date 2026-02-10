@@ -2,10 +2,11 @@
 
 import { z } from "zod";
 import { db } from "@/lib/prisma/db";
-import { requireOrgAccess } from "@/features/organizations/require-org-access";
+// import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
+import { notFound } from "next/navigation";
 /* ----------------------------------------
    1️⃣ Zod Schema (single source of truth)
 ---------------------------------------- */
@@ -34,10 +35,13 @@ export async function createProject(
   const data = createProjectSchema.parse(rawData);
 
   // 3️⃣ Auth + org + membership
-  const { organization, membership } = await requireOrgAccess(orgSlug);
+  // const { organization, membership } = await requireOrgAccess(orgSlug);
+   const access = await getOrgAccess(orgSlug);
+  if (!access) notFound();
+  
 
   // 4️⃣ RBAC (write permission)
-  if (membership.role !== "ADMIN" && membership.role !== "MANAGER") {
+  if (access.membership.role !== "ADMIN" && access.membership.role !== "MANAGER") {
     throw new Error("Insufficient permissions to create a project.");
   }
 
@@ -46,7 +50,7 @@ export async function createProject(
     data: {
       name: data.name.trim(),
       description: data.description?.trim() || null,
-      orgId: organization.id,
+      orgId: access.organization.id,
     },
   });
 

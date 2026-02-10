@@ -1,20 +1,23 @@
 import { db } from "@/lib/prisma/db";
-import { requireOrgAccess } from "@/features/organizations/require-org-access";
+// import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import ProjectsMetaRefresh from "@/features/organizations/components/projects/projects-meta-refresh";
-
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import Link from "next/link";
-
+import { notFound } from "next/navigation";
 
 export default async function ProjectsPage({ params }: { params: Promise<{ orgId: string }> }) {
     const { orgId } = await params;
 
     // 1️⃣ Auth + org + membership check (centralized)
-    const { organization, membership } = await requireOrgAccess(orgId);
+    // const { organization, membership } = await requireOrgAccess(orgId);
+     const access = await getOrgAccess(orgId);
+    if (!access) notFound();
+    
 
     // 2️⃣ Fetch projects scoped to this organization
     const projects = await db.project.findMany({
         where: {
-            orgId: organization.id,
+            orgId: access.organization.id,
         },
         orderBy: {
             createdAt: "desc",
@@ -31,13 +34,13 @@ export default async function ProjectsPage({ params }: { params: Promise<{ orgId
     // META HANDLING FOR NEW PROJECTS UPDATE LIVE TO USER
 
     const canCreateProject =
-        membership.role === "ADMIN" || membership.role === "MANAGER";
+        access.membership.role === "ADMIN" || access.membership.role === "MANAGER";
 
     return (
         <div className="p-6 space-y-6">
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-semibold">
-                    Projects · {organization.name}
+                    Projects · {access.organization.name}
                 </h1>
 
                 <ProjectsMetaRefresh

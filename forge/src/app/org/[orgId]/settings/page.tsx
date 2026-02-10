@@ -1,5 +1,7 @@
-import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
+// import { requireOrgAccess } from "../../../../features/organizations/require-org-access";
 import OrgSettingsForm from "@/features/organizations/components/org-settings-form";
+import { notFound } from "next/navigation";
 
 export default async function SettingsPage({
   params,
@@ -8,7 +10,10 @@ export default async function SettingsPage({
 
   // 1️⃣ Authenticate user
   
-    const { organization, membership } = await requireOrgAccess(orgId);
+    // const { organization, membership } = await requireOrgAccess(orgId);
+     const access = await getOrgAccess(orgId  );
+    if (!access) notFound();
+    const { organization, membership } = access;
     console.log("Organization in Settings Page:", organization);
 
     
