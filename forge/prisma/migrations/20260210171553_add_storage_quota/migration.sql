@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Organization" ADD COLUMN     "storageLimit" BIGINT NOT NULL DEFAULT 1073741824,
+ADD COLUMN     "storageUsed" BIGINT NOT NULL DEFAULT 0;

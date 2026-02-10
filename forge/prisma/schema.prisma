@@ -79,6 +79,8 @@ model Organization {
   slug        String      @unique 
   name        String 
   memberships Membership[] 
+  storageUsed   BigInt   @default(0)
+  storageLimit  BigInt   @default(1073741824) // 1GB default
   projects    Project[]
 }
 

@@ -4,12 +4,15 @@ import { db } from "@/lib/prisma/db";
 export async function getOrgAccess(orgSlug: string) {
   const session = await auth();
   const userId = session?.user?.id;
-
   if (!userId) return null;
 
   const organization = await db.organization.findUnique({
     where: { slug: orgSlug },
-    include: {
+    select: {
+      id: true,
+      name: true,
+      storageLimit: true,
+      storageUsed: true,
       memberships: {
         where: { userId },
         select: { role: true },
@@ -25,6 +28,8 @@ export async function getOrgAccess(orgSlug: string) {
     organization: {
       id: organization.id,
       name: organization.name,
+      storageLimit: organization.storageLimit,
+      storageUsed: organization.storageUsed,
     },
     membership,
   };
