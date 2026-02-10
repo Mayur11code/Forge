@@ -3,6 +3,8 @@ import { z } from "zod";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { UTApi } from "uploadthing/server";
 import { validateMagicBytes } from "@/lib/security/magic-bytes";
+import { db } from "@/lib/prisma/db";
+import { metadata } from "@/app/layout";
 const f = createUploadthing();
 const utapi = new UTApi();
 // FileRouter is the type that will be used to ensure the correct configuration
@@ -22,6 +24,7 @@ export const uploadRouter = {
     z.object({
       orgSlug: z.string(),
       taskId: z.string(),
+      fileSize: z.number().min(1, "File size must be greater than 0"),
     })
   )
 
@@ -36,14 +39,45 @@ export const uploadRouter = {
         throw new Error("Insufficient permissions");
       }
 
+//STORAGE QUOTA CHEECK, it is being done in middleware because we want to prevent the upload from happening if the user has exceeded their storage quota. This way we can save bandwidth and storage space. We check the storage limit and storage used for the organization, and if the storage used is greater than or equal to the storage limit, we throw an error and prevent the upload from happening.
+const fileSize = BigInt(input.fileSize);
+
+//Extra defensive check to prevent large files from being uploaded, even though the client should prevent this, we want to make sure that it is also checked on the server. This is to prevent any malicious user from bypassing the client-side checks and uploading large files that could potentially fill up our storage and cause issues for other users.
+if (fileSize > BigInt(4 * 1024 * 1024)) {
+  throw new Error("File too large");
+}
+
+
+  const limit = access.organization.storageLimit;
+
+  const result = await db.organization.updateMany({
+    where: {
+      id: access.organization.id,
+      storageUsed: {
+        lte: limit - fileSize,
+      },
+    },
+    data: {
+      storageUsed: { increment: fileSize },
+    },
+  });
+
+  if (result.count === 0) {
+    throw new Error("Storage quota exceeded");
+  }
+
+
       return {
         userId: access.userId,
         orgId: access.organization.id,
         role: access.membership.role,
         taskId: input.taskId,
+        fileSize: input.fileSize,
       };
     })
     .onUploadComplete(async ({ metadata, file }) => {
+     
+     try{
       const allowedMimeTypes = [
         "application/pdf",
         "image/jpeg",
@@ -80,7 +114,21 @@ export const uploadRouter = {
         name: file.name,
         size: file.size,
         taskId: metadata.taskId,
-      };
+
+      };} catch (error) {
+    // 🔥 REFUND LOGIC
+
+    await utapi.deleteFiles(file.key); // delete from storage
+
+    await db.organization.update({
+      where: { id: metadata.orgId },
+      data: {
+        storageUsed: { decrement: metadata.fileSize },
+      },
+    });
+
+    throw error;
+  }
     }),
 } satisfies FileRouter;
 
