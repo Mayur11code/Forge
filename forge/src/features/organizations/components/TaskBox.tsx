@@ -23,6 +23,8 @@ type OrgModeProps = {
 };
 
 type TaskBoxProps = ProjectModeProps | OrgModeProps;
+// TaskBox is used in two places: 1) org/[orgId]/Tasks/page.tsx (org mode) and 2) org/[orgId]/projects/[projectId]/page.tsx (project mode).
+//  In org mode, we show all tasks across all projects in the organization, and we don't allow creating new tasks. In project mode, we show only tasks for that project, and we allow creating new tasks. The component is designed to handle both modes based on the props it receives.
 
 export default function TasksPage(props: TaskBoxProps) {
   const isProjectMode = props.mode === "project";

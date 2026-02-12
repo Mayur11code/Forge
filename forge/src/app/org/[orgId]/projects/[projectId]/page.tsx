@@ -4,56 +4,113 @@ import { notFound } from "next/navigation";
 import TaskBox from "@/features/organizations/components/Taskbox";
 // import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
+import { Prisma } from "@prisma/client";
 
 export default async function ProjectTasksPage({
   params,
+  searchParams,
 }: {
-  params: Promise< { orgId: string; projectId: string }>;
+  params: { orgId: string; projectId: string };
+  searchParams?: {
+    query?: string;
+    status?: string;
+    priority?: string;
+  };
 }) {
-  const { orgId, projectId } = await params;
+  const { orgId, projectId } = params;
 
   // 1️⃣ Org access (RBAC boundary)
   // await requireOrgAccess(orgId);
-   const access = await getOrgAccess(orgId);
+  const access = await getOrgAccess(orgId);
   if (!access) notFound();
-  
 
   // 1. Fetch the organization using the slug from the URL
-const organization = await db.organization.findUnique({
-  where: { slug: orgId } // assuming 'orgId' variable holds 'forge-hq'
-});
-
-if(organization === null){return notFound();}
-
-  // 2️⃣ Fetch project + tasks (scoped!)
-  const project = await db.project.findFirst({
-    where: {
-      id: projectId,
-      orgId :organization?.id,
-    },
-    include: {
-      tasks: {
-        orderBy: { createdAt: "asc" },
-      },
-    },
+  const organization = await db.organization.findUnique({
+    where: { slug: orgId }, // assuming 'orgId' variable holds 'forge-hq'
   });
-  
-  if (!project) {
-      console.log("id mismatch");
+
+  if (organization === null) {
     return notFound();
   }
 
-  console.log("🚀 PROJECT TASKS PAGE - Project:", project.name, "with", project.tasks.length, "tasks.");
+  // 🔎 Extract filters from URL
+  const query =
+    typeof searchParams?.query === "string"
+      ? searchParams.query
+      : undefined;
+
+  const status =
+    typeof searchParams?.status === "string"
+      ? searchParams.status
+      : undefined;
+
+  const priority =
+    typeof searchParams?.priority === "string"
+      ? searchParams.priority
+      : undefined;
+
+  // 2️⃣ Fetch project (scoped!)
+  const project = await db.project.findFirst({
+    where: {
+      id: projectId,
+      orgId: organization.id,
+    },
+  });
+
+  if (!project) {
+    console.log("id mismatch");
+    return notFound();
+  }
+
+  // 🔥 3️⃣ Fetch tasks separately with dynamic filtering
+  const tasks = await db.task.findMany({
+    where: {
+      projectId: project.id,
+
+      ...(status && { status: status as any }),
+      ...(priority && { priority: priority as any }),
+
+      ...(query && {
+        OR: [
+          {
+            title: {
+              contains: query,
+              mode: "insensitive",
+            },
+          },
+          {
+            description: {
+              contains: query,
+              mode: "insensitive",
+            },
+          },
+        ],
+      }),
+    },
+
+    orderBy: { createdAt: "asc" },
+
+    take: 50, // pagination-ready
+  });
+
+  console.log(
+    "🚀 PROJECT TASKS PAGE - Project:",
+    project.name,
+    "with",
+    tasks.length,
+    "tasks."
+  );
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">{project.name}</h1>
       <p className="text-gray-500">{project.description}</p>
 
       <TaskBox
-      mode = "project"
+        mode="project"
         param={{ orgId }}
         projectId={project.id}
-        initialtasks={project.tasks}
+        initialtasks={tasks}
       />
     </div>
   );
