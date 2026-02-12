@@ -14,6 +14,7 @@ export default async function TasksPage({
     query?: string;
     status?: string;
     priority?: string;
+    filter?: string;
   }>;
 }) {
   const { orgId } = await params;
@@ -38,6 +39,9 @@ export default async function TasksPage({
     typeof resolvedSearchParams?.priority === "string"
       ? resolvedSearchParams.priority
       : undefined;
+
+const filter =typeof resolvedSearchParams?.filter === "string" ? resolvedSearchParams.filter : "ALL";
+
 
   // 🔐 Auth + org guard
   const access = await getOrgAccess(orgId);
@@ -79,6 +83,7 @@ export default async function TasksPage({
           },
         ],
       }),
+...(filter !== "ALL" && { status: filter as any }),
     },
 
     include: {
