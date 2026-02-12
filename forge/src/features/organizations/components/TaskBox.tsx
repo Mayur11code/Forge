@@ -1,13 +1,13 @@
 'use client';
 
-import React, { startTransition } from "react";
+import React, { startTransition, useOptimistic, useState } from "react";
 import SearchBox from "@/features/organizations/components/SearchBox";
 import { ListFilter, CheckCircle2, Clock, PlayCircle, Layers } from "lucide-react";
 import { clsx } from "clsx";
 import { Task } from "@prisma/client";
-import { useOptimistic } from "react";
 import CreateTaskForm from "./CreateTaskForm";
 import { createTask } from "@/app/actions/createTask";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type ProjectModeProps = {
   mode: "project";
@@ -23,13 +23,17 @@ type OrgModeProps = {
 };
 
 type TaskBoxProps = ProjectModeProps | OrgModeProps;
-// TaskBox is used in two places: 1) org/[orgId]/Tasks/page.tsx (org mode) and 2) org/[orgId]/projects/[projectId]/page.tsx (project mode).
-//  In org mode, we show all tasks across all projects in the organization, and we don't allow creating new tasks. In project mode, we show only tasks for that project, and we allow creating new tasks. The component is designed to handle both modes based on the props it receives.
 
 export default function TasksPage(props: TaskBoxProps) {
   const isProjectMode = props.mode === "project";
+  
+  // 1. Move hooks to the top level
+  const pathname = usePathname();
+  const { replace } = useRouter();
+  const searchParams = useSearchParams();
 
-  const [filter, setFilter] = React.useState<string>("ALL");
+  // Get initial filter from URL or default to ALL
+  const currentFilter = searchParams.get("filter") || "ALL";
 
   const [optimisticTasks, updateOptimisticTasks] = useOptimistic(
     props.initialtasks,
@@ -42,17 +46,27 @@ export default function TasksPage(props: TaskBoxProps) {
     }
   );
 
+  // 2. Corrected filter handler
+  function handleFilterChange(filterId: string) {
+    const newParams = new URLSearchParams(searchParams.toString());
+    if (filterId !== "ALL") {
+      newParams.set("filter", filterId);
+    } else {
+      newParams.delete("filter");
+    }
+    replace(`${pathname}?${newParams.toString()}`);
+  }
+
   async function handleAddTask(title: string) {
     if (!isProjectMode) return;
 
     const tempId = Math.random().toString();
-
     const tempTask: Task = {
       id: tempId,
       title,
       status: "TODO",
       priority: "MEDIUM",
-      projectId: props.projectId,
+      projectId: props.projectId, // Safe because of isProjectMode check
       assigneeId: null,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -62,10 +76,11 @@ export default function TasksPage(props: TaskBoxProps) {
     startTransition(async () => {
       updateOptimisticTasks({ type: "add", task: tempTask });
       try {
-        await createTask({ title, projectId: props.projectId });
+        const result = await createTask({ title, projectId: props.projectId });
+        // Usually, you replace the temp object with the real one from the DB
         updateOptimisticTasks({
           type: "replace",
-          task: { ...tempTask, id: tempId },
+          task: result, 
           tempId,
         });
       } catch (e) {
@@ -84,7 +99,6 @@ export default function TasksPage(props: TaskBoxProps) {
   return (
     <section className="animate-in fade-in duration-700">
       <div className="max-w-7xl mx-auto space-y-10">
-        {/* Header */}
         <header className="space-y-2">
           <h2 className="text-3xl font-semibold tracking-tight text-zinc-100">
             Tasks
@@ -92,15 +106,10 @@ export default function TasksPage(props: TaskBoxProps) {
               · {props.param.orgId}
             </span>
           </h2>
-          <p className="text-sm text-zinc-500">
-            Organize, prioritize, and track work across your organization.
-          </p>
         </header>
 
-        {/* Control Card */}
-        <div className="relative overflow-hidden rounded-2xl border border-zinc-800/60 bg-gradient-to-br from-zinc-900/80 to-zinc-950/80 shadow-2xl shadow-black/30 backdrop-blur-xl">
+        <div className="relative overflow-hidden rounded-2xl border border-zinc-800/60 bg-gradient-to-br from-zinc-900/80 to-zinc-950/80 shadow-2xl backdrop-blur-xl">
           <div className="p-6 space-y-8">
-            {/* Filter */}
             <div className="space-y-4">
               <label className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
                 <ListFilter className="h-3.5 w-3.5" />
@@ -110,25 +119,20 @@ export default function TasksPage(props: TaskBoxProps) {
               <div className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-800 bg-zinc-950/70 p-1">
                 {filterOptions.map((opt) => {
                   const Icon = opt.icon;
-                  const isActive = filter === opt.id;
+                  const isActive = currentFilter === opt.id;
 
                   return (
                     <button
                       key={opt.id}
-                      onClick={() => setFilter(opt.id)}
+                      onClick={() => handleFilterChange(opt.id)}
                       className={clsx(
                         "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all",
                         isActive
-                          ? "bg-red-900/25 text-white shadow-md shadow-blue-900/30 glassmorphism"
-                          : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200"
+                          ? "bg-white/10 text-white shadow-md"
+                          : "text-zinc-400 hover:bg-zinc-800/60"
                       )}
                     >
-                      <Icon
-                        className={clsx(
-                          "h-4 w-4",
-                          isActive ? "text-white" : "text-zinc-500"
-                        )}
-                      />
+                      <Icon className="h-4 w-4" />
                       {opt.label}
                     </button>
                   );
@@ -136,17 +140,14 @@ export default function TasksPage(props: TaskBoxProps) {
               </div>
             </div>
 
-            <div className="h-px w-full bg-gradient-to-r from-transparent via-zinc-800 to-transparent" />
-
             {isProjectMode && (
-              <div className="pt-2">
+              <div className="pt-2 border-t border-zinc-800">
                 <CreateTaskForm onCreate={handleAddTask} />
               </div>
             )}
 
-            {/* Tasks */}
             <div className="pt-2">
-              <SearchBox filter={filter} initialtasks={optimisticTasks} />
+              <SearchBox initialtasks={optimisticTasks} />
             </div>
           </div>
         </div>
