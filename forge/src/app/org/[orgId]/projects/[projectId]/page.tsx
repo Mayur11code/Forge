@@ -10,14 +10,14 @@ export default async function ProjectTasksPage({
   params,
   searchParams,
 }: {
-  params: { orgId: string; projectId: string };
+  params: Promise<{ orgId: string; projectId: string }>;
   searchParams?: {
     query?: string;
     status?: string;
     priority?: string;
   };
 }) {
-  const { orgId, projectId } = params;
+  const { orgId, projectId } = await params;
 
   // 1️⃣ Org access (RBAC boundary)
   // await requireOrgAccess(orgId);

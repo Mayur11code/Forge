@@ -23,6 +23,31 @@ enum TaskPriority {
   HIGH
 }
 
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+}
+
+model Invitation {
+  id         String            @id @default(cuid())
+  email      String
+  token      String            @unique
+  role       Role              // Reuse your existing Role enum
+  status     InvitationStatus  @default(PENDING)
+  expiresAt  DateTime
+
+  orgId        String
+  organization Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  @@index([orgId])
+  @@index([email])
+}
+
+
 model Task {
   id          String        @id @default(cuid())
   title       String
@@ -82,6 +107,7 @@ model Organization {
   storageUsed   BigInt   @default(0)
   storageLimit  BigInt   @default(1073741824) // 1GB default
   projects    Project[]
+  invitations Invitation[]
 }
 
 model Membership {

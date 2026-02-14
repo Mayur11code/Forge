@@ -8,7 +8,7 @@ import { clsx } from 'clsx';
 import { signOut } from "next-auth/react";
 import { useSession } from "next-auth/react";
 // Note: I'm adding logical spacing for icons if you choose to add them later
-import { LayoutDashboard, CheckSquare, Settings, Command } from "lucide-react";
+import { LayoutDashboard, CheckSquare, Settings, Command, Users } from "lucide-react";
 
 export function Sidebar({ orgId }: { orgId: string }) {
   const pathname = usePathname();
@@ -20,6 +20,7 @@ export function Sidebar({ orgId }: { orgId: string }) {
     { label: "Tasks", href: `/org/${orgId}/Tasks`, icon: CheckSquare },
     { label: "Settings", href: `/org/${orgId}/settings`, icon: Settings },
     { label : "Projects", href: `/org/${orgId}/projects`, icon: Command },
+    { label: "Members", href: `/org/${orgId}/members`, icon: Users },
   ];
 
   return (
