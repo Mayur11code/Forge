@@ -5,6 +5,10 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/prisma/db";
+import { UTApi } from "uploadthing/server";
+import { extractKeyFromUrl } from "@/lib/uploadThing/extractKeyfromURL";
+
+const utapi = new UTApi();
 
 // -----------------------------
 // Helpers
@@ -28,6 +32,7 @@ const updateOrgNameSchema = z.object({
     .min(1, "Organization name is required")
     .max(50, "Organization name must be 50 characters or less")
     .regex(/^[a-zA-Z0-9\s-]+$/, "Invalid characters in organization name"),
+  logo: z.string().nullable().optional(),
 });
 
 // -----------------------------
@@ -35,7 +40,8 @@ const updateOrgNameSchema = z.object({
 // -----------------------------
 export async function updateOrgName(
   orgId: string,
-  newName: string
+  newName: string,
+  logo?: string | null
 ) {
   // 1️⃣ Authenticate
   const session = await auth();
@@ -47,6 +53,7 @@ export async function updateOrgName(
   const parsed = updateOrgNameSchema.safeParse({
     orgId,
     newName,
+    logo,
   });
 
   if (!parsed.success) {
@@ -76,7 +83,7 @@ export async function updateOrgName(
   // 5️⃣ Ensure slug uniqueness
   const existingOrg = await db.organization.findUnique({
     where: { slug: newSlug },
-    select: { id: true },
+    select: { id: true, logo: true },
   });
 
   if (existingOrg && existingOrg.id !== orgId) {
@@ -89,11 +96,27 @@ export async function updateOrgName(
     data: {
       name: parsed.data.newName,
       slug: newSlug,
+      ...(logo !== undefined && { logo }),
     },
     select: {
       slug: true,
     },
   });
+
+   if (
+    logo && existingOrg &&
+    existingOrg.logo &&
+    existingOrg.logo !== logo
+  ) {
+    // extract file key if using UploadThing
+    const oldKey = extractKeyFromUrl(existingOrg.logo);
+
+  if (oldKey) {
+    await utapi.deleteFiles(oldKey);
+  }
+}
+
+ 
 
   // 7️⃣ Cache invalidation
   revalidatePath(`/org/${updatedOrg.slug}`);
