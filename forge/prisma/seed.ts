@@ -38,6 +38,16 @@ async function main() {
     },
   });
 
+    const outsiderUser = await prisma.user.upsert({
+    where: { email: "outsider@forge.com" },
+    update: {},
+    create: {
+      email: "outsider@forge.com",
+      name: "Outside User",
+      password: hashedPassword,
+    },
+  });
+
   // -----------------------------
   // ORGANIZATIONS
   // -----------------------------
@@ -91,6 +101,22 @@ async function main() {
       role: "MEMBER",
     },
   });
+
+    await prisma.membership.upsert({
+    where: {
+      userId_orgId: {
+        userId: outsiderUser.id,
+        orgId: otherOrg.id,
+      },
+    },
+    update: { role: "MEMBER" },
+    create: {
+      userId: outsiderUser.id,
+      orgId: otherOrg.id,
+      role: "MEMBER",
+    },
+  });
+
 
   // -----------------------------
   // PROJECTS (capture references)

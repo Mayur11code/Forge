@@ -66,6 +66,9 @@ model Task {
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
   attachments Attachment[]
+comments      Comment[]
+
+
 
   @@index([projectId])
   @@index([assigneeId])
@@ -78,9 +81,12 @@ model User {
   email       String       @unique
   name        String?
   password    String?
+  image       String?
 
   memberships Membership[]
   tasks       Task[]       @relation("UserTasks")
+  comments    Comment[]
+
 }
 
 model Project {
@@ -98,6 +104,23 @@ model Project {
   @@index([orgId])
 }
 
+model Comment {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  // Relations
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([userId])
+}
+
+
 
 model Organization { 
   id          String      @id @default(uuid()) 
@@ -106,6 +129,7 @@ model Organization {
   memberships Membership[] 
   storageUsed   BigInt   @default(0)
   storageLimit  BigInt   @default(1073741824) // 1GB default
+  logo         String?
   projects    Project[]
   invitations Invitation[]
 }

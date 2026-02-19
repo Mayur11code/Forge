@@ -26,6 +26,8 @@ export default async function SettingsPage({
         orgId={organization.id}
         initialName={organization.name}
         role={membership.role}
+        orgSlug={orgId}
+        initialLogo={organization.logo}
       />
     </div>
   );

@@ -51,10 +51,10 @@ export default function TaskCard({ task }: { task: Task }) {
         <h3 className="text-zinc-100 font-semibold leading-tight group-hover:text-blue-400 transition-colors">
           {task.title}
         </h3>
-        <button className="text-zinc-600 hover:text-zinc-400 transition-colors duration-300
-">
+          <a href={`./projects/${task.projectId}/tasks/${task.id}`} className="text-zinc-600 hover:text-zinc-400 transition-colors duration-300
+  ">
           <ArrowUpRight className="w-4 h-4" />
-        </button>
+        </a>
       </div>
 
       {/* Description: Truncated for layout consistency */}

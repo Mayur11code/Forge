@@ -13,6 +13,7 @@ export async function getOrgAccess(orgSlug: string) {
       name: true,
       storageLimit: true,
       storageUsed: true,
+      logo: true,
       invitations: {
         where: { email: session.user.email || "" },
         select: { role: true },
@@ -34,6 +35,7 @@ export async function getOrgAccess(orgSlug: string) {
       name: organization.name,
       storageLimit: organization.storageLimit,
       storageUsed: organization.storageUsed,
+      logo : organization.logo,
     },
     membership,
   };

@@ -21,6 +21,7 @@ export function Sidebar({ orgId }: { orgId: string }) {
     { label: "Settings", href: `/org/${orgId}/settings`, icon: Settings },
     { label : "Projects", href: `/org/${orgId}/projects`, icon: Command },
     { label: "Members", href: `/org/${orgId}/members`, icon: Users },
+    { label: "Profile", href: `/org/${orgId}/user/profile`, icon: Users },
   ];
 
   return (
