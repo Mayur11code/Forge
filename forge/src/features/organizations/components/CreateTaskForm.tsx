@@ -12,6 +12,7 @@ export default function CreateTaskForm({ onCreate }: CreateTaskFormProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    
 
     if (title.trim().length < 3) return;
 
