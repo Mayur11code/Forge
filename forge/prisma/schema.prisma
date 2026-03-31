@@ -29,6 +29,13 @@ enum InvitationStatus {
   EXPIRED
 }
 
+
+enum EventStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
 model Invitation {
   id         String            @id @default(cuid())
   email      String
@@ -160,4 +167,21 @@ model Attachment {
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
+}
+
+model EventLog {
+  id          String      @id @default(cuid())
+
+  messageId   String      @unique 
+  eventName   String      
+  payload     Json?       
+
+  status      EventStatus @default(PENDING)
+  error       String?     @db.Text
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
 }

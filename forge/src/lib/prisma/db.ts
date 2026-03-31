@@ -14,3 +14,8 @@ const globalForPrisma = globalThis as unknown as {
 export const db = globalForPrisma.prisma ?? new PrismaClient({ adapter });
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db;
+
+
+// TODO (Pre-Launch): Swap 'pg' for '@neondatabase/serverless' 
+// to prevent Vercel connection exhaustion in production.
+//see log 14

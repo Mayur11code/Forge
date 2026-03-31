@@ -11,13 +11,15 @@ export default async function ProjectTasksPage({
   searchParams,
 }: {
   params: Promise<{ orgId: string; projectId: string }>;
-  searchParams?: {
+  searchParams?:Promise< {
     query?: string;
     status?: string;
     priority?: string;
-  };
+  }>;
 }) {
   const { orgId, projectId } = await params;
+  const sparams = await searchParams;
+  
 
   // 1️⃣ Org access (RBAC boundary)
   // await requireOrgAccess(orgId);
@@ -35,18 +37,18 @@ export default async function ProjectTasksPage({
 
   // 🔎 Extract filters from URL
   const query =
-    typeof searchParams?.query === "string"
-      ? searchParams.query
+    typeof sparams?.query === "string"
+      ? sparams.query
       : undefined;
 
   const status =
-    typeof searchParams?.status === "string"
-      ? searchParams.status
+    typeof sparams?.status === "string"
+      ? sparams.status
       : undefined;
 
   const priority =
-    typeof searchParams?.priority === "string"
-      ? searchParams.priority
+    typeof sparams?.priority === "string"
+      ? sparams.priority
       : undefined;
 
   // 2️⃣ Fetch project (scoped!)

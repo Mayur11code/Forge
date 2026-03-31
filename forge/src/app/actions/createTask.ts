@@ -7,6 +7,7 @@ import { createTaskSchema } from "@/core/domain";
 import { revalidatePath } from "next/cache";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
+import { publishEvent } from "@/lib/events/queue";
 
 export async function createTask(input: unknown) {
   // 1️⃣ Auth
@@ -53,6 +54,14 @@ if (!access) notFound();
       assigneeId: data.assigneeId ?? null,
     },
   });
+
+  // 🔥 EVENT EMISSION
+await publishEvent("TASK_CREATED", {
+  orgId: project.orgId,
+  taskId: task.id,
+  projectId: task.projectId,
+  actorId: session.user.id,
+});
 
   revalidatePath(`/org/${organization.slug}/projects/${data.projectId}`);
   return task;

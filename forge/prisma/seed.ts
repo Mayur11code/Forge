@@ -1,4 +1,3 @@
-// prisma/seed.ts
 import { PrismaClient } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -38,7 +37,7 @@ async function main() {
     },
   });
 
-    const outsiderUser = await prisma.user.upsert({
+  const outsiderUser = await prisma.user.upsert({
     where: { email: "outsider@forge.com" },
     update: {},
     create: {
@@ -102,7 +101,7 @@ async function main() {
     },
   });
 
-    await prisma.membership.upsert({
+  await prisma.membership.upsert({
     where: {
       userId_orgId: {
         userId: outsiderUser.id,
@@ -117,9 +116,8 @@ async function main() {
     },
   });
 
-
   // -----------------------------
-  // PROJECTS (capture references)
+  // PROJECTS
   // -----------------------------
   const forgeCore = await prisma.project.upsert({
     where: { name_orgId: { name: "Forge Core", orgId: forgeOrg.id } },
@@ -142,41 +140,7 @@ async function main() {
   });
 
   // -----------------------------
-  //  ATTSACHMENTS
-  const tasks = await prisma.task.findMany({
-    take: 3,
-    orderBy: { createdAt: "asc" },
-  });
-
-  if (tasks.length === 0) {
-    console.warn("⚠️ No tasks found, skipping attachment seed");
-  } else {
-    await prisma.attachment.createMany({
-      data: [
-        {
-          taskId: tasks[0].id,
-          name: "architecture-overview.pdf",
-          url: "https://utfs.io/f/architecture-overview.pdf",
-          size: 1_245_000, // ~1.2MB
-        },
-        {
-          taskId: tasks[0].id,
-          name: "event-flow-diagram.png",
-          url: "https://utfs.io/f/event-flow-diagram.png",
-          size: 842_000,
-        },
-        {
-          taskId: tasks[1].id,
-          name: "rbac-matrix.pdf",
-          url: "https://utfs.io/f/rbac-matrix.pdf",
-          size: 560_000,
-        },
-      ],
-    });
-  }
-
-  // -----------------------------
-  // TASKS (CORE OF THIS UPDATE)
+  // TASKS (FIXED POSITION ✅)
   // -----------------------------
   await prisma.task.createMany({
     data: [
@@ -219,6 +183,44 @@ async function main() {
     skipDuplicates: true,
   });
 
+  // -----------------------------
+  // FETCH TASKS (AFTER CREATION ✅)
+  // -----------------------------
+  const tasks = await prisma.task.findMany({
+    take: 3,
+    orderBy: { createdAt: "asc" },
+  });
+
+  // -----------------------------
+  // ATTACHMENTS
+  // -----------------------------
+  if (tasks.length === 0) {
+    console.warn("⚠️ No tasks found, skipping attachment seed");
+  } else {
+    await prisma.attachment.createMany({
+      data: [
+        {
+          taskId: tasks[0].id,
+          name: "architecture-overview.pdf",
+          url: "https://utfs.io/f/architecture-overview.pdf",
+          size: 1245000,
+        },
+        {
+          taskId: tasks[0].id,
+          name: "event-flow-diagram.png",
+          url: "https://utfs.io/f/event-flow-diagram.png",
+          size: 842000,
+        },
+        {
+          taskId: tasks[1]?.id || tasks[0].id,
+          name: "rbac-matrix.pdf",
+          url: "https://utfs.io/f/rbac-matrix.pdf",
+          size: 560000,
+        },
+      ],
+    });
+  }
+
   console.log("-----------------------------------------");
   console.log("✅ Seed complete!");
   console.log("");
@@ -231,8 +233,6 @@ async function main() {
   console.log("• other-org (empty, isolation test)");
   console.log("-----------------------------------------");
 }
-
-
 
 main()
   .catch((e) => {
