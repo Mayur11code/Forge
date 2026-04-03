@@ -56,12 +56,14 @@ if (!access) notFound();
   });
 
   // 🔥 EVENT EMISSION
-await publishEvent("TASK_CREATED", {
+await publishEvent("SEND_EMAIL", {
   orgId: project.orgId,
-  taskId: task.id,
-  projectId: task.projectId,
-  actorId: session.user.id,
+  subject: "New Task Created 🚀",
+  userId: session.user.id,
+  body: `Task "${task.title}" has been created with priority ${task.priority}.`,  
 });
+
+//REFACTOR LATER TO INCLUDE OUTBOX PATTERN TO AVOID DUAL WRITE PROBLEMS
 
   revalidatePath(`/org/${organization.slug}/projects/${data.projectId}`);
   return task;
