@@ -1,7 +1,7 @@
 import { createWorker } from "@/lib/events/worker";
 import { resend } from "@/lib/emails/email";
 
-export const POST = createWorker("SEND_EMAIL", async ({ event }) => {
+export async function emailWorkerHandler({ event }: { event: any }) {
   if(event.type !== "SEND_EMAIL") {
     return; // Ignore irrelevant events
   }
@@ -30,4 +30,4 @@ export const POST = createWorker("SEND_EMAIL", async ({ event }) => {
     console.error("❌ Email failed:", error);
     throw error; // IMPORTANT → triggers retry
   }
-});
+};

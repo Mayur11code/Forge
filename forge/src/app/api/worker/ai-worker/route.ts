@@ -1,6 +1,7 @@
 import { createWorker } from "@/lib/events/worker";
 
-export const POST = createWorker("EMBEDDING_REQUESTED", async ({ event }) => {
+export async function aiWorkerHandler({ event }: { event: any }) {
+
   if (event.type !== "EMBEDDING_REQUESTED") return;
 
   const { entityId, type } = event.data;
@@ -11,7 +12,7 @@ export const POST = createWorker("EMBEDDING_REQUESTED", async ({ event }) => {
   await new Promise((res) => setTimeout(res, 1000));
 
   console.log(`Generated embedding for ${type}: ${entityId}`);
-});
+};
 
 
 // PHASE 4 → REFACTOR TO USE WORKER FACTORY WITH
