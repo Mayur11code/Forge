@@ -10,6 +10,7 @@ const qstashClient = new Client({
   token: process.env.QSTASH_TOKEN!,
 });
 
+const USE_MULTI_TOPICS = false;
 // -----------------------------
 // TOPIC MAP (EVENT → TOPIC)
 // -----------------------------
@@ -22,6 +23,15 @@ const topicMap: Record<EventType, string> = {
   EMBEDDING_REQUESTED: "embedding-requested",
   AI_SUMMARY_REQUESTED: "ai-summary-requested",
 };
+
+export function getTopic(event: EventType): string {
+  if (USE_MULTI_TOPICS) {
+    return topicMap[event];
+  }
+
+  // Free tier fallback
+  return "events";
+}
 
 // -----------------------------
 // CLOUD EVENTS ENVELOPE
@@ -53,7 +63,8 @@ export async function publishEvent<K extends EventType>(
     throw new Error("Missing QSTASH_TOKEN");
   }
 
-  const topic = topicMap[eventName];
+  // const topic = topicMap[eventName];
+  const topic = getTopic(eventName);
 
   if (!topic) {
     throw new Error(`No topic configured for event: ${eventName}`);

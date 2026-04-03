@@ -43,6 +43,8 @@ export const eventSchemas = {
 
   SEND_EMAIL: baseEventSchema.extend({
     userId: z.string(),
+    subject: z.string(),
+    body: z.string(),
   }),
 
   PROCESS_FILE: baseEventSchema.extend({

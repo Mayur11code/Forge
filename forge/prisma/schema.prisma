@@ -185,3 +185,13 @@ model EventLog {
   @@index([status])
   @@index([createdAt])
 }
+
+model AnalyticsEvent {
+  id        String   @id @default(cuid())
+  eventName String
+  orgId     String?
+  createdAt DateTime @default(now())
+
+  @@index([eventName])
+  @@index([orgId])
+}
