@@ -22,6 +22,7 @@ const topicMap: Record<EventType, string> = {
   PROCESS_FILE: "process-file",
   EMBEDDING_REQUESTED: "embedding-requested",
   AI_SUMMARY_REQUESTED: "ai-summary-requested",
+  ANALYTICS_EVENT: "analytics-event",
 };
 
 export function getTopic(event: EventType): string {
@@ -42,7 +43,7 @@ function buildCloudEvent<K extends EventType>(
 ) {
   return {
     specversion: "1.0",
-    id: crypto.randomUUID(),
+    id: `${payload.orgId}-${eventName}-${Date.now()}`,
     type: eventName,
     source: "engineered-forge",
     time: new Date().toISOString(),

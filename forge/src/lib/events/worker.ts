@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { eventSchemas, EventType, EventPayloadMap } from "./schema";
 import { db } from "@/lib/prisma/db";
-
+import { analyticsWorkerHandler } from "@/app/api/worker/analytics-worker/route";
+import { waitUntil } from "@vercel/functions";
 
 
 
@@ -32,6 +33,12 @@ export function createWorker<K extends EventType>(
     try {
       const body = await req.json();
       const { id, type, data, time } = body;
+      waitUntil(
+        analyticsWorkerHandler({
+          event: { id, type, data, time }
+        })
+
+      );
       messageId = req.headers.get("Upstash-Message-Id");
 
       if (!messageId) return NextResponse.json({ error: "Missing messageId" }, { status: 400 });
@@ -42,6 +49,14 @@ export function createWorker<K extends EventType>(
       if (!parsed.success) throw new Error(`Invalid payload for ${type}`);
       const validatedData = parsed.data as EventPayloadMap[K];
 
+
+      // -----------------------------
+      // 📊 UNIVERSAL ANALYTICS INTERCEPT
+      // -----------------------------
+      // We construct the "event" object your function expects.
+      // Notice there is NO "await" here! It fires in the background.
+
+      
       // ------------------------------------------------------
       // IDEMPOTENCY & STATE CHECK
       // ------------------------------------------------------

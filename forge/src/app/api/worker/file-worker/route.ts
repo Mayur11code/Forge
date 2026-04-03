@@ -2,7 +2,7 @@ import { createWorker } from "@/lib/events/worker";
 import { publishEvent } from "@/lib/events/queue";
 import { db } from "@/lib/prisma/db";
 
-export const POST = createWorker("FILE_UPLOADED", async ({ event }) => {
+export async function fileWorkerHandler({ event }: { event: any }) {
   const { fileId } = event.data;
 
   const file = await db.attachment.findUnique({
@@ -30,4 +30,4 @@ export const POST = createWorker("FILE_UPLOADED", async ({ event }) => {
     entityId: fileId,
     type: "ATTACHMENT",
   });
-});
+};

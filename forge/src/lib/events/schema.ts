@@ -11,6 +11,7 @@ export const EventTypes = [
   "PROCESS_FILE",
   "EMBEDDING_REQUESTED",
   "AI_SUMMARY_REQUESTED",
+  "ANALYTICS_EVENT",
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
@@ -58,7 +59,13 @@ export const eventSchemas = {
 
   AI_SUMMARY_REQUESTED: baseEventSchema.extend({
     projectId: z.string(),
+
   }),
+  ANALYTICS_EVENT: baseEventSchema.extend({
+    eventName: z.string(),
+    metadata: z.record(z.string(), z.any()),
+  }),
+  
 } satisfies Record<EventType, z.ZodTypeAny>;
 
 // -----------------------------
