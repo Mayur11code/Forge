@@ -57,7 +57,7 @@ if (!access) notFound();
 
   // 🔥 EVENT EMISSION
 await publishEvent("SEND_EMAIL", {
-  orgId: project.orgId,
+  orgId: organization.slug,
   subject: "New Task Created 🚀",
   userId: session.user.id,
   body: `Task "${task.title}" has been created with priority ${task.priority}.`,  

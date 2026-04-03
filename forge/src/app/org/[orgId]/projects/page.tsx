@@ -4,6 +4,7 @@ import ProjectsMetaRefresh from "@/features/organizations/components/projects/pr
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { RealtimeListener } from "@/features/organizations/components/pusher/RealtimeListener";
 
 export default async function ProjectsPage({ params }: { params: Promise<{ orgId: string }> }) {
     const { orgId } = await params;
@@ -47,6 +48,7 @@ export default async function ProjectsPage({ params }: { params: Promise<{ orgId
                 orgSlug={orgId}
                 initialMeta={initialMeta}
             />
+           
 
                 {canCreateProject && (
                     <Link
