@@ -22,9 +22,12 @@
     "next": "16.1.3",
     "next-auth": "^5.0.0-beta.30",
     "pg": "^8.18.0",
+    "pusher": "^5.3.3",
+    "pusher-js": "^8.5.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
+    "sonner": "^2.0.7",
     "uploadthing": "^7.7.4",
     "use-debounce": "^10.1.0"
   },

@@ -1,7 +1,9 @@
 // src/app/org/[orgId]/layout.tsx
-import "@/app/globals.css";
+// Global styles for the entire app
 import { OrgProvider } from "@/contexts/OrgContext";
+import { RealtimeListener } from "@/features/organizations/components/pusher/RealtimeListener";
 import { Sidebar } from "@/features/organizations/components/Sidebar";
+
 
 export default async function OrgLayout({
   children,
@@ -15,7 +17,7 @@ export default async function OrgLayout({
   return (
     // Main wrapper: Deep zinc background for a professional "Dark Mode" feel
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans antialiased">
-
+      <RealtimeListener orgId={orgId} /> {/* Real-time listener for this org */}
       {/* Sidebar Area: Border-r separates it with a subtle dark stroke */}
       <aside className="border-r border-zinc-800/50 bg-zinc-900/30 backdrop-blur-xl">
         <Sidebar orgId={orgId} />
@@ -46,6 +48,7 @@ export default async function OrgLayout({
             <OrgProvider orgSlug={(await params).orgId}>
               {children}
             </OrgProvider>
+
 
           </div>
         </div>

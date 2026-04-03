@@ -1,5 +1,6 @@
 import { createWorker } from "@/lib/events/worker";
 import { resend } from "@/lib/emails/email";
+import { pusherServer } from "@/lib/pusher/pusher-server";
 
 export async function emailWorkerHandler({ event }: { event: any }) {
   if(event.type !== "SEND_EMAIL") {
@@ -23,7 +24,12 @@ export async function emailWorkerHandler({ event }: { event: any }) {
 
       `,
     });
-
+    await pusherServer.trigger(
+    `org-${orgId}`,        // channel
+    "job-completed",         // event name
+    {
+      message: "Email sent successfully 🚀",
+    });
     console.log("✅ Email sent successfully");
 
   } catch (error) {
