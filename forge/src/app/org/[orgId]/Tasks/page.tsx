@@ -4,6 +4,7 @@ import TaskBox from "@/features/organizations/components/Taskbox";
 import { db } from "@/lib/prisma/db";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
+import UpgradeButton from "@/features/organizations/components/razerpay/upgrade";
 
 export default async function TasksPage({
   params,
@@ -107,7 +108,7 @@ const filter =typeof resolvedSearchParams?.filter === "string" ? resolvedSearchP
           {session?.user?.role}
         </span>
       </p>
-
+      <UpgradeButton orgId={organization.id} />
       <TaskBox
         mode="org"
         param={{ orgId }}

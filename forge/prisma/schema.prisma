@@ -139,6 +139,11 @@ model Organization {
   logo         String?
   projects    Project[]
   invitations Invitation[]
+  razorpayCustomerId      String?   @unique
+  razorpaySubscriptionId  String?   @unique
+  planId                  String?
+  subscriptionStatus      String?
+  currentPeriodEnd        DateTime?
 }
 
 model Membership {
@@ -195,3 +200,8 @@ model AnalyticsEvent {
   @@index([eventName])
   @@index([orgId])
 }
+
+model RazorpayEvent {
+  id String @id
+  createdAt DateTime @default(now())
+} 
