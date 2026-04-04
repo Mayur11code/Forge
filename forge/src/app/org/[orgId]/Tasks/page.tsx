@@ -1,6 +1,6 @@
 import { auth } from "@/lib/auth/auth";
 // import { requireOrgAccess } from "@/features/organizations/require-org-access";
-import TaskBox from "@/features/organizations/components/TaskBox";
+import TaskBox from "@/features/organizations/components/Taskbox";
 import { db } from "@/lib/prisma/db";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
