@@ -10,9 +10,7 @@ import AlreadyUsedPage from "@/features/organizations/components/invitation/Alre
 
 
 interface PageProps {
-  params: {
-    token: string;
-  };
+  token: string;
 }
 
 export const dynamic = "force-dynamic"; // Ensure no caching
