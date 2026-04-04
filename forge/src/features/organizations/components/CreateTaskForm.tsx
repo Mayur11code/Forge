@@ -10,17 +10,29 @@ export default function CreateTaskForm({ onCreate }: CreateTaskFormProps) {
   const [title, setTitle] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    
 
+    if (isSubmitting) return;
     if (title.trim().length < 3) return;
 
     setIsSubmitting(true);
 
-    await onCreate(title.trim());
-    setTitle("");
-    setIsSubmitting(false);
+    try {
+      await onCreate(title.trim());
+      setTitle("");
+    } catch (err: any) {
+      // 🎯 Handle rate limit error
+      if (err.message?.includes("too fast")) {
+        alert("⚠️ Slow down! Please wait a few seconds.");
+      } else {
+        alert("Something went wrong. Try again.");
+      }
+    } finally {
+      // ✅ Always reset state
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -54,7 +66,7 @@ export default function CreateTaskForm({ onCreate }: CreateTaskFormProps) {
         disabled={isSubmitting || title.trim().length < 3}
         className="rounded-md bg-black px-4 py-2 text-sm text-white disabled:opacity-50"
       >
-        Add
+        {isSubmitting ? "Creating..." : "Add Task"}
       </button>
     </form>
   );

@@ -1,6 +1,7 @@
 "use server";
 
 import { db } from "@/lib/prisma/db";
+import { rateLimit } from "@/lib/redis/rate-limit";
 import { auth } from "@/lib/auth/auth";
 import { createTaskSchema } from "@/core/domain";
 // import { requireOrgAccess } from "@/features/organizations/require-org-access";
@@ -28,12 +29,12 @@ export async function createTask(input: unknown) {
       orgId: true,
     },
   });
-//   await new Promise(resolve => setTimeout(resolve, 3000));
+  //   await new Promise(resolve => setTimeout(resolve, 3000));
 
   if (!project) {
     throw new Error("Project not found");
   }
-  
+
   const organization = await db.organization.findUnique({
     where: { id: project.orgId }
   });
@@ -42,8 +43,19 @@ export async function createTask(input: unknown) {
   }
   // await requireOrgAccess(organization.slug);
   const access = await getOrgAccess(organization.slug);
-if (!access) notFound();
+  if (!access) notFound();
 
+  const { success, limit, remaining, reset } =
+    await rateLimit.limit(session.user.id);
+const result = await rateLimit.limit(session.user.id);
+
+console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.limit, "Limit reset in", result.reset, "seconds");
+  // 3. BLOCK IF EXCEEDED
+  if (!success) {
+    console.warn(`[RATE LIMIT] User ${session.user.id} blocked`);
+
+    throw new Error("You are doing that too fast. Please wait 10 seconds.");
+  }
 
   // 4️⃣ Create task
   const task = await db.task.create({
@@ -56,14 +68,14 @@ if (!access) notFound();
   });
 
   // 🔥 EVENT EMISSION
-await publishEvent("SEND_EMAIL", {
-  orgId: organization.slug,
-  subject: "New Task Created 🚀",
-  userId: session.user.id,
-  body: `Task "${task.title}" has been created with priority ${task.priority}.`,  
-});
+  await publishEvent("SEND_EMAIL", {
+    orgId: organization.slug,
+    subject: "New Task Created 🚀",
+    userId: session.user.id,
+    body: `Task "${task.title}" has been created with priority ${task.priority}.`,
+  });
 
-//REFACTOR LATER TO INCLUDE OUTBOX PATTERN TO AVOID DUAL WRITE PROBLEMS
+  //REFACTOR LATER TO INCLUDE OUTBOX PATTERN TO AVOID DUAL WRITE PROBLEMS
 
   revalidatePath(`/org/${organization.slug}/projects/${data.projectId}`);
   return task;
