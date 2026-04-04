@@ -24,7 +24,7 @@ type OrgModeProps = {
 
 type TaskBoxProps = ProjectModeProps | OrgModeProps;
 
-export default function TasksPage(props: TaskBoxProps) {
+export default function TaskBox(props: TaskBoxProps) {
   const isProjectMode = props.mode === "project";
   
   // 1. Move hooks to the top level
