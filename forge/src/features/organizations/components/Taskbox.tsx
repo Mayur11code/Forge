@@ -26,7 +26,7 @@ type TaskBoxProps = ProjectModeProps | OrgModeProps;
 
 export default function TaskBox(props: TaskBoxProps) {
   const isProjectMode = props.mode === "project";
-  
+
   // 1. Move hooks to the top level
   const pathname = usePathname();
   const { replace } = useRouter();
@@ -58,36 +58,51 @@ export default function TaskBox(props: TaskBoxProps) {
   }
 
   async function handleAddTask(title: string) {
-    if (!isProjectMode) return;
+  if (!isProjectMode) return { success: false, error: "Not in project mode" };
 
-    const tempId = Math.random().toString();
-    const tempTask: Task = {
-      id: tempId,
-      title,
-      status: "TODO",
-      priority: "MEDIUM",
-      projectId: props.projectId, // Safe because of isProjectMode check
-      assigneeId: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      description: "No description provided.",
-    };
+  const tempId = Math.random().toString();
+  const tempTask: Task = {
+    id: tempId,
+    title,
+    status: "TODO",
+    priority: "MEDIUM",
+    projectId: props.projectId,
+    assigneeId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    description: "No description provided.",
+  };
 
-    startTransition(async () => {
-      updateOptimisticTasks({ type: "add", task: tempTask });
-      try {
-        const result = await createTask({ title, projectId: props.projectId });
-        // Usually, you replace the temp object with the real one from the DB
+  // 1. Trigger the optimistic UI update immediately inside a transition
+  startTransition(() => {
+    updateOptimisticTasks({ type: "add", task: tempTask });
+  });
+
+  try {
+    // 2. Call the Server Action (Wait for the real result)
+    const result = await createTask({ title, projectId: props.projectId });
+
+    if (result.success && result.task) {
+      // 3. Replace the temp task with the real one inside a transition
+      startTransition(() => {
         updateOptimisticTasks({
           type: "replace",
-          task: result, 
+          task: result.task!, 
           tempId,
         });
-      } catch (e) {
-        console.error(e);
-      }
-    });
+      });
+      
+      // 4. Return the result to the child component
+      return result; 
+    } else {
+      console.warn("Task creation failed:", result.error);
+      return result;
+    }
+  } catch (e) {
+    console.error(e);
+    return { success: false, error: "An unexpected error occurred" };
   }
+}
 
   const filterOptions = [
     { id: "ALL", label: "All", icon: Layers },

@@ -53,8 +53,13 @@ console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.l
   // 3. BLOCK IF EXCEEDED
   if (!success) {
     console.warn(`[RATE LIMIT] User ${session.user.id} blocked`);
-
-    throw new Error("You are doing that too fast. Please wait 10 seconds.");
+    return{
+      success: false,
+    error: "RATE_LIMIT",
+    remaining: 0,
+    reset: result.reset,
+    }
+    // throw new Error("You are doing that too fast. Please wait 10 seconds.");
   }
 
   // 4️⃣ Create task
@@ -78,5 +83,10 @@ console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.l
   //REFACTOR LATER TO INCLUDE OUTBOX PATTERN TO AVOID DUAL WRITE PROBLEMS
 
   revalidatePath(`/org/${organization.slug}/projects/${data.projectId}`);
-  return task;
+  return {
+  success: true,
+  task,
+  remaining: result.remaining,
+  reset: result.reset,
+};
 }
