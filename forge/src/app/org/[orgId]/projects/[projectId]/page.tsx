@@ -1,7 +1,7 @@
 import { auth } from "@/lib/auth/auth";
 import { db } from "@/lib/prisma/db";
 import { notFound } from "next/navigation";
-import TaskBox from "@/features/organizations/components/TaskBox";
+import TaskBox from "@/features/organizations/components/Taskbox";
 // import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { Prisma } from "@prisma/client";
