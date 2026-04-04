@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createWorker } from "@/lib/events/worker";
 
 // Import your wrapped workers
-import { fileWorkerHandler } from "@/app/api/worker/file-worker/route";
-import { emailWorkerHandler } from "@/app/api/worker/email-worker/route";
-import { aiWorkerHandler } from "@/app/api/worker/ai-worker/route";
+import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
+import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
+import { aiWorkerHandler } from "@/app/api/worker/ai-worker/ai-worker";
 
 
 
