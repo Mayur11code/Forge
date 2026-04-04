@@ -6,7 +6,7 @@ import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
 import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 import { aiWorkerHandler } from "@/app/api/worker/ai-worker/ai-worker";
 
-
+import { rateLimit } from "@/lib/redis/rate-limit";
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
 const handleEmail = createWorker("SEND_EMAIL", emailWorkerHandler);
@@ -17,6 +17,20 @@ export async function POST(req: NextRequest) {
     const clonedReq = req.clone();
     const body = await clonedReq.json();
     const { id, type, data, time } = body;
+ const ip =
+    req.headers.get("x-forwarded-for") ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+
+  // 2️⃣ RATE LIMIT CHECK
+  const { success } = await rateLimit.limit(`worker_${ip}`);
+
+  // 3️⃣ BLOCK IF EXCEEDED
+  if (!success) {
+    console.warn(`[RATE LIMIT] Worker blocked for IP: ${ip}`);
+    return new Response("Too Many Requests", { status: 429 });
+  }
+
 
     if (!type) {
       return NextResponse.json({ error: "Missing event type" }, { status: 400 });
