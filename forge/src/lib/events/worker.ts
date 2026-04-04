@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { eventSchemas, EventType, EventPayloadMap } from "./schema";
 import { db } from "@/lib/prisma/db";
-import { analyticsWorkerHandler } from "@/app/api/worker/analytics-worker/route";
+import { analyticsWorkerHandler } from "@/app/api/worker/analytics-worker/aw";
 import { waitUntil } from "@vercel/functions";
 
 
