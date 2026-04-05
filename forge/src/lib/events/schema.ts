@@ -12,6 +12,7 @@ export const EventTypes = [
   "EMBEDDING_REQUESTED",
   "AI_SUMMARY_REQUESTED",
   "ANALYTICS_EVENT",
+  "CRON_DAILY_DIGEST",
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
@@ -65,6 +66,7 @@ export const eventSchemas = {
     eventName: z.string(),
     metadata: z.record(z.string(), z.any()),
   }),
+  CRON_DAILY_DIGEST: baseEventSchema,
   
 } satisfies Record<EventType, z.ZodTypeAny>;
 
