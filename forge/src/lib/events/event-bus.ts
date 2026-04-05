@@ -198,13 +198,22 @@ export async function dispatchEvent<K extends keyof typeof EVENT_ROUTING>(trigge
 
     if (!handlers) return;
 
-    await Promise.all(
+    // Use allSettled so one failure doesn't kill the whole batch
+    const results = await Promise.allSettled(
         handlers.map((handlerFn) => {
-            // 1. Run the function to get the "Job" object
             const job = handlerFn(payload);
-
-            // 2. Now 'job' has the 'type' and 'payload' properties
             return publishEvent(job.type, job.payload);
         })
     );
+
+    // Optional: Log errors for failed jobs so they don't disappear into the void
+    results.forEach((result, index) => {
+        if (result.status === 'rejected') {
+            console.error(
+                `❌ Event failed at index ${index} for trigger "${trigger}":`, 
+                result.reason
+            );
+            // Here you could also send this to an error tracking service like Sentry
+        }
+    });
 }
