@@ -9,6 +9,7 @@ import { createTaskSchema } from "@/core/domain";
 import { revalidatePath } from "next/cache";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
+import { User } from "lucide-react";
 
 
 export async function createTask(input: unknown) {
@@ -74,10 +75,11 @@ console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.l
   });
 
   // 🔥 EVENT EMISSION
-  dispatchEvent("PROJECT_ADDED", {
-    projectId: data.projectId,
+  await dispatchEvent("TASK_CREATED", {
+    orgId: organization.id,
     taskId: task.id,
-    title: task.title,
+    userId: session.user.id,
+    projectId: data.projectId,
     subject: "New Task Added",
     body: `A new task "${task.title}" has been added to your project.`,
   });
