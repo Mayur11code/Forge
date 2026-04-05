@@ -5,11 +5,13 @@ import { createWorker } from "@/lib/events/worker";
 import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
 import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 import { aiWorkerHandler } from "@/app/api/worker/ai-worker/ai-worker";
+import { cronWorkerHandler } from "@/app/api/worker/cron-worker/cw";
 
 import { rateLimit } from "@/lib/redis/rate-limit";
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
 const handleEmail = createWorker("SEND_EMAIL", emailWorkerHandler);
+const handleCron = createWorker("CRON_DAILY_DIGEST", cronWorkerHandler);
 const handleAI = createWorker("EMBEDDING_REQUESTED", aiWorkerHandler);
 
 export async function POST(req: NextRequest) {
@@ -17,19 +19,19 @@ export async function POST(req: NextRequest) {
     const clonedReq = req.clone();
     const body = await clonedReq.json();
     const { id, type, data, time } = body;
- const ip =
-    req.headers.get("x-forwarded-for") ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
+    const ip =
+      req.headers.get("x-forwarded-for") ||
+      req.headers.get("x-real-ip") ||
+      "unknown";
+    console.log(`🚀 [WORKER] Event received: ${type}`);
+    // 2️⃣ RATE LIMIT CHECK
+    const { success } = await rateLimit.limit(`worker_${ip}`);
 
-  // 2️⃣ RATE LIMIT CHECK
-  const { success } = await rateLimit.limit(`worker_${ip}`);
-
-  // 3️⃣ BLOCK IF EXCEEDED
-  if (!success) {
-    console.warn(`[RATE LIMIT] Worker blocked for IP: ${ip}`);
-    return new Response("Too Many Requests", { status: 429 });
-  }
+    // 3️⃣ BLOCK IF EXCEEDED
+    if (!success) {
+      console.warn(`[RATE LIMIT] Worker blocked for IP: ${ip}`);
+      return new Response("Too Many Requests", { status: 429 });
+    }
 
 
     if (!type) {
@@ -43,7 +45,7 @@ export async function POST(req: NextRequest) {
     // -----------------------------
     switch (type) {
       case "FILE_UPLOADED":
-      
+
         return await handleFileUpload(req);
 
       case "SEND_EMAIL":
@@ -51,6 +53,9 @@ export async function POST(req: NextRequest) {
 
       case "EMBEDDING_REQUESTED":
         return await handleAI(req);
+
+      case "CRON_DAILY_DIGEST":
+  return await handleCron(req);
 
       default:
         console.log(`⚠️ No handler configured for event: ${type}`);

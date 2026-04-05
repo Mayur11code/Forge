@@ -23,6 +23,7 @@ const topicMap: Record<EventType, string> = {
   EMBEDDING_REQUESTED: "embedding-requested",
   AI_SUMMARY_REQUESTED: "ai-summary-requested",
   ANALYTICS_EVENT: "analytics-event",
+  CRON_DAILY_DIGEST: "cron-daily-digest",
 };
 
 export function getTopic(event: EventType): string {
