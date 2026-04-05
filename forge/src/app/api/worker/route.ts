@@ -24,15 +24,7 @@ export async function POST(req: NextRequest) {
       req.headers.get("x-real-ip") ||
       "unknown";
     console.log(`🚀 [WORKER] Event received: ${type}`);
-    // 2️⃣ RATE LIMIT CHECK
-    // const { success } = await rateLimit.limit(`worker_${ip}`);
-
-    // // 3️⃣ BLOCK IF EXCEEDED
-    // if (!success) {
-    //   console.warn(`[RATE LIMIT] Worker blocked for IP: ${ip}`);
-    //   return new Response("Too Many Requests", { status: 429 });
-    // }
-
+ 
 
     if (!type) {
       return NextResponse.json({ error: "Missing event type" }, { status: 400 });
