@@ -32,8 +32,15 @@ export async function POST(req: Request) {
     const event = JSON.parse(body);
     const eventType = event.event;
     
-    // 🚨 CRITICAL FIX: Use the actual Event ID, not the Subscription ID!
-    const eventId = event.id; 
+   // Extract the entity ID based on the event type
+// For subscriptions, it's in payload.subscription.entity.id
+const entityId = event.payload?.subscription?.entity?.id || 
+                 event.payload?.payment?.entity?.id || 
+                 "unknown";
+
+// 🚨 FIX: Razorpay doesn't always provide a top-level event.id. 
+// We create a "Synthetic ID" to ensure we don't process the SAME event twice.
+const eventId = event.id || `${eventType}_${entityId}_${event.created_at}`;
 
     console.log(`📩 Processing Razorpay Event: ${eventType} (${eventId})`);
 
