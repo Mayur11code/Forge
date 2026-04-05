@@ -13,6 +13,10 @@ export const EventTypes = [
   "AI_SUMMARY_REQUESTED",
   "ANALYTICS_EVENT",
   "CRON_DAILY_DIGEST",
+  "NOTIFY_PROJECT_OWNER",
+  "GENERATE_COMPLETION_REPORT",
+  "CREATE_DEFAULT_ORG",
+  "SEND_WELCOME_EMAIL",
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
@@ -67,6 +71,17 @@ export const eventSchemas = {
     metadata: z.record(z.string(), z.any()),
   }),
   CRON_DAILY_DIGEST: baseEventSchema,
+  NOTIFY_PROJECT_OWNER: baseEventSchema.extend({
+    projectId: z.string(),
+  }),
+  GENERATE_COMPLETION_REPORT: baseEventSchema.extend({
+    projectId: z.string(),
+  }),
+  
+  CREATE_DEFAULT_ORG: baseEventSchema,
+  SEND_WELCOME_EMAIL: baseEventSchema.extend({
+    userId: z.string(),
+  }),
   
 } satisfies Record<EventType, z.ZodTypeAny>;
 

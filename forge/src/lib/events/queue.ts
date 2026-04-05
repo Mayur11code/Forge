@@ -24,6 +24,11 @@ const topicMap: Record<EventType, string> = {
   AI_SUMMARY_REQUESTED: "ai-summary-requested",
   ANALYTICS_EVENT: "analytics-event",
   CRON_DAILY_DIGEST: "cron-daily-digest",
+  NOTIFY_PROJECT_OWNER: "notify-project-owner",
+  GENERATE_COMPLETION_REPORT: "generate-completion-report",
+  
+  CREATE_DEFAULT_ORG: "create-default-org",
+  SEND_WELCOME_EMAIL: "send-welcome-email",
 };
 
 export function getTopic(event: EventType): string {

@@ -2,13 +2,14 @@
 
 import { db } from "@/lib/prisma/db";
 import { rateLimit } from "@/lib/redis/rate-limit";
+import { dispatchEvent } from "@/lib/events/event-bus";
 import { auth } from "@/lib/auth/auth";
 import { createTaskSchema } from "@/core/domain";
 // import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { revalidatePath } from "next/cache";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
-import { publishEvent } from "@/lib/events/queue";
+
 
 export async function createTask(input: unknown) {
   // 1️⃣ Auth
@@ -73,11 +74,12 @@ console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.l
   });
 
   // 🔥 EVENT EMISSION
-  await publishEvent("SEND_EMAIL", {
-    orgId: organization.slug,
-    subject: "New Task Created 🚀",
-    userId: session.user.id,
-    body: `Task "${task.title}" has been created with priority ${task.priority}.`,
+  dispatchEvent("PROJECT_ADDED", {
+    projectId: data.projectId,
+    taskId: task.id,
+    title: task.title,
+    subject: "New Task Added",
+    body: `A new task "${task.title}" has been added to your project.`,
   });
 
   //REFACTOR LATER TO INCLUDE OUTBOX PATTERN TO AVOID DUAL WRITE PROBLEMS
