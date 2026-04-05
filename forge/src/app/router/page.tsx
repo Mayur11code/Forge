@@ -1,6 +1,7 @@
 // src/app/dashboard/page.tsx
 import { auth } from "@/lib/auth/auth";
 import { redirect } from "next/navigation";
+
 import { db } from "@/lib/prisma/db";
 
 export default async function DashboardEntryPage() {
