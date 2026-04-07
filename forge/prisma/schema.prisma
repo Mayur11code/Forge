@@ -144,6 +144,7 @@ model Organization {
   planId                  String?
   subscriptionStatus      String?
   currentPeriodEnd        DateTime?
+  workflows   Workflow[]
 }
 
 model Membership {
@@ -205,3 +206,56 @@ model RazorpayEvent {
   id String @id
   createdAt DateTime @default(now())
 } 
+
+model Workflow {
+  id          String   @id @default(cuid()) // or uuid(), both are fine
+  name        String
+  description String?
+  isActive    Boolean  @default(false)
+  
+  // ------------------------------------------------------
+  // 1. THE VISUAL STATE (For React Flow UI - Assignment 25)
+  // Stores { id, type, position: {x,y}, data }
+  // ------------------------------------------------------
+  uiNodes     Json     @default("[]") 
+  uiEdges     Json     @default("[]")
+  
+  // ------------------------------------------------------
+  // 2. THE EXECUTION BLUEPRINT (For DAG Engine - Assignment 26)
+  // An Adjacency Dictionary stripped of UI bloat.
+  // e.g. { "trigger_1": ["action_email"], "action_email": ["action_slack"] }
+  // ------------------------------------------------------
+  definition  Json     @default("{}")
+  
+  // ------------------------------------------------------
+  // 3. MULTI-TENANCY & EVENT TRIGGERS
+  // ------------------------------------------------------
+  orgId       String
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  
+  eventId     String? // Nullable initially until the user connects a trigger
+  // Assuming you have an Event model:
+  // event    Event?  @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  
+  runs        WorkflowRun[] // Excellent addition for observability
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([eventId])
+}
+
+// Don't forget the WorkflowRun model you referenced!
+model WorkflowRun {
+  id          String   @id @default(cuid())
+  workflowId  String
+  status      String   // e.g., "PENDING", "SUCCESS", "FAILED"
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  logs        Json     @default("[]") // For stack traces/DLQ tracking
+  
+  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  
+  @@index([workflowId])
+}
