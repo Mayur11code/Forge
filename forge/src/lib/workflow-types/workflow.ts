@@ -48,13 +48,16 @@ export const ActionNodeDataSchema = z.object({
 export type TriggerNodeData = z.infer<typeof TriggerNodeDataSchema>;
 export type ActionNodeData = z.infer<typeof ActionNodeDataSchema>;
 
+// Create specific types for the FULL nodes
+export type TriggerNodeType = Node<TriggerNodeData, 'trigger'>;
+export type ActionNodeType = Node<ActionNodeData, 'action'>;
+
+// Now AppNode is a union of those full nodes
+export type AppNode = TriggerNodeType | ActionNodeType;
 // ------------------------------------------------------------------
 // 3. REACT FLOW TYPES (The Visual State)
 // ------------------------------------------------------------------
 
-export type AppNode = 
-  | Node<TriggerNodeData, 'trigger'>
-  | Node<ActionNodeData, 'action'>;
 
 export type AppEdge = Edge;
 
