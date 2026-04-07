@@ -114,7 +114,7 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
       
       // If we have a workflowId, we are EDITING an existing DAG
       if (workflowId) {
-        const result = await updateWorkflowState(workflowId, nodes, edges);
+        const result = await updateWorkflowState(orgId, workflowId, nodes, edges);
         if (result.success) alert("Workflow Updated!");
         else alert("Failed to update.");
       } 
