@@ -46,7 +46,7 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes || []);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges || []);
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition,getNodes } = useReactFlow();
   
 
   // --- ENTERPRISE GUARDRAIL: Cycle Detection ---
@@ -110,9 +110,11 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
       const type = event.dataTransfer.getData('application/reactflow');
       if (!type) return;
 
-      // --- ENTERPRISE GUARDRAIL: Single Entry Point ---
+    // --- ENTERPRISE GUARDRAIL: Single Entry Point ---
       if (type === 'trigger') {
-        const alreadyHasTrigger = nodes.some((n) => n.type === 'trigger');
+        // FIX: Use getNodes() to get the absolute latest state, bypassing the stale closure!
+        const currentNodes = getNodes();
+        const alreadyHasTrigger = currentNodes.some((n) => n.type === 'trigger');
         if (alreadyHasTrigger) {
           alert("Workflows can only have one Trigger event.");
           return; // Drop rejected!
