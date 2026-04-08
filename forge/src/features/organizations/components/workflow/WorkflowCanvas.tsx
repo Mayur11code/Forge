@@ -9,6 +9,7 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
+  getOutgoers, // Utility to find connected nodes (for tree traversal)
   useReactFlow,
   type Connection,
 } from '@xyflow/react';
@@ -22,7 +23,7 @@ import { useTransition } from 'react';
 // 1. Import our custom nodes and types!
 import TriggerNode from './nodes/TriggerNode';
 import ActionNode from './nodes/ActionNode';
-import type { AppNode, AppEdge } from '@/lib/workflow-types/workflow'; // Import the union type for all nodes
+import type { AppNode, AppEdge} from '@/lib/workflow-types/workflow'; // Import the union type for all nodes
 import Sidebar from './sidebar';
 import { Loader2, Save } from 'lucide-react'; // Ensure AppEdge is imported
 import { init } from 'next/dist/compiled/webpack/webpack';
@@ -48,6 +49,47 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
   const { screenToFlowPosition } = useReactFlow();
   
 
+  // --- ENTERPRISE GUARDRAIL: Cycle Detection ---
+  const isValidConnection = useCallback(
+    (connection: Connection | AppEdge) => {
+      // 1. Prevent self-loops (node connecting to itself)
+      if (connection.source === connection.target) return false;
+
+      const targetNode = nodes.find((n) => n.id === connection.target);
+      // THis is a sanity check. In theory, React Flow shouldn't even allow this 
+      // connection to be attempted since the target node wouldn't 
+      // exist in the first place. But we check just in case!
+      if (!targetNode) return false;
+      //
+
+      // 2. Prevent infinite loops (cycles)
+      // We check if connecting [source] -> [target] creates a loop.
+      // It's a loop if the [source] is ALREADY a downstream descendant of [target].
+      const hasCycle = (node: AppNode, visited = new Set<string>()): boolean => {
+        //earlier you used Node: node but this is wrong since typescript already have a node type in scope. You should use a different variable name to avoid confusion.
+        if (visited.has(node.id)) return false;
+        visited.add(node.id);
+
+        // getOutgoers instantly fetches the immediate downstream children
+        const outgoers = getOutgoers(node, nodes, edges);
+        for (const outgoer of outgoers) {
+          if (outgoer.id === connection.source) return true; // Cycle detected!
+          if (hasCycle(outgoer, visited)) return true;
+        }
+        return false;
+      };
+
+      if (hasCycle(targetNode)) {
+        // Optional: you can use a toast notification here instead of an alert
+        alert("Action blocked: This connection would create an infinite loop.");
+        return false;
+      }
+
+      return true; // Connection is valid!
+    },
+    [nodes, edges]
+  );
+
   // Handles drawing lines between nodes
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge(params, eds)),
@@ -67,6 +109,15 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
 
       const type = event.dataTransfer.getData('application/reactflow');
       if (!type) return;
+
+      // --- ENTERPRISE GUARDRAIL: Single Entry Point ---
+      if (type === 'trigger') {
+        const alreadyHasTrigger = nodes.some((n) => n.type === 'trigger');
+        if (alreadyHasTrigger) {
+          alert("Workflows can only have one Trigger event.");
+          return; // Drop rejected!
+        }
+      }
 
       const position = screenToFlowPosition({
         x: event.clientX,
@@ -154,6 +205,7 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
         onConnect={onConnect}
         onDrop={onDrop}
         onDragOver={onDragOver}
+        isValidConnection={isValidConnection}
         nodeTypes={nodeTypes}
         fitView
         colorMode='dark'
