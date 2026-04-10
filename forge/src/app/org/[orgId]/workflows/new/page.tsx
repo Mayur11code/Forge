@@ -26,9 +26,9 @@ export default async function NewWorkflowPage({ params }: { params: Promise<{ or
 
       {/* Main Canvas Area */}
       <main className="flex-1 overflow-hidden p-4">
-        <div className="h-full w-full rounded-xl border border-black bg-zinc-950 shadow-2xl overflow-hidden">
+        
           <WorkflowBuilder />
-        </div>
+       
       </main>
 
     </div>
