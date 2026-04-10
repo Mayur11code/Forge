@@ -27,6 +27,7 @@ import type { AppNode, AppEdge} from '@/lib/workflow-types/workflow'; // Import 
 import Sidebar from './sidebar';
 import { Loader2, Save } from 'lucide-react'; // Ensure AppEdge is imported
 import { init } from 'next/dist/compiled/webpack/webpack';
+import PropertiesPanel from './PropertiesPanel';
 
 interface WorkflowCanvasProps {
   workflowId?: string; // If undefined, we are creating a new one
@@ -227,6 +228,7 @@ export default function WorkflowBuilder(props: WorkflowCanvasProps) {
       {/* The Provider is REQUIRED so CanvasArea can use the screenToFlowPosition hook */}
       <ReactFlowProvider>
         <CanvasArea {...props} />
+        <PropertiesPanel />
       </ReactFlowProvider>
     </div>
   );
