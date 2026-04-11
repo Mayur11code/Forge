@@ -165,7 +165,7 @@ export default function Home() {
 
         {/* LinkedIn Button */}
         <a 
-          href="https://www.linkedin.com/in/YOUR-PROFILE-LINK-HERE" 
+          href="https://www.linkedin.com/in/mayur-nanda1121/"
           target="_blank" 
           rel="noopener noreferrer"
           className="inline-flex items-center justify-center px-6 py-3 sm:px-8 sm:py-3.5 rounded-full bg-white text-slate-950 text-sm sm:text-base font-semibold transition-all duration-500 ease-out hover:bg-slate-100 hover:scale-105 hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.4)] active:scale-95 w-full sm:w-auto"
