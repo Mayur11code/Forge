@@ -1,25 +1,27 @@
 'use server';
 
-import { db } from '@/lib/prisma/db'; // Adjust this import based on where your prisma client lives
+import { db } from '@/lib/prisma/db'; 
 import { revalidatePath } from 'next/cache';
 import { getOrgAccess } from '@/features/organizations/getOrgAccess';
-import OrgLayout from '@/app/org/[orgId]/layout';
 import { z } from 'zod';
-import { TriggerNodeDataSchema } from '@/lib/workflow-types/workflow';
-import { ActionNodeDataSchema } from '@/lib/workflow-types/workflow';
-// 1. Create a schema to validate the incoming UI Arrays
+import { TriggerNodeDataSchema, ActionNodeDataSchema } from '@/lib/workflow-types/workflow';
+
+// Import the compiler we just built!
+import { compileWorkflow } from '@/features/organizations/components/workflow/compiler';
+
 const IncomingNodeSchema = z.object({
   id: z.string(),
   type: z.enum(['trigger', 'action']),
   position: z.object({ x: z.number(), y: z.number() }),
-  // Validate the payload based on the node type
   data: z.discriminatedUnion('type', [
     z.object({ type: z.literal('trigger') }).merge(TriggerNodeDataSchema),
     z.object({ type: z.literal('action') }).merge(ActionNodeDataSchema)
-  ]).optional().or(z.any()), // Simplified for example, but you get the idea!
+  ]).optional().or(z.any()),
 });
 
-
+// ------------------------------------------------------------------
+// CREATE WORKFLOW
+// ------------------------------------------------------------------
 export async function saveWorkflowState(
   orgslug: string, 
   name: string,
@@ -27,36 +29,36 @@ export async function saveWorkflowState(
   uiEdges: any[]
 ) {
   try {
-    // 1. In a real app, you'd check auth here (e.g., const session = await auth();)
     const access = await getOrgAccess(orgslug);
-    if (!access) {
-      return { success: false, error: "Unauthorized" };
-    }
+    if (!access) return { success: false, error: "Unauthorized" };
 
-    const areNodesValid = z.array(z.any()).safeParse(uiNodes); // Replace z.any() with strict schema in production
-    
-    if (!areNodesValid.success) {
-      return { success: false, error: "Malformed workflow data. Save rejected." };
-    }
+    const areNodesValid = z.array(z.any()).safeParse(uiNodes); 
+    if (!areNodesValid.success) return { success: false, error: "Malformed workflow data." };
 
     const orgId = access.organization.id;
-    // 2. Save to PostgreSQL via Prisma
+
+    // --- THE COMPILER INJECTION ---
+    const compiledDefinition = compileWorkflow(uiNodes, uiEdges);
+    
+    // Find the trigger to extract the global event ID
+    const triggerNode = uiNodes.find(n => n.type === 'trigger');
+    const eventId = triggerNode?.data?.eventId || null;
+
     const workflow = await db.workflow.create({
       data: {
         name,
         orgId,
-        // Prisma will automatically serialize these arrays into JSONB for Postgres
         uiNodes: uiNodes, 
         uiEdges: uiEdges,
-        // We leave definition empty for now. Assignment 26 will compile the DAG here!
-        definition: {}, 
-        isActive: false,
+        // Inject the compiled DAG!
+        definition: compiledDefinition, 
+        // Sync the DB schema with the trigger configuration
+        eventId: eventId,
+        isActive: !!eventId, // Only active if a trigger is actually set
       }
     });
 
-    // 3. Clear the Next.js cache so the dashboard updates
     revalidatePath(`/org/${orgId}/workflows`);
-
     return { success: true, workflowId: workflow.id };
   } catch (error) {
     console.error("Failed to save workflow:", error);
@@ -64,33 +66,42 @@ export async function saveWorkflowState(
   }
 }
 
-// This function is for updating an existing workflow's UI state (nodes and edges) as the user edits it.
+// ------------------------------------------------------------------
+// UPDATE WORKFLOW
+// ------------------------------------------------------------------
 export async function updateWorkflowState(
-Orgslug: string,
+  orgslug: string,
   workflowId: string, 
   uiNodes: any[], 
   uiEdges: any[]
 ) {
   try {
+    const access = await getOrgAccess(orgslug);
+    if (!access) return { success: false, error: "Unauthorized" };
 
-const access = await getOrgAccess(Orgslug);
-if (!access) {
-  return { success: false, error: "Unauthorized" };
-}
-const areNodesValid = z.array(z.any()).safeParse(uiNodes); // Replace z.any() with strict schema in production
+    const areNodesValid = z.array(z.any()).safeParse(uiNodes); 
+    if (!areNodesValid.success) return { success: false, error: "Malformed workflow data." };
+
+    // --- THE COMPILER INJECTION ---
     
-    if (!areNodesValid.success) {
-      return { success: false, error: "Malformed workflow data. Save rejected." };
-    }
+    const compiledDefinition = compileWorkflow(uiNodes, uiEdges);
+    
+    const triggerNode = uiNodes.find(n => n.type === 'trigger');
+    const eventId = triggerNode?.data?.eventId || null;
+
     await db.workflow.update({
       where: { id: workflowId },
       data: {
         uiNodes, 
         uiEdges,
+        // Update the DAG on every save!
+        definition: compiledDefinition,
+        eventId: eventId,
+        isActive: !!eventId,
       }
     });
 
-    revalidatePath(`/org/[orgId]/workflows/${workflowId}`, 'page');
+    revalidatePath(`/org/${access.organization.id}/workflows/${workflowId}`);
     return { success: true };
   } catch (error) {
     console.error("Failed to update workflow:", error);

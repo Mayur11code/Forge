@@ -1,0 +1,37 @@
+import { AppNode, AppEdge, WorkflowDefinition, WorkflowStep } from "@/lib/workflow-types/workflow";
+
+export function compileWorkflow(nodes: AppNode[], edges: AppEdge[]): WorkflowDefinition {
+  const steps: Record<string, WorkflowStep> = {};
+    
+  nodes.forEach((node) => {
+    // Find all edges that point TO this node
+    const incomingEdges = edges.filter((e) => e.target === node.id);
+    
+    // Map those edges to get the IDs of the parent nodes
+    const dependsOn = incomingEdges.map((e) => e.source);
+
+    // Extract the action type (or 'trigger' if it's the entry point)
+    let action = 'unknown';
+    let config = {};
+
+    if (node.type === 'trigger') {
+      action = node.data.eventId || 'unknown_trigger';
+    } else if (node.type === 'action') {
+      action = node.data.actionType || 'unknown_action';
+      config = node.data.config || {};
+    }
+
+    steps[node.id] = {
+      id: node.id,
+      action,
+      dependsOn,
+      config,
+    };
+  });
+
+  return {
+    id: "compiled_" + Date.now(), // Or a uuid
+    name: "Compiled Execution Graph",
+    steps,
+  };
+}
