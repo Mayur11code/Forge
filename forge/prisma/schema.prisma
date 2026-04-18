@@ -36,6 +36,29 @@ enum EventStatus {
   FAILED
 }
 
+enum WorkflowExecutionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum StepExecutionStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  CANCELLED
+  RETRYING
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+  FATAL
+}
+
 model Invitation {
   id         String            @id @default(cuid())
   email      String
@@ -246,16 +269,95 @@ model Workflow {
   @@index([eventId])
 }
 
-// Don't forget the WorkflowRun model you referenced!
+// ------------------------------------------------------
+// WORKFLOW RUN: The overarching execution of a specific graph
+// ------------------------------------------------------
 model WorkflowRun {
-  id          String   @id @default(cuid())
+  id          String                  @id @default(cuid())
   workflowId  String
-  status      String   // e.g., "PENDING", "SUCCESS", "FAILED"
-  startedAt   DateTime @default(now())
+  status      WorkflowExecutionStatus @default(PENDING)
+  
+  // THE GLOBAL CONTEXT: This is where we will store the accumulated outputs of all steps.
+  // Format: { "step_1": { outputs: {...} }, "step_2": { outputs: {...} } }
+  context     Json                    @default("{}") 
+
+  startedAt   DateTime                @default(now())
   completedAt DateTime?
-  logs        Json     @default("[]") // For stack traces/DLQ tracking
-  
-  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  
+
+  // Relations
+  workflow    Workflow                @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  stepRuns    StepRun[]
+  auditLogs ExecutionAuditLog[]
+
+  // Indexes for high-performance querying by the Orchestrator
   @@index([workflowId])
+  @@index([status])
+}
+
+// ------------------------------------------------------
+// STEP RUN: The atomic execution of a single node in the DAG
+// ------------------------------------------------------
+model StepRun {
+  id          String              @id @default(cuid())
+  runId       String
+  
+  // The ID of the node from your React Flow canvas (e.g., "action_1775844011153")
+  stepId      String              
+
+  status      StepExecutionStatus @default(PENDING)
+  attempts    Int                 @default(0) // Tracks retries for exponential backoff
+
+  // Execution Payloads
+  inputs      Json?               // The resolved inputs passed into the wrapper
+  outputs     Json?               // What the ActionFunction returned
+  error       String?             @db.Text // Stack traces or API failure reasons
+
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  // Relations
+  run         WorkflowRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  auditLogs  ExecutionAuditLog[]
+
+  // Critical Indexes: The Engine Evaluator will constantly query these to calculate DAG readiness
+  @@index([runId])
+  @@index([runId, status])
+  @@index([stepId])
+}
+
+// ------------------------------------------------------
+// EXECUTION AUDIT LOG: The append-only black box ledger
+// ------------------------------------------------------
+model ExecutionAuditLog {
+  id          String    @id @default(cuid())
+  
+  // What execution does this belong to?
+  runId       String
+  stepId      String
+  
+  logLevel    LogLevel  @default(INFO)
+  
+  // e.g., "QSTASH_DISPATCHED", "EVALUATOR_CALLED", "ACTION_TIMEOUT"
+  eventType   String    
+  
+  // Human-readable explanation of what occurred
+  message     String    @db.Text
+  
+  // The exact state of the variables, inputs, or API responses at this millisecond
+  payload     Json?     
+  
+  // Observability: How long did this specific micro-operation take?
+  latencyMs   Int?      
+  
+  createdAt   DateTime  @default(now())
+
+  // Relations
+  run         WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  step        StepRun     @relation(fields: [stepId], references: [id], onDelete: Cascade)
+
+  // High-performance indexing for debugging dashboards
+  @@index([runId])
+  @@index([stepId])
+  @@index([eventType])
+  @@index([createdAt])
 }
