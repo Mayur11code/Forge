@@ -32,7 +32,7 @@ export async function saveWorkflowState(
     const access = await getOrgAccess(orgslug);
     if (!access) return { success: false, error: "Unauthorized" };
 
-    const areNodesValid = z.array(z.any()).safeParse(uiNodes); 
+    const areNodesValid = z.array(IncomingNodeSchema).safeParse(uiNodes); 
     if (!areNodesValid.success) return { success: false, error: "Malformed workflow data." };
 
     const orgId = access.organization.id;
