@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { createInvitation } from "@/app/actions/createInvitation";
+import { createInvitation } from "@/app/actions/Invitations/createInvitation";
 
 interface Props {
   orgSlug: string;

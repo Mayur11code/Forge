@@ -2,7 +2,7 @@
 
 import { UploadButton } from "@uploadthing/react";
 import type { UploadRouter } from "@/app/api/uploadthing/core";
-import { createAttachment } from "@/app/actions/attachments";
+import { createAttachment } from "@/app/actions/Tasks/attachments";
 import { useOrgSlug } from "@/contexts/OrgContext";
 import { useState } from "react";
 

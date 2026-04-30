@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { ModalPortal } from "../organizations/components/ui/ModalPortal";
 import { AttachmentUploader } from "./AttachmentUploader";
-import { getAttachments } from "@/app/actions/attachments";
+import { getAttachments } from "@/app/actions/Tasks/attachments";
 import { FileText, Image as ImageIcon } from "lucide-react";
 // import { getAttachments } from "@/app/actions/attachments";
-import { getSignedDownloadUrl } from "@/app/actions/attachments";
+import { getSignedDownloadUrl } from "@/app/actions/Tasks/attachments";
 
 type Attachment = {
   id: string;

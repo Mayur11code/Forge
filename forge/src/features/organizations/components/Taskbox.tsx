@@ -6,7 +6,7 @@ import { ListFilter, CheckCircle2, Clock, PlayCircle, Layers } from "lucide-reac
 import { clsx } from "clsx";
 import { Task } from "@prisma/client";
 import CreateTaskForm from "./CreateTaskForm";
-import { createTask } from "@/app/actions/createTask";
+import { createTask } from "@/app/actions/Tasks/createTask";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type ProjectModeProps = {

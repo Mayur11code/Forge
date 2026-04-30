@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { updateOrgName } from "@/app/actions/updateOrg";
+import { updateOrgName } from "@/app/actions/settings/updateOrg";
 import { UploadButton } from "@uploadthing/react";
 import type { UploadRouter } from "@/app/api/uploadthing/core";
 import { Loader2, ShieldAlert, UploadCloud } from "lucide-react"; // Recommended icons
