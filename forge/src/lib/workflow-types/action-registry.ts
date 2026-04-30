@@ -1,6 +1,6 @@
 // src/lib/workflow/actions/registry.ts
 import { WorkflowAction } from "./type";
-import { createTaskAction } from "./core/create-task";
+import { createTaskAction } from "../workflow/actions/core/create-task";
 
 // Import other future actions here...
 // import { sendSlackMessage } from "./integrations/slack";
