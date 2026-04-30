@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { TriggerNodeDataSchema, ActionNodeDataSchema } from '@/lib/workflow-types/workflow';
 
 // Import the compiler we just built!
-import { compileWorkflow } from '@/features/organizations/components/workflow/compiler';
+import { compileWorkflow } from '@/lib/workflow/actions/compiler';
 
 const IncomingNodeSchema = z.object({
   id: z.string(),
