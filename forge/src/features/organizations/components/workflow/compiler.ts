@@ -1,5 +1,7 @@
 import { AppNode, AppEdge, WorkflowDefinition, WorkflowStep } from "@/lib/workflow-types/workflow";
-
+// UI SIDE COMPILER
+// This function takes the raw nodes and edges from the React Flow editor and transforms them into a structured WorkflowDefinition that our Orchestrator Engine can execute.
+// It identifies the dependencies between steps based on the edges, and extracts the necessary configuration for each action.
 export function compileWorkflow(nodes: AppNode[], edges: AppEdge[]): WorkflowDefinition {
   const steps: Record<string, WorkflowStep> = {};
     

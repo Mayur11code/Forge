@@ -1,3 +1,4 @@
+//THIS HANDLES THE UI SIDE OF THE PAYMENT
 import { NextResponse } from "next/server";
 import Razorpay from "razorpay";
 
