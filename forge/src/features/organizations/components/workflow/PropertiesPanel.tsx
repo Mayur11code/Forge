@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useReactFlow, useOnSelectionChange, useNodesData } from "@xyflow/react";
-import { AVAILABLE_ACTIONS, AVAILABLE_TRIGGERS } from "../../../../lib/workflow/actions/registry";
+import { AVAILABLE_ACTIONS, AVAILABLE_TRIGGERS } from "../../../../lib/workflow-types/registry";
 
 // 1. IMPORT YOUR REAL TYPES
 import type { TriggerNodeData, ActionNodeData } from "@/lib/workflow-types/workflow";

@@ -14,7 +14,8 @@ import {
   type Connection,
 } from '@xyflow/react';
 
-
+import { getNodeDefinition } from '@/lib/workflow/graph-ui/utils';
+import { ActionDef } from '@/lib/workflow-types/registry';
 // import { toast } from "sonner"; // Or whatever toast library you use
 
 import { saveWorkflowState, updateWorkflowState } from '@/app/actions/workflows/workflow';
@@ -94,10 +95,65 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
     [nodes, edges]
   );
 
-  // Handles drawing lines between nodes
-  const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge(params, eds)),
-    [setEdges]
+ // ✅ THE UPGRADED CODE (The Auto-Mapper)
+const onConnect = useCallback(
+    (connection: Connection) => {
+      // 1. Get the absolute latest nodes state
+      const currentNodes = getNodes() as AppNode[];
+      
+      // 2. Identify the sender and receiver
+      const sourceNode = currentNodes.find((n) => n.id === connection.source);
+      const targetNode = currentNodes.find((n) => n.id === connection.target);
+
+      // 3. The Auto-Mapping Check (Now Strictly Typed!)
+      // We only care about auto-mapping if the target is actually an Action
+      if (sourceNode && targetNode && targetNode.type === 'action') {
+        const sourceDef = getNodeDefinition(sourceNode);
+        
+        // Because targetNode.type is 'action', we can confidently tell TypeScript 
+        // this definition is an ActionDef (which strictly has a requires: string[] array)
+        const targetDef = getNodeDefinition(targetNode) as ActionDef | undefined;
+
+        if (sourceDef?.outputs && targetDef?.requires) {
+          
+          // Explicitly type 'req' as string, and the result as a string[]
+          const matches: string[] = targetDef.requires.filter((req: string) => 
+            sourceDef.outputs.includes(req)
+          );
+
+          if (matches.length > 0) {
+            // 4. Inject the {{...}} syntax into the target's config state silently
+            setNodes((nds) =>
+              nds.map((node) => {
+                if (node.id === targetNode.id && node.type === 'action') {
+                  
+                  // Explicitly type the cloned config object
+                  const updatedConfig: Record<string, any> = { ...node.data.config };
+                  
+                  // Explicitly type 'match' as string
+                  matches.forEach((match: string) => {
+                    // Only auto-fill if the user hasn't typed anything in this field yet!
+                    if (!updatedConfig[match] || String(updatedConfig[match]).trim() === '') {
+                      updatedConfig[match] = `{{${sourceNode.id}.outputs.${match}}}`;
+                    }
+                  });
+
+                  return {
+                    ...node,
+                    data: { ...node.data, config: updatedConfig },
+                  };
+                }
+                return node;
+              })
+            );
+          }
+        }
+      }
+
+      // 5. Complete the connection by drawing the visual line
+      setEdges((eds) => addEdge(connection, eds));
+    },
+    [getNodes, setNodes, setEdges] // <-- Dependencies updated to include getNodes and setNodes
   );
 
   // Allows the canvas to accept dropped items

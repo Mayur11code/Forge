@@ -1,5 +1,5 @@
 // src/lib/workflow/actions/core/create-task.ts
-import { ActionFunction, WorkflowAction } from "../type";
+import { ActionFunction, WorkflowAction } from "../../../workflow-types/type";
 import { db } from "@/lib/prisma/db";
 
 const execute: ActionFunction = async (ctx) => {
