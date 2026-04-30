@@ -1,5 +1,5 @@
 // src/lib/workflow/registry.ts
-
+// FOR UI
 // 1. Core Types for our I/O System
 export type FieldDef = {
   name: string;
