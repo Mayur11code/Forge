@@ -1,6 +1,6 @@
 // src/lib/workflow/utils.ts
 import { AppNode, AppEdge } from "@/lib/workflow-types/workflow"; // Adjust path if needed
-import { AVAILABLE_ACTIONS, AVAILABLE_TRIGGERS } from "@/lib/workflow-types/registry"; // Adjust path if needed
+import { ActionDef, AVAILABLE_ACTIONS, AVAILABLE_TRIGGERS } from "@/lib/workflow-types/registry"; // Adjust path if needed
 
 /**
  * Helper: Given a fully typed AppNode, find its definition in our registry
@@ -77,4 +77,66 @@ export function getAvailableUpstreamOutputs(
 
   // Return the clean array
   return Array.from(uniqueData.values());
+}
+
+/**
+ * NEW: The Self-Healing Auto-Mapper
+ * This utility bridges the gap between the Scanner and the React State.
+ * It can be called from WorkflowCanvas (onConnect) or PropertiesPanel (onActionTypeChange).
+ */
+export function autoMapNodeVariables(
+  targetNodeId: string,
+  nodes: AppNode[],
+  edges: AppEdge[],
+  setNodes: (payload: AppNode[] | ((nds: AppNode[]) => AppNode[])) => void
+) {
+  setNodes((nds) => {
+    // 1. Initial check to confirm the target is an action
+    const targetNode = nds.find((n) => n.id === targetNodeId);
+    if (!targetNode || targetNode.type !== 'action') return nds;
+
+    const targetDef = getNodeDefinition(targetNode) as ActionDef | undefined;
+    if (!targetDef?.requires) return nds;
+
+    const incomingEdges = edges.filter((e) => e.target === targetNodeId);
+    const updatedConfig: Record<string, any> = { ...targetNode.data.config };
+    let hasChanges = false;
+
+    for (const edge of incomingEdges) {
+      const sourceNode = nds.find((n) => n.id === edge.source);
+      if (!sourceNode) continue;
+
+      const sourceDef = getNodeDefinition(sourceNode);
+      if (!sourceDef?.outputs) continue;
+
+      const matches = targetDef.requires.filter((req) => 
+        sourceDef.outputs.includes(req)
+      );
+
+      matches.forEach((match) => {
+        if (!updatedConfig[match] || String(updatedConfig[match]).trim() === '') {
+          updatedConfig[match] = `{{${sourceNode.id}.outputs.${match}}}`;
+          hasChanges = true;
+        }
+      });
+    }
+
+    if (!hasChanges) return nds;
+
+    // 2. THE FIX: Re-narrow the type inside the map loop.
+    // By checking 'n.type === "action"', TypeScript knows the object we 
+    // return is an ActionNodeType, which is a valid member of the AppNode union.
+    return nds.map((n) => {
+      if (n.id === targetNodeId && n.type === 'action') {
+        return {
+          ...n,
+          data: {
+            ...n.data,
+            config: updatedConfig,
+          },
+        };
+      }
+      return n;
+    });
+  });
 }

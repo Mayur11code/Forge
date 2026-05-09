@@ -14,7 +14,7 @@ import {
   type Connection,
 } from '@xyflow/react';
 
-import { getNodeDefinition } from '@/lib/workflow/graph-ui/utils';
+import { autoMapNodeVariables, getNodeDefinition } from '@/lib/workflow/graph-ui/utils';
 import { ActionDef } from '@/lib/workflow-types/registry';
 // import { toast } from "sonner"; // Or whatever toast library you use
 
@@ -27,7 +27,7 @@ import { useTransition } from 'react';
 // 1. Import our custom nodes and types!
 import TriggerNode from './nodes/TriggerNode';
 import ActionNode from './nodes/ActionNode';
-import type { AppNode, AppEdge} from '@/lib/workflow-types/workflow'; // Import the union type for all nodes
+import type { AppNode, AppEdge } from '@/lib/workflow-types/workflow'; // Import the union type for all nodes
 import Sidebar from './sidebar';
 import { Loader2, Save } from 'lucide-react'; // Ensure AppEdge is imported
 import { init } from 'next/dist/compiled/webpack/webpack';
@@ -47,12 +47,12 @@ const nodeTypes = {
 };
 
 // 3. We create an internal component to use the `useReactFlow` hook safely
-function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProps) {
+function CanvasArea({ workflowId, initialNodes, initialEdges }: WorkflowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes || []);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges || []);
-  const { screenToFlowPosition,getNodes } = useReactFlow();
-  
+  const { screenToFlowPosition, getNodes } = useReactFlow();
+
 
   // --- ENTERPRISE GUARDRAIL: Cycle Detection ---
   const isValidConnection = useCallback(
@@ -95,65 +95,25 @@ function CanvasArea({workflowId, initialNodes, initialEdges}: WorkflowCanvasProp
     [nodes, edges]
   );
 
- // ✅ THE UPGRADED CODE (The Auto-Mapper)
 const onConnect = useCallback(
     (connection: Connection) => {
-      // 1. Get the absolute latest nodes state
-      const currentNodes = getNodes() as AppNode[];
-      
-      // 2. Identify the sender and receiver
-      const sourceNode = currentNodes.find((n) => n.id === connection.source);
-      const targetNode = currentNodes.find((n) => n.id === connection.target);
-
-      // 3. The Auto-Mapping Check (Now Strictly Typed!)
-      // We only care about auto-mapping if the target is actually an Action
-      if (sourceNode && targetNode && targetNode.type === 'action') {
-        const sourceDef = getNodeDefinition(sourceNode);
-        
-        // Because targetNode.type is 'action', we can confidently tell TypeScript 
-        // this definition is an ActionDef (which strictly has a requires: string[] array)
-        const targetDef = getNodeDefinition(targetNode) as ActionDef | undefined;
-
-        if (sourceDef?.outputs && targetDef?.requires) {
-          
-          // Explicitly type 'req' as string, and the result as a string[]
-          const matches: string[] = targetDef.requires.filter((req: string) => 
-            sourceDef.outputs.includes(req)
-          );
-
-          if (matches.length > 0) {
-            // 4. Inject the {{...}} syntax into the target's config state silently
-            setNodes((nds) =>
-              nds.map((node) => {
-                if (node.id === targetNode.id && node.type === 'action') {
-                  
-                  // Explicitly type the cloned config object
-                  const updatedConfig: Record<string, any> = { ...node.data.config };
-                  
-                  // Explicitly type 'match' as string
-                  matches.forEach((match: string) => {
-                    // Only auto-fill if the user hasn't typed anything in this field yet!
-                    if (!updatedConfig[match] || String(updatedConfig[match]).trim() === '') {
-                      updatedConfig[match] = `{{${sourceNode.id}.outputs.${match}}}`;
-                    }
-                  });
-
-                  return {
-                    ...node,
-                    data: { ...node.data, config: updatedConfig },
-                  };
-                }
-                return node;
-              })
-            );
-          }
-        }
-      }
-
-      // 5. Complete the connection by drawing the visual line
+      // 1. Draw the visual wire on the canvas immediately
       setEdges((eds) => addEdge(connection, eds));
+
+      // 2. Trigger the "Self-Healing" Auto-Mapper
+      // We wrap this in setEdges to ensure the utility has access to the 
+      // edge list that INCLUDES the wire we just drew.
+      setEdges((currentEdges) => {
+        autoMapNodeVariables(
+          connection.target, // The receiver of the wire
+          getNodes() as AppNode[], 
+          currentEdges, 
+          setNodes
+        );
+        return currentEdges;
+      });
     },
-    [getNodes, setNodes, setEdges] // <-- Dependencies updated to include getNodes and setNodes
+    [getNodes, setEdges, setNodes]
   );
 
   // Allows the canvas to accept dropped items
@@ -170,7 +130,7 @@ const onConnect = useCallback(
       const type = event.dataTransfer.getData('application/reactflow');
       if (!type) return;
 
-    // --- ENTERPRISE GUARDRAIL: Single Entry Point ---
+      // --- ENTERPRISE GUARDRAIL: Single Entry Point ---
       if (type === 'trigger') {
         // FIX: Use getNodes() to get the absolute latest state, bypassing the stale closure!
         const currentNodes = getNodes();
@@ -224,13 +184,13 @@ const onConnect = useCallback(
   const handleSave = () => {
     startTransition(async () => {
       const orgId = params.orgId as string;
-      
+
       // If we have a workflowId, we are EDITING an existing DAG
       if (workflowId) {
         const result = await updateWorkflowState(orgId, workflowId, nodes, edges);
         if (result.success) alert("Workflow Updated!");
         else alert("Failed to update.");
-      } 
+      }
       // Otherwise, we are CREATING a brand new DAG
       else {
         const result = await saveWorkflowState(orgId, "My First Automation", nodes, edges);
@@ -241,16 +201,16 @@ const onConnect = useCallback(
         } else {
           alert("Failed to save.");
         }
-        }
+      }
     });
   };
 
   return (
     <div className="flex-grow h-[80vh]" ref={reactFlowWrapper}>
 
-    {/* Sleek Floating Save Button */}
+      {/* Sleek Floating Save Button */}
       <div className="absolute top-4 right-4 z-10">
-        <button 
+        <button
           onClick={handleSave}
           disabled={isPending || nodes.length === 0}
           className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition-all hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
