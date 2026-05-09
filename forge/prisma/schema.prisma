@@ -316,7 +316,7 @@ model StepRun {
   completedAt DateTime?
 
   // Relations
-  run         WorkflowRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run         WorkflowRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
   auditLogs  ExecutionAuditLog[]
 
   // Critical Indexes: The Engine Evaluator will constantly query these to calculate DAG readiness
