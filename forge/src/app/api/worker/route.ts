@@ -7,7 +7,6 @@ import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 import { aiWorkerHandler } from "@/app/api/worker/ai-worker/ai-worker";
 import { cronWorkerHandler } from "@/app/api/worker/cron-worker/cw";
 
-import { rateLimit } from "@/lib/redis/rate-limit";
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
 const handleEmail = createWorker("SEND_EMAIL", emailWorkerHandler);

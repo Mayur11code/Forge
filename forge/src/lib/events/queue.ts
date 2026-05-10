@@ -29,6 +29,7 @@ const topicMap: Record<EventType, string> = {
   
   CREATE_DEFAULT_ORG: "create-default-org",
   SEND_WELCOME_EMAIL: "send-welcome-email",
+  EXECUTE_WORKFLOW_NODE: "execute-workflow-node"
 };
 
 export function getTopic(event: EventType): string {
@@ -47,9 +48,12 @@ function buildCloudEvent<K extends EventType>(
   eventName: K,
   payload: EventPayloadMap[K]
 ) {
+  const prefixId = 'orgId' in payload 
+    ? payload.orgId 
+    : ('runId' in payload ? payload.runId : 'system');
   return {
     specversion: "1.0",
-    id: `${payload.orgId}-${eventName}-${Date.now()}`,
+    id: `${prefixId}-${eventName}-${Date.now()}`,
     type: eventName,
     source: "engineered-forge",
     time: new Date().toISOString(),
@@ -123,6 +127,7 @@ export async function publishEvent<K extends EventType>(
     // and troubleshoot any issues that may arise with event processing.
     //but it can be an array if multiple messagens are published like in the case where 
     // we publish multiple events in a loop, so we need to handle both cases.
+    
     const messageId = Array.isArray(res)
       ? res[0].messageId
       : res.messageId;

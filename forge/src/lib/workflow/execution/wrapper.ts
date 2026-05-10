@@ -22,27 +22,39 @@ export async function wrapStepExecution(
     throw new Error(`CRITICAL: StepRun ${stepId} not found for Run ${runId}`);
   }
 
-  // 2. PRE-FLIGHT: Update state to RUNNING and log it
-  await db.$transaction([
-    db.stepRun.update({
-      where: { id: stepRun.id },
-      data: { 
-        status: "RUNNING", 
-        startedAt: stepRun.startedAt || new Date(), // Don't overwrite if this is a retry
-        inputs: resolvedInputs 
-      },
-    }),
-    db.executionAuditLog.create({
-      data: {
-        runId,
-        stepId,
-        logLevel: "INFO",
-        eventType: "STEP_STARTED",
-        message: `Began execution of action: ${actionId} (Attempt ${stepRun.attempts + 1})`,
-        payload: resolvedInputs,
-      }
-    })
-  ]);
+ // 2. PRE-FLIGHT: Atomic Claim (Optimistic Concurrency Control)
+  // We use updateMany because it allows us to filter by both ID and Status atomically.
+  const claimResult = await db.stepRun.updateMany({
+    where: { 
+      id: stepRun.id,
+      status: "PENDING" // THE MAGIC WORD: Only claim if it hasn't been claimed yet
+    },
+    data: { 
+      status: "RUNNING", 
+      startedAt: stepRun.startedAt || new Date(), 
+      inputs: resolvedInputs 
+    },
+  });
+
+  // If count is 0, it means the status was NOT "PENDING". 
+  // Another worker (Worker A) is currently executing it, or already finished it.
+  if (claimResult.count === 0) {
+    console.warn(`[WRAPPER] Step ${stepId} is already claimed or finished. Aborting ghost execution.`);
+    // We return success: true so the worker API returns 200 OK and QStash deletes the ghost message.
+    return { success: true }; 
+  }
+
+  // Now we safely create the audit log, knowing WE are the sole owner of this execution.
+  await db.executionAuditLog.create({
+    data: {
+      runId,
+      stepId,
+      logLevel: "INFO",
+      eventType: "STEP_STARTED",
+      message: `Began execution of action: ${actionId} (Attempt ${stepRun.attempts + 1})`,
+      payload: resolvedInputs,
+    }
+  });
 
   // 3. ACTION LOOKUP
   const action = getAction(actionId);
