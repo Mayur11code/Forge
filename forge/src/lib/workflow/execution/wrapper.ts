@@ -21,7 +21,7 @@ export async function wrapStepExecution(
   if (!stepRun) {
     throw new Error(`CRITICAL: StepRun ${stepId} not found for Run ${runId}`);
   }
-
+console.log(`[${new Date().toISOString()}] 🔍 Worker ${process.env.WORKER_ID}: Attempting to claim step ${stepId}`);
  // 2. PRE-FLIGHT: Atomic Claim (Optimistic Concurrency Control)
   // We use updateMany because it allows us to filter by both ID and Status atomically.
   const claimResult = await db.stepRun.updateMany({
@@ -48,7 +48,7 @@ export async function wrapStepExecution(
   await db.executionAuditLog.create({
     data: {
       runId,
-      stepId,
+      stepId :stepRun.id,
       logLevel: "INFO",
       eventType: "STEP_STARTED",
       message: `Began execution of action: ${actionId} (Attempt ${stepRun.attempts + 1})`,
@@ -99,7 +99,7 @@ export async function wrapStepExecution(
       db.executionAuditLog.create({
         data: {
           runId,
-          stepId,
+          stepId :stepRun.id,
           logLevel: "INFO",
           eventType: "STEP_SUCCESS",
           message: `Action executed successfully in ${latencyMs}ms`,
@@ -148,7 +148,7 @@ async function handleFailure(
     db.executionAuditLog.create({
       data: {
         runId,
-        stepId,
+        stepId : stepRunId,
         logLevel: finalStatus === "FAILED" ? "FATAL" : "WARN",
         eventType: finalStatus === "FAILED" ? "STEP_FAILED" : "STEP_RETRYING",
         message: errorMessage,

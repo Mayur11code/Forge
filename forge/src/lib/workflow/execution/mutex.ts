@@ -13,11 +13,10 @@ const LOCK_TTL_MS = 5000; // 5 seconds
 export async function acquireLock(runId: string): Promise<string | null> {
   const lockKey = `run_lock:${runId}`;
   
-  // We generate a unique token for THIS specific worker instance
+
   const token = crypto.randomUUID();
 
-  // SETNX: "Set if Not eXists". This is an atomic operation in Redis.
-  // px: Expire the lock automatically after 5000ms.
+ 
   const acquired = await redis.set(lockKey, token, {
     nx: true,
     px: LOCK_TTL_MS,
