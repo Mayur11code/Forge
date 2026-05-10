@@ -1,6 +1,6 @@
 import OrgLayout from "@/app/org/[orgId]/layout";
 import { publishEvent } from "./queue";
-import { EventPayloadMap, EventType } from "./schema";
+import { EventType } from "./schema";
 
 // Define all system-level triggers → jobs mapping
 type EventHandler = (payload: any) => {

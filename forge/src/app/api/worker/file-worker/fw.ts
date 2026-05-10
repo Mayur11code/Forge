@@ -1,4 +1,4 @@
-import { createWorker } from "@/lib/events/worker";
+
 import { publishEvent } from "@/lib/events/queue";
 import { db } from "@/lib/prisma/db";
 

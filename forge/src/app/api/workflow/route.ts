@@ -4,18 +4,25 @@ import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { db } from "@/lib/prisma/db";
 import { resolveInputs } from "@/lib/workflow/execution/resolver";
 import { wrapStepExecution } from "@/lib/workflow/execution/wrapper";
+import { advanceWorkflow } from "@/lib/workflow/execution/evaluator"; 
 
-// QStash sends the payload we defined when we published the event
-type WorkerPayload = {
-    stepRunId: string;
+// QStash now sends your custom CloudEvent envelope from queue.ts
+type CloudEventWrapper = {
+    type: string;
+    data: {
+        runId: string;
+        stepRunId: string;
+    }
 };
 
 async function handler(req: NextRequest) {
     try {
-        const body = await req.json() as WorkerPayload;
-        const { stepRunId } = body;
+        const body = await req.json() as CloudEventWrapper;
+        
+        // 1. UNPACK THE CLOUD EVENT
+        const { stepRunId, runId } = body.data;
 
-        // 1. FETCH THE ENTIRE TREE (StepRun -> WorkflowRun -> Workflow)
+        // 2. FETCH THE ENTIRE TREE (StepRun -> WorkflowRun -> Workflow)
         const stepRun = await db.stepRun.findUnique({
             where: { id: stepRunId },
             include: {
@@ -32,7 +39,7 @@ async function handler(req: NextRequest) {
             return new NextResponse("Not Found", { status: 404 }); // 404 tells QStash to drop the message
         }
 
-        // 2. IDEMPOTENCY GUARD
+        // 3. IDEMPOTENCY GUARD
         // If QStash accidentally sends this twice, or if a previous run succeeded but 
         // the network dropped the 200 OK response, we do NOT run it again.
         if (stepRun.status === "SUCCESS" || stepRun.status === "FAILED" || stepRun.status === "CANCELLED") {
@@ -40,7 +47,7 @@ async function handler(req: NextRequest) {
             return new NextResponse("Already processed", { status: 200 });
         }
 
-        // 3. EXTRACT RAW CONFIGURATION (The {{...}} strings)
+        // 4. EXTRACT RAW CONFIGURATION (The {{...}} strings)
         // stepRun.stepId is the React Flow node ID (e.g., "node_abc123")
         const workflowDefinition = stepRun.run.workflow.definition as any;
         const nodeDefinition = workflowDefinition.steps[stepRun.stepId];
@@ -52,11 +59,11 @@ async function handler(req: NextRequest) {
         const rawInputs = nodeDefinition.config || {};
         const actionId = nodeDefinition.action; // e.g., "task.create"
 
-        // 4. RESOLVE THE POINTERS (Phase 3 Magic)
+        // 5. RESOLVE THE POINTERS (Phase 3 Magic)
         const globalContext = stepRun.run.context as Record<string, any>;
         const resolvedInputs = resolveInputs(rawInputs, globalContext);
 
-        // 5. ENTER THE SANDBOX (Phase 4, Step 10)
+        // 6. ENTER THE SANDBOX (Phase 4, Step 10)
         const result = await wrapStepExecution(
             stepRun.runId,
             stepRun.stepId, // The React Flow ID
@@ -64,9 +71,8 @@ async function handler(req: NextRequest) {
             resolvedInputs
         );
 
-        // 6. THE HTTP MATH (Step 12: Step-Level Retries)
+        // 7. THE HTTP MATH (Step 12: Step-Level Retries)
         if (!result.success && "status" in result) {
-
             if (result.status === "RETRYING") {
                 // Returning a 5xx status tells QStash: "I failed, but please use 
                 // your exponential backoff algorithm and send this EXACT request to me again later."
@@ -75,10 +81,16 @@ async function handler(req: NextRequest) {
             }
         }
 
-        // If result.status is "SUCCESS" or "FAILED" (meaning we exhausted retries),
-        // we return 200 OK. This tells QStash: "I am finished with this message, delete it from the queue."
-
-        // (Note: In Phase 5, right here is where we will call advanceWorkflow(runId) to trigger the next nodes)
+        // --- PHASE 5: THE CHAIN REACTION ---
+        // If we reach here, the step either SUCCEEDED, or FAILED permanently.
+        // We must trigger the Engine Evaluator to process downstream nodes or close the workflow.
+        console.log(`[WORKER] Step ${stepRun.stepId} finished. Triggering Engine Evaluator...`);
+        
+        // Note: We don't await this because we want to return 200 OK to QStash immediately.
+        // The evaluator runs independently in the background.
+        advanceWorkflow(runId).catch(err => {
+            console.error(`[WORKER] Evaluator failed for run ${runId}:`, err);
+        });
 
         return new NextResponse("Execution Complete", { status: 200 });
 
@@ -90,5 +102,4 @@ async function handler(req: NextRequest) {
 }
 
 // Security: Wrap the handler with Upstash's signature verification
-// This guarantees that NO ONE can hit this API endpoint except your Upstash queue.
 export const POST = verifySignatureAppRouter(handler);
