@@ -33,6 +33,7 @@ export async function advanceWorkflow(runId: string) {
     // 3. THE TOPOLOGICAL MATH
     const readyStepIds: string[] = [];
     const cancelledStepIds: string[] = [];
+    const skippedStepIds: string[] = [];
 
     // Loop through every single node in the visual blueprint
     for (const [stepId, nodeConfig] of Object.entries(steps)) {
@@ -48,6 +49,10 @@ export async function advanceWorkflow(runId: string) {
       // If it has no dependencies (like a Trigger), it is instantly ready.
       let isReady = true;
       let shouldCancel = false;
+      let shouldSkip = false;
+
+      let successCount = 0;
+      let skippedCount = 0;
 
       if (dependencies.length > 0) {
         for (const depId of dependencies) {
@@ -56,57 +61,69 @@ export async function advanceWorkflow(runId: string) {
           const status = parentStepRun?.status;
 
           if (status === "FAILED" || status === "CANCELLED") {
+            // 1. HARD FAILURE CASCADE (Deadly)
             shouldCancel = true;
             isReady = false;
             break;
-          } else if (status !== "SUCCESS") {
-            // 2. Merged: If status is undefined (not queued), PENDING, or RUNNING
-            isReady = false;
-          }else {
-            // --- NEW: PHASE 6, STEP 17 (CONDITIONAL ROUTING) ---
-            // 3. Parent is SUCCESS. But are we on the correct branch?
+          } else if (status === "SKIPPED") {
+            // 2. SAFE BYPASS (Harmless)
+            skippedCount++;
+          } else if (status === "SUCCESS") {
+            // 3. ROUTING CONDITION CHECK
             const routingConditions = node.routingConditions || {};
             const requiredBranch = routingConditions[depId];
+            const parentOutputs = (parentStepRun?.outputs as Record<string, any>) || {};
+            const actualBranch = parentOutputs?.branch;
 
-            if (requiredBranch) {
-              // The parent is a condition node. What did it output?
-              const parentOutputs = (parentStepRun?.outputs as Record<string, any>) || {};
-              const actualBranch = parentOutputs?.branch;
-
-              if (actualBranch !== requiredBranch) {
-                // The condition routed the other way. This node is dead.
-                console.log(`[EVALUATOR] Pruning Step ${stepId}: Parent ${depId} routed to ${actualBranch}, but required ${requiredBranch}.`);
-                shouldCancel = true;
-                isReady = false;
-                break;
-              }
+            if (requiredBranch && actualBranch !== requiredBranch) {
+              // The parent succeeded, but we are on the WRONG side of the branch!
+              shouldSkip = true;
+              isReady = false;
+              break;
             }
+            successCount++;
+          } else {
+            // 4. WAITING (Parent is PENDING, RUNNING, or undefined)
+            isReady = false;
           }
+
+
+
         }
+
+
       }
 
-      // Push to the correct bucket based on the outcome
+      // --- EVALUATE THE NODE'S FATE ---
       if (shouldCancel) {
         cancelledStepIds.push(stepId);
-      } else if (isReady) {
+      } else if (shouldSkip || (dependencies.length > 0 && skippedCount === dependencies.length)) {
+        // Cascade the skip: If it failed routing, OR if ALL its parents were skipped!
+        skippedStepIds.push(stepId);
+      } else if (isReady && (successCount > 0 || dependencies.length === 0)) {
+        // Safe Merge Logic: If it has parents, at least ONE must be a success. 
+        // The rest can be SKIPPED.
         readyStepIds.push(stepId);
       }
     }
 
-    if (cancelledStepIds.length > 0) {
-      // 1. Batch insert the CANCELLED status in the database
-      await db.stepRun.createMany({
-        data: cancelledStepIds.map((stepId) => ({
-          runId: runId,
-          stepId: stepId,
-          status: "CANCELLED",
-        }))
-      });
+    // 2. PROCESS PRUNING & RECURSE
+    if (cancelledStepIds.length > 0 || skippedStepIds.length > 0) {
 
-      // 2. Release the Redis lock early
+      if (cancelledStepIds.length > 0) {
+        await db.stepRun.createMany({
+          data: cancelledStepIds.map(id => ({ runId, stepId: id, status: "CANCELLED" }))
+        });
+      }
+
+      if (skippedStepIds.length > 0) {
+        await db.stepRun.createMany({
+          data: skippedStepIds.map(id => ({ runId, stepId: id, status: "SKIPPED" }))
+        });
+      }
+
+      // The Graph shape changed! Release lock and recurse immediately.
       await releaseLock(runId, token);
-
-      // 3. Immediately evaluate again! (Recursion)
       return advanceWorkflow(runId);
     }
 
@@ -114,20 +131,18 @@ export async function advanceWorkflow(runId: string) {
     if (readyStepIds.length > 0) {
       console.log(`[EVALUATOR] Run ${runId} pushing ${readyStepIds.length} steps to QStash:`, readyStepIds);
 
-      // We create the PENDING rows in the DB *before* calling QStash 
-      // so the Evaluator doesn't accidentally queue them twice on the next loop
-      await db.stepRun.createMany({
-        data: readyStepIds.map((stepId) => ({
-          runId: runId,
-          stepId: stepId,
-          status: "PENDING",
-        }))
-      });
-
       for (const stepId of readyStepIds) {
+        const stepRun = await db.stepRun.create({
+          data: {
+            runId,
+            stepId,
+            status: "PENDING",
+          }
+        });
+
         await publishEvent("EXECUTE_WORKFLOW_NODE", {
-          runId: runId,
-          stepRunId: stepId,
+          runId,
+          stepRunId: stepRun.id,
         });
       }
     } else {
@@ -135,7 +150,7 @@ export async function advanceWorkflow(runId: string) {
       // If nothing is ready, check if everything is finished.
       const allDone = Object.keys(steps).every((stepId) => {
         const s = existingStepRuns.find((sr) => sr.stepId === stepId);
-        return s?.status === "SUCCESS" || s?.status === "CANCELLED" || s?.status === "FAILED";
+        return s?.status === "SUCCESS" || s?.status === "CANCELLED" || s?.status === "FAILED" || s?.status === "SKIPPED";
       });
 
       if (allDone) {

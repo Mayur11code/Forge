@@ -50,6 +50,7 @@ enum StepExecutionStatus {
   FAILED
   CANCELLED
   RETRYING
+  SKIPPED
 }
 
 enum LogLevel {
