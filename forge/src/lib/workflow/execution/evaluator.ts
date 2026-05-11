@@ -53,16 +53,14 @@ export async function advanceWorkflow(runId: string) {
         for (const depId of dependencies) {
           const parentStepRun = existingStepRuns.find((s) => s.stepId === depId);
 
-          if (!parentStepRun) {
-            // Parent hasn't run or queued yet. We must wait.
-            isReady = false;
-          } else if (parentStepRun.status === "FAILED" || parentStepRun.status === "CANCELLED") {
-            // THE CASCADING FAIL-SAFE: If a parent died, this node is doomed.
+          const status = parentStepRun?.status;
+
+          if (status === "FAILED" || status === "CANCELLED") {
             shouldCancel = true;
             isReady = false;
-            break; // No need to check other parents; stop evaluating this node.
-          } else if (parentStepRun.status !== "SUCCESS") {
-            // Parent is PENDING or RUNNING. Not ready yet.
+            break;
+          } else if (status !== "SUCCESS") {
+            // 2. Merged: If status is undefined (not queued), PENDING, or RUNNING
             isReady = false;
           }
         }
