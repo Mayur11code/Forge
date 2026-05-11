@@ -4,7 +4,7 @@ import { acquireLock, releaseLock } from "./mutex";
 import { publishEvent } from "@/lib/events/queue";
 
 export async function advanceWorkflow(runId: string) {
-  
+
   const token = await acquireLock(runId);
   if (!token) {
     console.log(`[EVALUATOR] Run ${runId} is currently locked by another worker. Yielding.`);
@@ -22,7 +22,7 @@ export async function advanceWorkflow(runId: string) {
     });
 
     if (!run) throw new Error("WorkflowRun not found");
-    
+
     // If the workflow is already finished or cancelled, stop evaluating.
     if (run.status !== "RUNNING" && run.status !== "PENDING") return;
 
@@ -32,6 +32,7 @@ export async function advanceWorkflow(runId: string) {
 
     // 3. THE TOPOLOGICAL MATH
     const readyStepIds: string[] = [];
+    const cancelledStepIds: string[] = [];
 
     // Loop through every single node in the visual blueprint
     for (const [stepId, nodeConfig] of Object.entries(steps)) {
@@ -43,28 +44,59 @@ export async function advanceWorkflow(runId: string) {
 
       // B. Check Dependencies (The Diamond Problem solved)
       const dependencies = (node.dependsOn || []) as string[];
-      
+
       // If it has no dependencies (like a Trigger), it is instantly ready.
       let isReady = true;
+      let shouldCancel = false;
 
-      // If it DOES have dependencies, check if EVERY SINGLE ONE is a "SUCCESS"
       if (dependencies.length > 0) {
-        isReady = dependencies.every((depId) => {
+        for (const depId of dependencies) {
           const parentStepRun = existingStepRuns.find((s) => s.stepId === depId);
-          return parentStepRun?.status === "SUCCESS";
-        });
+
+          if (!parentStepRun) {
+            // Parent hasn't run or queued yet. We must wait.
+            isReady = false;
+          } else if (parentStepRun.status === "FAILED" || parentStepRun.status === "CANCELLED") {
+            // THE CASCADING FAIL-SAFE: If a parent died, this node is doomed.
+            shouldCancel = true;
+            isReady = false;
+            break; // No need to check other parents; stop evaluating this node.
+          } else if (parentStepRun.status !== "SUCCESS") {
+            // Parent is PENDING or RUNNING. Not ready yet.
+            isReady = false;
+          }
+        }
       }
 
-      // C. If the math checks out, add it to the execution queue
-      if (isReady) {
+      // Push to the correct bucket based on the outcome
+      if (shouldCancel) {
+        cancelledStepIds.push(stepId);
+      } else if (isReady) {
         readyStepIds.push(stepId);
       }
+    }
+
+    if (cancelledStepIds.length > 0) {
+      // 1. Batch insert the CANCELLED status in the database
+      await db.stepRun.createMany({
+        data: cancelledStepIds.map((stepId) => ({
+          runId: runId,
+          stepId: stepId,
+          status: "CANCELLED",
+        }))
+      });
+
+      // 2. Release the Redis lock early
+      await releaseLock(runId, token);
+
+      // 3. Immediately evaluate again! (Recursion)
+      return advanceWorkflow(runId);
     }
 
     // 4. DISPATCH THE WORKERS
     if (readyStepIds.length > 0) {
       console.log(`[EVALUATOR] Run ${runId} pushing ${readyStepIds.length} steps to QStash:`, readyStepIds);
-      
+
       // We create the PENDING rows in the DB *before* calling QStash 
       // so the Evaluator doesn't accidentally queue them twice on the next loop
       await db.stepRun.createMany({
@@ -90,10 +122,13 @@ export async function advanceWorkflow(runId: string) {
       });
 
       if (allDone) {
-        console.log(`[EVALUATOR] Run ${runId} has completely finished.`);
+        // Inspect the wreckage: Are there any FAILED steps in the history?
+        const hasFailures = existingStepRuns.some(s => s.status === "FAILED");
+        const finalStatus = hasFailures ? "FAILED" : "COMPLETED";
+
         await db.workflowRun.update({
           where: { id: runId },
-          data: { status: "COMPLETED", completedAt: new Date() }
+          data: { status: finalStatus, completedAt: new Date() }
         });
       }
     }
