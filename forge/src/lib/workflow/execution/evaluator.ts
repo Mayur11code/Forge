@@ -62,6 +62,25 @@ export async function advanceWorkflow(runId: string) {
           } else if (status !== "SUCCESS") {
             // 2. Merged: If status is undefined (not queued), PENDING, or RUNNING
             isReady = false;
+          }else {
+            // --- NEW: PHASE 6, STEP 17 (CONDITIONAL ROUTING) ---
+            // 3. Parent is SUCCESS. But are we on the correct branch?
+            const routingConditions = node.routingConditions || {};
+            const requiredBranch = routingConditions[depId];
+
+            if (requiredBranch) {
+              // The parent is a condition node. What did it output?
+              const parentOutputs = (parentStepRun?.outputs as Record<string, any>) || {};
+              const actualBranch = parentOutputs?.branch;
+
+              if (actualBranch !== requiredBranch) {
+                // The condition routed the other way. This node is dead.
+                console.log(`[EVALUATOR] Pruning Step ${stepId}: Parent ${depId} routed to ${actualBranch}, but required ${requiredBranch}.`);
+                shouldCancel = true;
+                isReady = false;
+                break;
+              }
+            }
           }
         }
       }
