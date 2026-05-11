@@ -4,49 +4,54 @@ import { acquireLock, releaseLock } from "./mutex";
 import { publishEvent } from "@/lib/events/queue";
 
 export async function advanceWorkflow(runId: string) {
-
   const token = await acquireLock(runId);
   if (!token) {
     console.log(`[EVALUATOR] Run ${runId} is currently locked by another worker. Yielding.`);
-    return; // Safely die, the other worker will handle the evaluation
+    return;
   }
 
+  // 1. SAFE LOCK PATTERN
+  // Tracks release state to prevent double-releasing in the finally block
+  let lockReleased = false;
+  const safeReleaseLock = async () => {
+    if (!lockReleased) {
+      await releaseLock(runId, token);
+      lockReleased = true;
+    }
+  };
+
   try {
-    // 2. FETCH THE FULL STATE
     const run = await db.workflowRun.findUnique({
       where: { id: runId },
       include: {
         workflow: true,
-        stepRuns: true, // We need to know the status of every node that has run
+        stepRuns: true,
       }
     });
 
     if (!run) throw new Error("WorkflowRun not found");
-
-    // If the workflow is already finished or cancelled, stop evaluating.
     if (run.status !== "RUNNING" && run.status !== "PENDING") return;
 
     const definition = run.workflow.definition as any;
-    const steps = definition.steps; // The compiled Adjacency List from React Flow
+    const steps = definition.steps;
     const existingStepRuns = run.stepRuns;
 
-    // 3. THE TOPOLOGICAL MATH
+    // 2. O(1) LOOKUP OPTIMIZATION (Fixing the N+1 problem)
+    const stepRunMap = new Map(existingStepRuns.map(sr => [sr.stepId, sr]));
+
     const readyStepIds: string[] = [];
     const cancelledStepIds: string[] = [];
     const skippedStepIds: string[] = [];
 
-    // Loop through every single node in the visual blueprint
     for (const [stepId, nodeConfig] of Object.entries(steps)) {
       const node = nodeConfig as any;
 
-      // A. Has this node already been queued or executed?
-      const hasRun = existingStepRuns.find((s) => s.stepId === stepId);
-      if (hasRun) continue; // If it's already in the DB, ignore it.
+      // O(1) Map Lookup
+      const hasRun = stepRunMap.get(stepId);
+      if (hasRun) continue;
 
-      // B. Check Dependencies (The Diamond Problem solved)
       const dependencies = (node.dependsOn || []) as string[];
 
-      // If it has no dependencies (like a Trigger), it is instantly ready.
       let isReady = true;
       let shouldCancel = false;
       let shouldSkip = false;
@@ -56,60 +61,44 @@ export async function advanceWorkflow(runId: string) {
 
       if (dependencies.length > 0) {
         for (const depId of dependencies) {
-          const parentStepRun = existingStepRuns.find((s) => s.stepId === depId);
-
+          // O(1) Map Lookup
+          const parentStepRun = stepRunMap.get(depId);
           const status = parentStepRun?.status;
 
           if (status === "FAILED" || status === "CANCELLED") {
-            // 1. HARD FAILURE CASCADE (Deadly)
             shouldCancel = true;
             isReady = false;
             break;
           } else if (status === "SKIPPED") {
-            // 2. SAFE BYPASS (Harmless)
             skippedCount++;
           } else if (status === "SUCCESS") {
-            // 3. ROUTING CONDITION CHECK
             const routingConditions = node.routingConditions || {};
             const requiredBranch = routingConditions[depId];
             const parentOutputs = (parentStepRun?.outputs as Record<string, any>) || {};
             const actualBranch = parentOutputs?.branch;
 
             if (requiredBranch && actualBranch !== requiredBranch) {
-              // The parent succeeded, but we are on the WRONG side of the branch!
               shouldSkip = true;
               isReady = false;
               break;
             }
             successCount++;
           } else {
-            // 4. WAITING (Parent is PENDING, RUNNING, or undefined)
             isReady = false;
           }
-
-
-
         }
-
-
       }
 
-      // --- EVALUATE THE NODE'S FATE ---
       if (shouldCancel) {
         cancelledStepIds.push(stepId);
       } else if (shouldSkip || (dependencies.length > 0 && skippedCount === dependencies.length)) {
-        // Cascade the skip: If it failed routing, OR if ALL its parents were skipped!
         skippedStepIds.push(stepId);
       } else if (isReady && (successCount > 0 || dependencies.length === 0)) {
-        // Safe Merge Logic: If it has parents, at least ONE must be a success. 
-        // The rest can be SKIPPED.
         readyStepIds.push(stepId);
       }
     }
 
-    // 2. PROCESS PRUNING & RECURSE
     if (cancelledStepIds.length > 0 || skippedStepIds.length > 0) {
-
       if (cancelledStepIds.length > 0) {
         await db.stepRun.createMany({
           data: cancelledStepIds.map(id => ({ runId, stepId: id, status: "CANCELLED" }))
@@ -122,40 +111,59 @@ export async function advanceWorkflow(runId: string) {
         });
       }
 
-      // The Graph shape changed! Release lock and recurse immediately.
-      await releaseLock(runId, token);
-      return advanceWorkflow(runId);
+      await safeReleaseLock();
+
+      // 3. FLATTEN THE CALL STACK (Preventing infinite recursion depth)
+      queueMicrotask(() => advanceWorkflow(runId));
+      return;
     }
 
     // 4. DISPATCH THE WORKERS
     if (readyStepIds.length > 0) {
-      console.log(`[EVALUATOR] Run ${runId} pushing ${readyStepIds.length} steps to QStash:`, readyStepIds);
+      console.log(`[EVALUATOR] Run ${runId} pushing ${readyStepIds.length} steps to QStash...`);
 
-      for (const stepId of readyStepIds) {
-        const stepRun = await db.stepRun.create({
-          data: {
-            runId,
-            stepId,
-            status: "PENDING",
+      // Parallelize the database writes and webhook firing for maximum speed
+      await Promise.all(
+        readyStepIds.map(async (stepId) => {
+          try {
+            const stepRun = await db.stepRun.create({
+              data: {
+                runId,
+                stepId,
+                status: "PENDING",
+              }
+            });
+
+            await publishEvent("EXECUTE_WORKFLOW_NODE", {
+              runId,
+              stepRunId: stepRun.id,
+            });
+
+          } catch (error: any) {
+            // P2002 means the DB physically blocked a duplicate from being created.
+            // Another worker won the race. We safely ignore this and move on.
+            if (error.code === "P2002") {
+              console.warn(`[EVALUATOR] Step ${stepId} already exists for run ${runId}. Ghost worker neutralized.`);
+            } else {
+              // If it's a real database error (e.g., connection lost), we MUST throw it.
+              throw error;
+            }
           }
-        });
-
-        await publishEvent("EXECUTE_WORKFLOW_NODE", {
-          runId,
-          stepRunId: stepRun.id,
-        });
-      }
+        })
+      );
     } else {
-      // 5. TERMINAL CONVERGENCE (The end of the line)
-      // If nothing is ready, check if everything is finished.
+      // 4. FIXING THE STALE STATE READ
+      // We must fetch fresh data here to ensure nodes we just pruned or executed aren't missing
+      const latestStepRuns = await db.stepRun.findMany({ where: { runId } });
+      const latestMap = new Map(latestStepRuns.map(sr => [sr.stepId, sr]));
+
       const allDone = Object.keys(steps).every((stepId) => {
-        const s = existingStepRuns.find((sr) => sr.stepId === stepId);
+        const s = latestMap.get(stepId);
         return s?.status === "SUCCESS" || s?.status === "CANCELLED" || s?.status === "FAILED" || s?.status === "SKIPPED";
       });
 
       if (allDone) {
-        // Inspect the wreckage: Are there any FAILED steps in the history?
-        const hasFailures = existingStepRuns.some(s => s.status === "FAILED");
+        const hasFailures = latestStepRuns.some(s => s.status === "FAILED");
         const finalStatus = hasFailures ? "FAILED" : "COMPLETED";
 
         await db.workflowRun.update({
@@ -168,8 +176,6 @@ export async function advanceWorkflow(runId: string) {
   } catch (error) {
     console.error(`[EVALUATOR] Fatal error evaluating run ${runId}:`, error);
   } finally {
-    // 6. RELEASE THE LOCK
-    // This runs no matter what, even if the math crashes, preventing infinite deadlocks.
-    await releaseLock(runId, token);
+    await safeReleaseLock();
   }
 }
