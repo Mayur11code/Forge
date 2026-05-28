@@ -8,11 +8,17 @@ import type { Node, Edge } from '@xyflow/react';
 
 export const WorkflowStepSchema = z.object({
   id: z.string(),
-  action: z.string(), // e.g., 'openai.gpt4', 'aws.s3.upload'
-  dependsOn: z.array(z.string()), // The array of step IDs this step waits for
+  action: z.string(), 
+  dependsOn: z.array(z.string()), 
   
-  // We add an optional config object because actions need parameters
-  // e.g., the specific prompt for GPT-4, or the bucket name for S3
+  // --- PHASE 6: IF/ELSE ROUTING ---
+  // Tells the engine which branch this node sits on
+  routingConditions: z.record(z.string(), z.string()).optional(),
+
+  // --- PHASE 6: SAGA FLAG ---
+  // Tells the engine if a failure here should trigger a rollback
+  isCritical: z.boolean().optional().default(false), 
+  
   config: z.record(z.string(), z.any()).optional().default({}), 
 });
 
@@ -43,6 +49,7 @@ export const ActionNodeDataSchema = z.object({
   actionType: z.string(), 
   config: z.record(z.string(), z.any()).default({}),
   isConfigured: z.boolean().default(false),
+  isCritical: z.boolean().default(false),
 });
 
 export type TriggerNodeData = z.infer<typeof TriggerNodeDataSchema>;

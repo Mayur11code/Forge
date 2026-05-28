@@ -41,6 +41,9 @@ enum WorkflowExecutionStatus {
   RUNNING
   COMPLETED
   FAILED
+  ROLLING_BACK
+  ROLLED_BACK
+  REQUIRES_INTERVENTION
 }
 
 enum StepExecutionStatus {
@@ -51,6 +54,9 @@ enum StepExecutionStatus {
   CANCELLED
   RETRYING
   SKIPPED
+  COMPENSATING
+  COMPENSATED
+  COMPENSATION_FAILED
 }
 
 enum LogLevel {
