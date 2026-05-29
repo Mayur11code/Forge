@@ -27,7 +27,7 @@ export async function wrapStepOperation(
 
   // 2. PRE-FLIGHT: Atomic Claim
   // We use different target statuses based on the operation
-  const targetStatus = operation === "EXECUTE" ? "PENDING" : "COMPENSATING";
+  const targetStatus = operation === "EXECUTE" ? "PENDING" : "SUCCESS"; // Only compensate if the original execution succeeded
   const runningStatus = operation === "EXECUTE" ? "RUNNING" : "COMPENSATING"; // Assuming we don't have a COMPENSATING_RUNNING state
 
   const claimResult = await db.stepRun.updateMany({
@@ -149,21 +149,17 @@ async function handleFailure(
   isRetriable: boolean = false,
   latencyMs: number = 0
 ) {
-  const newAttempts = stepRun.attempts + 1;
+  // Fix 6: Isolate the counters
+  const currentAttempts = operation === "EXECUTE" ? stepRun.attempts : stepRun.compensationAttempts;
+  const newAttempts = currentAttempts + 1;
   const shouldRetry = isRetriable && newAttempts < MAX_RETRIES;
 
-  // Decide the final status based on the operation
-  let finalStatus:
-    | "RETRYING"
-    | "FAILED"
-    | "COMPENSATING"
-    | "COMPENSATION_FAILED";
+  // Fix 1: Proper TypeScript let + union type
+  let finalStatus: "RETRYING" | "FAILED" | "COMPENSATING" | "COMPENSATION_FAILED";
 
-    
   if (operation === "EXECUTE") {
     finalStatus = shouldRetry ? "RETRYING" : "FAILED";
   } else {
-    // We agreed on Option B: Database tracking for dead letters
     finalStatus = shouldRetry ? "COMPENSATING" : "COMPENSATION_FAILED";
   }
 
@@ -173,8 +169,8 @@ async function handleFailure(
       data: {
         status: finalStatus,
         error: errorMessage,
-        attempts: newAttempts,
-        // Only mark completedAt if it's a hard forward failure
+        // Update the correct counter column
+        ...(operation === "EXECUTE" ? { attempts: newAttempts } : { compensationAttempts: newAttempts }),
         ...(finalStatus === "FAILED" ? { completedAt: new Date() } : {})
       },
     }),
