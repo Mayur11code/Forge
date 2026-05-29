@@ -15,12 +15,14 @@ export function compileWorkflow(nodes: AppNode[], edges: AppEdge[]): WorkflowDef
     // Extract the action type (or 'trigger' if it's the entry point)
     let action = 'unknown';
     let config = {};
+    let isCritical = false;
 
     if (node.type === 'trigger') {
       action = node.data.eventId || 'unknown_trigger';
     } else if (node.type === 'action') {
       action = node.data.actionType || 'unknown_action';
       config = node.data.config || {};
+      isCritical = node.data.isCritical || false;
     }
 
     steps[node.id] = {
@@ -28,6 +30,7 @@ export function compileWorkflow(nodes: AppNode[], edges: AppEdge[]): WorkflowDef
       action,
       dependsOn,
       config,
+      isCritical,
     };
   });
 
