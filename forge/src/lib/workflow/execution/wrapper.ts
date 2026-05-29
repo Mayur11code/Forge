@@ -1,4 +1,3 @@
-// src/lib/workflow/execution/wrapper.ts
 import { db } from "@/lib/prisma/db";
 import { getAction } from "@/lib/workflow-types/action-registry";
 import { appendStepOutputToContext } from "./state";
@@ -6,115 +5,137 @@ import { ActionContext } from "@/lib/workflow-types/type";
 
 const MAX_RETRIES = 3;
 
-export async function wrapStepExecution(
+export async function wrapStepOperation(
   runId: string,
   stepId: string,
   actionId: string,
-  resolvedInputs: Record<string, any>
+  // Optional: Only provided during EXECUTE. Compensate pulls from the DB.
+  resolvedInputs?: Record<string, any>,
+  operation: "EXECUTE" | "COMPENSATE" = "EXECUTE"
 ) {
   // 1. FETCH THE STEP STATE
   const stepRun = await db.stepRun.findFirst({
     where: { runId, stepId },
-    include: { run: true } // Include the parent run to access workflowId
+    include: { run: true }
   });
 
   if (!stepRun) {
     throw new Error(`CRITICAL: StepRun ${stepId} not found for Run ${runId}`);
   }
-console.log(`[${new Date().toISOString()}] 🔍 Worker ${process.env.WORKER_ID}: Attempting to claim step ${stepId}`);
- // 2. PRE-FLIGHT: Atomic Claim (Optimistic Concurrency Control)
-  // We use updateMany because it allows us to filter by both ID and Status atomically.
+
+  console.log(`[${new Date().toISOString()}] 🔍 Worker: Attempting to claim step ${stepId} for ${operation}`);
+
+  // 2. PRE-FLIGHT: Atomic Claim
+  // We use different target statuses based on the operation
+  const targetStatus = operation === "EXECUTE" ? "PENDING" : "COMPENSATING";
+  const runningStatus = operation === "EXECUTE" ? "RUNNING" : "COMPENSATING"; // Assuming we don't have a COMPENSATING_RUNNING state
+
   const claimResult = await db.stepRun.updateMany({
-    where: { 
-      id: stepRun.id,
-      status: "PENDING" // THE MAGIC WORD: Only claim if it hasn't been claimed yet
-    },
-    data: { 
-      status: "RUNNING", 
-      startedAt: stepRun.startedAt || new Date(), 
-      inputs: resolvedInputs 
+    where: { id: stepRun.id, status: targetStatus },
+    data: {
+      status: runningStatus,
+      startedAt: stepRun.startedAt || new Date(),
+      // Only overwrite inputs if we are executing forward
+      ...(operation === "EXECUTE" && resolvedInputs ? { inputs: resolvedInputs } : {})
     },
   });
 
-  // If count is 0, it means the status was NOT "PENDING". 
-  // Another worker (Worker A) is currently executing it, or already finished it.
   if (claimResult.count === 0) {
-    console.warn(`[WRAPPER] Step ${stepId} is already claimed or finished. Aborting ghost execution.`);
-    // We return success: true so the worker API returns 200 OK and QStash deletes the ghost message.
-    return { success: true }; 
+    console.warn(`[WRAPPER] Step ${stepId} is already claimed. Aborting ghost execution.`);
+    return { success: true };
   }
 
-  // Now we safely create the audit log, knowing WE are the sole owner of this execution.
+  // Audit Log
   await db.executionAuditLog.create({
     data: {
       runId,
-      stepId :stepRun.id,
+      stepId: stepRun.id,
       logLevel: "INFO",
-      eventType: "STEP_STARTED",
-      message: `Began execution of action: ${actionId} (Attempt ${stepRun.attempts + 1})`,
-      payload: resolvedInputs,
+      eventType: operation === "EXECUTE" ? "STEP_STARTED" : "COMPENSATION_STARTED",
+      message: `Began ${operation} of action: ${actionId} (Attempt ${stepRun.attempts + 1})`,
+      payload: operation === "EXECUTE" ? resolvedInputs || {} : { inputs: stepRun.inputs, outputs: stepRun.outputs },
     }
   });
 
   // 3. ACTION LOOKUP
   const action = getAction(actionId);
   if (!action) {
-    // If the developer deleted an action from the registry but an old workflow uses it
-    return await handleFailure(stepRun.id, runId, stepId, "Action not found in registry", false);
+    return await handleFailure(stepRun, operation, "Action not found in registry", false);
   }
 
   // 4. EXECUTION SANDBOX
   const startTime = Date.now();
   try {
-    const context: ActionContext = {
-      workflowId: stepRun.run.workflowId, // Assuming you included the relation, otherwise pass this in
-      runId,
-      stepId,
-      inputs: resolvedInputs,
-    };
+    let result;
 
-    // The actual execution!
-    const result = await action.execute(context);
+    if (operation === "EXECUTE") {
+      const context: ActionContext = {
+        workflowId: stepRun.run.workflowId,
+        runId,
+        stepId,
+        inputs: resolvedInputs || {},
+      };
+      result = await action.execute(context);
+    }
+    else {
+      // THE SAGA PATH
+      if (!action.compensate) {
+        // If an action doesn't define a compensate function, it trivially succeeds.
+        result = { success: true, data: { status: "no_compensation_required" } };
+      } else {
+        const context = {
+          workflowId: stepRun.run.workflowId,
+          runId,
+          stepId,
+          inputs: stepRun.inputs as Record<string, any>,
+          outputs: stepRun.outputs as Record<string, any> // Historical outputs!
+        };
+        result = await action.compensate(context);
+      }
+    }
+
     const latencyMs = Date.now() - startTime;
 
     // 5A. POST-FLIGHT: ACTION RETURNED CONTROLLED FAILURE
     if (!result.success) {
-      return await handleFailure(stepRun.id, runId, stepId, result.error || "Unknown Action Error", result.isRetriable, latencyMs, stepRun.attempts);
+      return await handleFailure(stepRun, operation, result.error || "Unknown Action Error", result.isRetriable, latencyMs);
     }
 
     // 5B. POST-FLIGHT: SUCCESS
-    // Merge outputs to Global Context (Phase 3)
-    await appendStepOutputToContext(runId, stepId, result.data || {});
+    if (operation === "EXECUTE") {
+      // Forward path writes to global context
+      await appendStepOutputToContext(runId, stepId, result.data || {});
 
-    // Update StepRun and Audit Log
-    await db.$transaction([
-      db.stepRun.update({
+      await db.stepRun.update({
         where: { id: stepRun.id },
-        data: {
-          status: "SUCCESS",
-          completedAt: new Date(),
-          outputs: result.data || {},
-        },
-      }),
-      db.executionAuditLog.create({
-        data: {
-          runId,
-          stepId :stepRun.id,
-          logLevel: "INFO",
-          eventType: "STEP_SUCCESS",
-          message: `Action executed successfully in ${latencyMs}ms`,
-          payload: result.data || {},
-          latencyMs,
-        }
-      })
-    ]);
+        data: { status: "SUCCESS", completedAt: new Date(), outputs: result.data || {} },
+      });
+    } else {
+      // Reverse path does NOT write to global context, it just marks as COMPENSATED
+      await db.stepRun.update({
+        where: { id: stepRun.id },
+        data: { status: "COMPENSATED" },
+      });
+    }
+
+    await db.executionAuditLog.create({
+      data: {
+        runId,
+        stepId: stepRun.id,
+        logLevel: "INFO",
+        eventType: operation === "EXECUTE" ? "STEP_SUCCESS" : "COMPENSATION_SUCCESS",
+        message: `Action ${operation} completed successfully in ${latencyMs}ms`,
+        payload: result.data || {},
+        latencyMs,
+      }
+    });
 
     return { success: true };
 
   } catch (uncaughtError: any) {
-    // 5C. POST-FLIGHT: UNCAUGHT CRASH (e.g., Syntax error, Out of Memory)
+    // 5C. POST-FLIGHT: UNCAUGHT CRASH
     const latencyMs = Date.now() - startTime;
-    return await handleFailure(stepRun.id, runId, stepId, uncaughtError.message, true, latencyMs, stepRun.attempts);
+    return await handleFailure(stepRun, operation, uncaughtError.message, true, latencyMs);
   }
 }
 
@@ -122,35 +143,49 @@ console.log(`[${new Date().toISOString()}] 🔍 Worker ${process.env.WORKER_ID}:
  * Helper utility to manage the complex math of retries and failure states
  */
 async function handleFailure(
-  stepRunId: string,
-  runId: string, 
-  stepId: string, 
-  errorMessage: string, 
+  stepRun: any,
+  operation: "EXECUTE" | "COMPENSATE",
+  errorMessage: string,
   isRetriable: boolean = false,
-  latencyMs: number = 0,
-  currentAttempts: number = 0
+  latencyMs: number = 0
 ) {
-  const newAttempts = currentAttempts + 1;
-  // It is only retriable if the Action explicitly says so, AND we haven't hit the limit
+  const newAttempts = stepRun.attempts + 1;
   const shouldRetry = isRetriable && newAttempts < MAX_RETRIES;
-  const finalStatus = shouldRetry ? "RETRYING" : "FAILED";
+
+  // Decide the final status based on the operation
+  let finalStatus:
+    | "RETRYING"
+    | "FAILED"
+    | "COMPENSATING"
+    | "COMPENSATION_FAILED";
+
+    
+  if (operation === "EXECUTE") {
+    finalStatus = shouldRetry ? "RETRYING" : "FAILED";
+  } else {
+    // We agreed on Option B: Database tracking for dead letters
+    finalStatus = shouldRetry ? "COMPENSATING" : "COMPENSATION_FAILED";
+  }
 
   await db.$transaction([
     db.stepRun.update({
-      where: { id: stepRunId },
+      where: { id: stepRun.id },
       data: {
         status: finalStatus,
         error: errorMessage,
         attempts: newAttempts,
-        ...(finalStatus === "FAILED" ? { completedAt: new Date() } : {}) // Only mark complete if we are giving up
+        // Only mark completedAt if it's a hard forward failure
+        ...(finalStatus === "FAILED" ? { completedAt: new Date() } : {})
       },
     }),
     db.executionAuditLog.create({
       data: {
-        runId,
-        stepId : stepRunId,
-        logLevel: finalStatus === "FAILED" ? "FATAL" : "WARN",
-        eventType: finalStatus === "FAILED" ? "STEP_FAILED" : "STEP_RETRYING",
+        runId: stepRun.runId,
+        stepId: stepRun.id,
+        logLevel: shouldRetry ? "WARN" : "FATAL",
+        eventType: operation === "EXECUTE" ?
+          (shouldRetry ? "STEP_RETRYING" : "STEP_FAILED") :
+          (shouldRetry ? "COMPENSATION_RETRYING" : "COMPENSATION_FAILED"),
         message: errorMessage,
         latencyMs,
       }
