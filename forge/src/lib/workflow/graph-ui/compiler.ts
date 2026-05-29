@@ -15,7 +15,7 @@ export function compileWorkflow(nodes: AppNode[], edges: AppEdge[]): WorkflowDef
     // Extract the action type (or 'trigger' if it's the entry point)
     let action = 'unknown';
     let config = {};
-    let isCritical = false;
+    let isCritical = false; // FIX THESE LATER: We need to pull this from the node data in the React Flow editor, but for now we'll default to false.
 
     if (node.type === 'trigger') {
       action = node.data.eventId || 'unknown_trigger';
