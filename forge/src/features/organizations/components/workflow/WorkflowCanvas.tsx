@@ -164,7 +164,7 @@ const onConnect = useCallback(
           id: newNodeId,
           type: 'action',
           position,
-          data: { label: 'New Action', actionType: 'unset', config: {}, isConfigured: false },
+          data: { label: 'New Action', actionType: 'unset', config: {}, isConfigured: false, isCritical: false },
         };
       } else {
         return; // Failsafe in case a rogue drag event occurs
