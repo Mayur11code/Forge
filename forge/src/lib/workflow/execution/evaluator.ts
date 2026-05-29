@@ -94,9 +94,7 @@ export async function advanceWorkflow(runId: string) {
       const readyToCompensateIds: string[] = [];
       const readyToCancelIds: string[] = [];
 
-      const activeStepRuns = existingStepRuns.filter(s =>
-        s.status === "SUCCESS" || s.status === "SKIPPED" || s.status === "FAILED"
-      );
+      const activeStepRuns = existingStepRuns;
 
       for (const stepRun of activeStepRuns) {
         // We only compensate SUCCESS nodes. 
@@ -155,10 +153,12 @@ export async function advanceWorkflow(runId: string) {
             const stepRun = await db.stepRun.findFirst({ where: { runId, stepId } });
             if (!stepRun) return;
 
-            await db.stepRun.update({
-              where: { id: stepRun.id },
-              data: { status: "COMPENSATING" }
-            });
+
+// THE EXECUTION WRAPPER WILL HANDLE THIS AUTOMATICALLY BY LOOKING FOR SUCCESS STATE
+            // await db.stepRun.update({
+            //   where: { id: stepRun.id },
+            //   data: { status: "COMPENSATING" }
+            // });
 
             // Fire the webhook. Notice we use the same queue, but the worker will look at the DB status!
             await publishEvent("EXECUTE_WORKFLOW_NODE", {

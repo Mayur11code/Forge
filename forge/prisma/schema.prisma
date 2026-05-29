@@ -313,6 +313,7 @@ model StepRun {
 
   status      StepExecutionStatus @default(PENDING)
   attempts    Int                 @default(0) // Tracks retries for exponential backoff
+  compensationAttempts  Int @default(0) 
 
   // Execution Payloads
   inputs      Json?               // The resolved inputs passed into the wrapper
