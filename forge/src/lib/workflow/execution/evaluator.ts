@@ -30,11 +30,170 @@ export async function advanceWorkflow(runId: string) {
     });
 
     if (!run) throw new Error("WorkflowRun not found");
-    if (run.status !== "RUNNING" && run.status !== "PENDING") return;
+    if (run.status !== "RUNNING" && run.status !== "PENDING" && run.status !== "ROLLING_BACK") return;
 
     const definition = run.workflow.definition as any;
     const steps = definition.steps;
     const existingStepRuns = run.stepRuns;
+
+    // ====================================================================
+    // --- PHASE 6, STEP 3: THE SAGA PIVOT (Interception) ---
+    // ====================================================================
+    if (run.status === "RUNNING") {
+      // 1. Scan for any nodes that crashed
+      const failedSteps = existingStepRuns.filter(s => s.status === "FAILED");
+      let shouldPivot = false;
+
+      for (const failedStep of failedSteps) {
+        // 2. Look at the blueprint: Was this node critical?
+        const nodeDef = steps[failedStep.stepId];
+        if (nodeDef?.isCritical) {
+          shouldPivot = true;
+          break; // One critical failure is enough to sink the ship
+        }
+      }
+
+      if (shouldPivot) {
+        console.warn(`[SAGA] Critical failure detected in Run ${runId}. Initiating Rollback.`);
+
+        // 3. Shift the database state machine into reverse
+        await db.workflowRun.update({
+          where: { id: runId },
+          data: { status: "ROLLING_BACK" }
+        });
+
+        // 4. Clean up memory and instantly reboot the evaluator in reverse gear
+        await safeReleaseLock();
+        queueMicrotask(() => advanceWorkflow(runId));
+        return;
+      }
+    }
+
+    // ====================================================================
+    // --- PHASE 6, STEP 4: REVERSE TOPOLOGICAL MATH (The Brain-Melter) ---
+    // ====================================================================
+
+    if (run.status === "ROLLING_BACK") {
+
+      // 1. BUILD THE REVERSE HASHMAP O(N)
+      // Key: Parent Step ID -> Value: Array of Child Step IDs
+      const childMap = new Map<string, string[]>();
+
+      for (const [stepId, nodeConfig] of Object.entries(steps)) {
+        const node = nodeConfig as any;
+        const dependencies = (node.dependsOn || []) as string[];
+
+        for (const parentId of dependencies) {
+          if (!childMap.has(parentId)) {
+            childMap.set(parentId, []);
+          }
+          childMap.get(parentId)!.push(stepId);
+        }
+      }
+
+      const readyToCompensateIds: string[] = [];
+      const readyToCancelIds: string[] = [];
+
+      const activeStepRuns = existingStepRuns.filter(s =>
+        s.status === "SUCCESS" || s.status === "SKIPPED" || s.status === "FAILED"
+      );
+
+      for (const stepRun of activeStepRuns) {
+        // We only compensate SUCCESS nodes. 
+        // (FAILED nodes are already dead, SKIPPED nodes did nothing).
+        if (stepRun.status !== "SUCCESS") {
+          if (stepRun.status === "SKIPPED") readyToCancelIds.push(stepRun.stepId);
+          continue;
+        }
+
+        // --- THE REVERSE DEPENDENCY CHECK ---
+        const downstreamStepIds = childMap.get(stepRun.stepId) || [];
+
+        let isReadyToReverse = true;
+
+        // If this node has downstream children, we must wait for them to die first.
+        for (const childId of downstreamStepIds) {
+          const childRun = existingStepRuns.find(s => s.stepId === childId);
+
+          if (!childRun) {
+            // The child never ran (maybe it was pending when the crash happened)
+            // This is fine. It doesn't exist, so it doesn't block us.
+            continue;
+          }
+
+          // If the child is SUCCESS, RUNNING, or COMPENSATING, we CANNOT reverse yet.
+          if (
+            childRun.status === "SUCCESS" ||
+            childRun.status === "RUNNING" ||
+            childRun.status === "COMPENSATING"
+          ) {
+            isReadyToReverse = false;
+            break;
+          }
+        }
+
+        if (isReadyToReverse) {
+          readyToCompensateIds.push(stepRun.stepId);
+        }
+      }
+
+      // --- DISPATCH REVERSE WORKERS ---
+      if (readyToCancelIds.length > 0) {
+        // Instantly update skipped nodes to CANCELLED since they require no action
+        await db.stepRun.updateMany({
+          where: { runId, stepId: { in: readyToCancelIds } },
+          data: { status: "CANCELLED" }
+        });
+      }
+
+      if (readyToCompensateIds.length > 0) {
+        console.log(`[SAGA] Pushing ${readyToCompensateIds.length} nodes to compensate:`, readyToCompensateIds);
+
+        await Promise.all(
+          readyToCompensateIds.map(async (stepId) => {
+            // Update status to COMPENSATING
+            const stepRun = await db.stepRun.findFirst({ where: { runId, stepId } });
+            if (!stepRun) return;
+
+            await db.stepRun.update({
+              where: { id: stepRun.id },
+              data: { status: "COMPENSATING" }
+            });
+
+            // Fire the webhook. Notice we use the same queue, but the worker will look at the DB status!
+            await publishEvent("EXECUTE_WORKFLOW_NODE", {
+              runId,
+              stepRunId: stepRun.id,
+            });
+          })
+        );
+      } else {
+        // --- TERMINAL CONVERGENCE (The Clean Exit) ---
+        // If nothing is ready to compensate, check if we are completely done.
+        const allDone = activeStepRuns.every(s =>
+          s.status === "COMPENSATED" ||
+          s.status === "CANCELLED" ||
+          s.status === "FAILED" ||
+          s.status === "COMPENSATION_FAILED"
+        );
+
+        if (allDone) {
+          // Check for Dead Letters (Did the Stripe Refund fail?)
+          const hasDeadLetters = activeStepRuns.some(s => s.status === "COMPENSATION_FAILED");
+          const finalStatus = hasDeadLetters ? "REQUIRES_INTERVENTION" : "ROLLED_BACK";
+
+          console.log(`[SAGA] Run ${runId} rollback complete. Final status: ${finalStatus}`);
+          await db.workflowRun.update({
+            where: { id: runId },
+            data: { status: finalStatus, completedAt: new Date() }
+          });
+        }
+      }
+
+      // The Engine is in reverse. Let it sleep until a worker finishes compensating.
+      await safeReleaseLock();
+      return;
+    }
 
     // 2. O(1) LOOKUP OPTIMIZATION (Fixing the N+1 problem)
     const stepRunMap = new Map(existingStepRuns.map(sr => [sr.stepId, sr]));
