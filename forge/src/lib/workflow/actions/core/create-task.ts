@@ -1,8 +1,8 @@
 // src/lib/workflow/actions/core/create-task.ts
-import { ActionFunction, WorkflowAction } from "../../../workflow-types/type";
+import { ExecuteFunction, WorkflowAction } from "../../../workflow-types/type";
 import { db } from "@/lib/prisma/db";
 
-const execute: ActionFunction = async (ctx) => {
+const execute: ExecuteFunction = async (ctx) => {
   try {
     // 1. The inputs are already resolved by the engine before this runs
     const { title, projectId, description } = ctx.inputs;
