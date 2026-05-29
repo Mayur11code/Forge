@@ -24,14 +24,18 @@ export type ActionResult = {
   isRetriable?: boolean; 
 };
 
-export type ActionFunction = (ctx: ActionContext) => Promise<ActionResult>;
+export type ExecuteFunction = (ctx: ActionContext) => Promise<ActionResult>;
 
+// 2. The Reverse Signature (Notice the injected historical outputs!)
+export type CompensateFunction = (
+  ctx: ActionContext & { outputs: any } 
+) => Promise<ActionResult>;
 
 export interface WorkflowAction {
 
   id: string; 
 
-  execute: ActionFunction; 
-  compensate?: ActionFunction; 
+  execute: ExecuteFunction; 
+  compensate?: CompensateFunction; 
 }
 
