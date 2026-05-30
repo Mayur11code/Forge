@@ -94,6 +94,7 @@ export const eventSchemas = {
   EXECUTE_WORKFLOW_NODE: z.object({
     runId: z.string(),
     stepRunId: z.string(),
+    kind: z.enum(["TRIGGER", "ACTION"]),
   }),
   
 } satisfies Record<EventType, z.ZodTypeAny>;
