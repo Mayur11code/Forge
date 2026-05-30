@@ -27,7 +27,7 @@ export async function advanceWorkflow(runId: string) {
         workflow: true,
         stepRuns: true,
       }
-    });
+    }); 
 
     if (!run) throw new Error("WorkflowRun not found");
     if (run.status !== "RUNNING" && run.status !== "PENDING" && run.status !== "ROLLING_BACK") return;
@@ -164,6 +164,7 @@ export async function advanceWorkflow(runId: string) {
             await publishEvent("EXECUTE_WORKFLOW_NODE", {
               runId,
               stepRunId: stepRun.id,
+              kind: definition.steps[stepId].kind || "ACTION", // Pass the kind to
             });
           })
         );
@@ -296,6 +297,7 @@ export async function advanceWorkflow(runId: string) {
             await publishEvent("EXECUTE_WORKFLOW_NODE", {
               runId,
               stepRunId: stepRun.id,
+              kind: definition.steps[stepId].kind || "ACTION", // Pass the kind to the worker
             });
 
           } catch (error: any) {

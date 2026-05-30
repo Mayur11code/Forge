@@ -14,7 +14,7 @@ const execute: ExecuteFunction = async (ctx) => {
         isRetriable: false // Bad user config, retrying won't fix this
       };
     }
-
+console.log(`[ACTION: task.create] Creating task with title "${title}" in project ${projectId}...`);
     // 2. Execute the actual business logic
     const task = await db.task.create({
       data: {

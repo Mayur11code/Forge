@@ -16,9 +16,10 @@ export function compileWorkflow(nodes: AppNode[], edges: AppEdge[]): WorkflowDef
     let action = 'unknown';
     let config = {};
     let isCritical = false; // FIX THESE LATER: We need to pull this from the node data in the React Flow editor, but for now we'll default to false.
-
+    let kind: 'TRIGGER' | 'ACTION' = 'ACTION'; // Default to ACTION, but we'll set this properly based on the node type
     if (node.type === 'trigger') {
       action = node.data.eventId || 'unknown_trigger';
+      kind = 'TRIGGER';
     } else if (node.type === 'action') {
       action = node.data.actionType || 'unknown_action';
       config = node.data.config || {};
@@ -31,6 +32,7 @@ export function compileWorkflow(nodes: AppNode[], edges: AppEdge[]): WorkflowDef
       dependsOn,
       config,
       isCritical,
+      kind,
     };
   });
 
