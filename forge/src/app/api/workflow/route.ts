@@ -12,6 +12,7 @@ type CloudEventWrapper = {
     data: {
         runId: string;
         stepRunId: string;
+        kind :string;
     }
 };
 
@@ -20,8 +21,7 @@ async function handler(req: NextRequest) {
         const body = await req.json() as CloudEventWrapper;
 
         // 1. UNPACK THE CLOUD EVENT
-        const { stepRunId, runId } = body.data;
-
+        const { stepRunId, runId, kind } = body.data;
         // 2. FETCH THE ENTIRE TREE (StepRun -> WorkflowRun -> Workflow)
         const stepRun = await db.stepRun.findUnique({
             where: { id: stepRunId },
@@ -81,6 +81,7 @@ async function handler(req: NextRequest) {
             const rawInputs = nodeDefinition.config || {};
             const globalContext = stepRun.run.context as Record<string, any>;
             resolvedInputs = resolveInputs(rawInputs, globalContext);
+            console.log(`[WORKER] Resolved inputs for step ${stepRunId}:`, resolvedInputs);
         }
 
 
@@ -89,8 +90,10 @@ async function handler(req: NextRequest) {
             stepRun.runId,
             stepRun.stepId,
             actionId,
+            body.data.kind as "TRIGGER" | "ACTION", // Pass the kind from the CloudEvent
             resolvedInputs,
             operation
+
         );
 
         // CHANGE 6: THE DEAD LETTER HTTP MATH
@@ -113,7 +116,7 @@ async function handler(req: NextRequest) {
         await advanceWorkflow(runId).catch(err => {
             console.error(`[WORKER] Evaluator failed for run ${runId}:`, err);
         });
-
+        
         return new NextResponse("Execution Complete", { status: 200 });
 
     } catch (error: any) {
