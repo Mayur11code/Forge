@@ -1,142 +1,367 @@
 // src/lib/workflow/utils.ts
-import { AppNode, AppEdge } from "@/lib/workflow-types/workflow"; // Adjust path if needed
-import { ActionDef, AVAILABLE_ACTIONS, AVAILABLE_TRIGGERS } from "@/lib/workflow-types/registry"; // Adjust path if needed
+
+import {
+  AppNode,
+  AppEdge,
+} from "@/lib/workflow-types/workflow";
+
+import {
+  ActionDef,
+  AVAILABLE_ACTIONS,
+  AVAILABLE_TRIGGERS,
+} from "@/lib/workflow-types/registry";
 
 /**
- * Helper: Given a fully typed AppNode, find its definition in our registry
- * so we can read its 'outputs' and 'requires' arrays.
+ * ============================================================
+ * Node Definition Resolver
+ * ============================================================
  */
+
 export function getNodeDefinition(node: AppNode) {
-  // Because AppNode is a discriminated union, TypeScript knows that if 
-  // node.type === 'trigger', node.data MUST be TriggerNodeData.
-  if (node.type === 'trigger' && node.data.eventId) {
-    return AVAILABLE_TRIGGERS.find(t => t.id === node.data.eventId);
+  if (
+    node.type === "trigger" &&
+    node.data.eventId
+  ) {
+    return AVAILABLE_TRIGGERS.find(
+      (t) => t.id === node.data.eventId
+    );
   }
-  
-  // Likewise, if it's an action, it safely has actionType.
-  if (node.type === 'action' && node.data.actionType) {
-    return AVAILABLE_ACTIONS.find(a => a.id === node.data.actionType);
+
+  if (
+    node.type === "action" &&
+    node.data.actionType
+  ) {
+    return AVAILABLE_ACTIONS.find(
+      (a) => a.id === node.data.actionType
+    );
   }
-  
+
   return null;
 }
 
 /**
- * The Upstream Scanner: Recursively walks up the React Flow graph
- * to collect every variable available to the target node.
+ * ============================================================
+ * Upstream Output Scanner
+ *
+ * Recursively walks the graph upward and
+ * returns all available outputs.
+ *
+ * Priority:
+ * Direct Parent > Grandparent > Higher Ancestors
+ *
+ * Prevents:
+ * - infinite loops
+ * - duplicate outputs
+ * - unstable ordering
+ *
+ * ============================================================
  */
+
 export function getAvailableUpstreamOutputs(
-  targetNodeId: string, 
-  nodes: AppNode[], 
+  targetNodeId: string,
+  nodes: AppNode[],
   edges: AppEdge[],
-  visited = new Set<string>() // Guardrail against infinite loops!
-): { sourceNodeId: string; outputKey: string }[] {
-  
-  // 1. Safety Check: Stop circular dependencies
-  if (visited.has(targetNodeId)) return [];
+  visited = new Set<string>()
+): {
+  sourceNodeId: string;
+  outputKey: string;
+}[] {
+  /**
+   * Cycle protection
+   */
+  if (visited.has(targetNodeId)) {
+    return [];
+  }
+
   visited.add(targetNodeId);
 
-  // 2. Find all wires pointing directly INTO our target node
-  const incomingEdges = edges.filter(e => e.target === targetNodeId);
-  let rawAvailableData: { sourceNodeId: string; outputKey: string }[] = [];
+  /**
+   * Fast lookup maps
+   *
+   * O(1) instead of repeated O(n)
+   */
+  const nodeMap = new Map(
+    nodes.map((n) => [n.id, n])
+  );
 
-  for (const edge of incomingEdges) {
-    // Grab the actual node component the wire is coming from
-    const parentNode = nodes.find(n => n.id === edge.source);
-    if (!parentNode) continue;
+  /**
+   * Build parent adjacency list
+   *
+   * target -> incoming edges
+   */
+  const incomingEdgeMap =
+    new Map<string, AppEdge[]>();
 
-    // Look up the parent in your registry
-    const parentDef = getNodeDefinition(parentNode);
+  for (const edge of edges) {
+    const existing =
+      incomingEdgeMap.get(edge.target) ?? [];
 
-    // 3. Extract the parent's immediate outputs
-    if (parentDef && parentDef.outputs) {
-      parentDef.outputs.forEach(outputKey => {
-        rawAvailableData.push({ sourceNodeId: parentNode.id, outputKey });
-      });
-    }
+    existing.push(edge);
 
-    // 4. Recursively call this function on the parent to get grandparent outputs
-    const grandparentData = getAvailableUpstreamOutputs(
-      parentNode.id, 
-      nodes, 
-      edges, 
-      visited
+    incomingEdgeMap.set(
+      edge.target,
+      existing
     );
-
-    // Combine what the parent outputs with what the grandparents output
-    rawAvailableData = [...rawAvailableData, ...grandparentData];
   }
 
-  // 5. The Diamond Fix (Deduplication)
-  const uniqueData = new Map();
-  for (const item of rawAvailableData) {
-    // Create a unique key like "node-1.taskId"
-    const uniqueKey = `${item.sourceNodeId}.${item.outputKey}`;
-    uniqueData.set(uniqueKey, item);
-  }
+  /**
+   * Stores resolved outputs.
+   *
+   * Key:
+   * sourceNodeId.outputKey
+   *
+   * Preserves insertion order.
+   */
+  const resolvedOutputs =
+    new Map<
+      string,
+      {
+        sourceNodeId: string;
+        outputKey: string;
+      }
+    >();
 
-  // Return the clean array
-  return Array.from(uniqueData.values());
+  /**
+   * DFS traversal
+   *
+   * depth matters:
+   * lower depth = higher priority
+   */
+  const traverse = (
+    nodeId: string,
+    depth: number
+  ) => {
+    const incomingEdges =
+      incomingEdgeMap.get(nodeId) ?? [];
+
+    for (const edge of incomingEdges) {
+      const parentNode =
+        nodeMap.get(edge.source);
+
+      if (!parentNode) continue;
+
+      /**
+       * Prevent cycles
+       */
+      if (visited.has(parentNode.id)) {
+        continue;
+      }
+
+      visited.add(parentNode.id);
+
+      const parentDef =
+        getNodeDefinition(parentNode);
+
+      /**
+       * Add direct parent outputs FIRST
+       *
+       * This guarantees:
+       * Parent > Grandparent
+       */
+      if (parentDef?.outputs?.length) {
+        for (const outputKey of parentDef.outputs) {
+          const key =
+            `${parentNode.id}.${outputKey}`;
+
+          /**
+           * First write wins.
+           *
+           * Closer ancestors
+           * always have priority.
+           */
+          if (!resolvedOutputs.has(key)) {
+            resolvedOutputs.set(key, {
+              sourceNodeId:
+                parentNode.id,
+              outputKey,
+            });
+          }
+        }
+      }
+
+      /**
+       * Recursive traversal upward
+       */
+      traverse(parentNode.id, depth + 1);
+    }
+  };
+
+  traverse(targetNodeId, 0);
+
+  return Array.from(
+    resolvedOutputs.values()
+  );
 }
 
 /**
- * NEW: The Self-Healing Auto-Mapper
- * This utility bridges the gap between the Scanner and the React State.
- * It can be called from WorkflowCanvas (onConnect) or PropertiesPanel (onActionTypeChange).
+ * ============================================================
+ * Auto Variable Mapper
+ *
+ * Automatically injects:
+ *
+ * {{node.outputs.key}}
+ *
+ * Resolution Priority:
+ *
+ * 1. Direct parent
+ * 2. Grandparent
+ * 3. Higher ancestors
+ *
+ * Existing config values are never overwritten.
+ * ============================================================
  */
+
 export function autoMapNodeVariables(
   targetNodeId: string,
   nodes: AppNode[],
   edges: AppEdge[],
-  setNodes: (payload: AppNode[] | ((nds: AppNode[]) => AppNode[])) => void
+  setNodes: (
+    payload:
+      | AppNode[]
+      | ((
+        nds: AppNode[]
+      ) => AppNode[])
+  ) => void
 ) {
   setNodes((nds) => {
-    // 1. Initial check to confirm the target is an action
-    const targetNode = nds.find((n) => n.id === targetNodeId);
-    if (!targetNode || targetNode.type !== 'action') return nds;
+    /**
+     * Fast node lookup
+     */
+    const nodeMap = new Map(
+      nds.map((n) => [n.id, n])
+    );
 
-    const targetDef = getNodeDefinition(targetNode) as ActionDef | undefined;
-    if (!targetDef?.requires) return nds;
+    const targetNode =
+      nodeMap.get(targetNodeId);
 
-    const incomingEdges = edges.filter((e) => e.target === targetNodeId);
-    const updatedConfig: Record<string, any> = { ...targetNode.data.config };
-    let hasChanges = false;
-
-    for (const edge of incomingEdges) {
-      const sourceNode = nds.find((n) => n.id === edge.source);
-      if (!sourceNode) continue;
-
-      const sourceDef = getNodeDefinition(sourceNode);
-      if (!sourceDef?.outputs) continue;
-
-      const matches = targetDef.requires.filter((req) => 
-        sourceDef.outputs.includes(req)
-      );
-
-      matches.forEach((match) => {
-        if (!updatedConfig[match] || String(updatedConfig[match]).trim() === '') {
-          updatedConfig[match] = `{{${sourceNode.id}.outputs.${match}}}`;
-          hasChanges = true;
-        }
-      });
+    /**
+     * Only actions require inputs
+     */
+    if (
+      !targetNode ||
+      targetNode.type !== "action"
+    ) {
+      return nds;
     }
 
-    if (!hasChanges) return nds;
+    const targetDef =
+      getNodeDefinition(
+        targetNode
+      ) as ActionDef | null;
 
-    // 2. THE FIX: Re-narrow the type inside the map loop.
-    // By checking 'n.type === "action"', TypeScript knows the object we 
-    // return is an ActionNodeType, which is a valid member of the AppNode union.
-    return nds.map((n) => {
-      if (n.id === targetNodeId && n.type === 'action') {
+    if (!targetDef?.requires?.length) {
+      return nds;
+    }
+
+    /**
+     * Clone config
+     * Never mutate original
+     */
+    const updatedConfig = {
+      ...targetNode.data.config,
+    };
+
+    let hasChanges = false;
+
+    /**
+     * Get ALL upstream outputs
+     *
+     * Ordered by proximity.
+     */
+    const availableOutputs =
+      getAvailableUpstreamOutputs(
+        targetNodeId,
+        nds,
+        edges
+      );
+
+    /**
+     * Resolve every required input
+     */
+    for (const requiredInput of targetDef.requires) {
+      /**
+       * Respect manual config.
+       * Never overwrite.
+       */
+      const existingValue =
+        updatedConfig[
+        requiredInput
+        ];
+
+      const isEmpty =
+        existingValue == null ||
+        String(existingValue)
+          .trim() === "";
+
+      if (!isEmpty) {
+        continue;
+      }
+
+      /**
+       * Find nearest provider
+       *
+       * Parent first.
+       * Grandparent fallback.
+       */
+      const provider =
+        availableOutputs.find(
+          (output) =>
+            output.outputKey ===
+            requiredInput
+        );
+
+      if (!provider) {
+        continue;
+      }
+
+      const providerNode =
+        nodeMap.get(
+          provider.sourceNodeId
+        );
+
+      const nodeId =
+        providerNode?.type ===
+          "trigger"
+          ? "trigger"
+          : provider.sourceNodeId;
+
+      /**
+       * Inject variable syntax
+       */
+      updatedConfig[
+        requiredInput
+      ] =
+        `{{${nodeId}.outputs.${requiredInput}}}`;
+
+      hasChanges = true;
+    }
+
+    /**
+     * No update → avoid rerender
+     */
+    if (!hasChanges) {
+      return nds;
+    }
+
+    /**
+     * Immutable update
+     */
+    return nds.map((node) => {
+      if (
+        node.id === targetNodeId &&
+        node.type === "action"
+      ) {
         return {
-          ...n,
+          ...node,
           data: {
-            ...n.data,
-            config: updatedConfig,
+            ...node.data,
+            config:
+              updatedConfig,
           },
         };
       }
-      return n;
+
+      return node;
     });
   });
 }
