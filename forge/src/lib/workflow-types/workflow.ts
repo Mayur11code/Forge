@@ -1,5 +1,10 @@
 import { z } from 'zod';
 import type { Node, Edge } from '@xyflow/react';
+import { StepExecutionStatus } from '@prisma/client';
+
+const ExecutionStatusSchema = z
+  .enum(StepExecutionStatus)
+  .optional();
 
 // ------------------------------------------------------------------
 // 1. THE EXECUTION BLUEPRINT (Zod Validation)
@@ -18,6 +23,12 @@ export const WorkflowStepSchema = z.object({
   // --- PHASE 6: SAGA FLAG ---
   // Tells the engine if a failure here should trigger a rollback
   isCritical: z.boolean().optional().default(false), 
+
+  kind: z.enum([
+     "TRIGGER",
+     "ACTION",
+   ]),
+
   
   config: z.record(z.string(), z.any()).optional().default({}), 
 });
@@ -42,6 +53,8 @@ export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>;
 export const TriggerNodeDataSchema = z.object({
   label: z.string(),
   eventId: z.string().nullable(), 
+
+  executionStatus: ExecutionStatusSchema, // This will be injected live during execution to reflect the current status of the step
 });
 
 export const ActionNodeDataSchema = z.object({
@@ -50,6 +63,8 @@ export const ActionNodeDataSchema = z.object({
   config: z.record(z.string(), z.any()).default({}),
   isConfigured: z.boolean().default(false),
   isCritical: z.boolean().default(false),
+
+  executionStatus: ExecutionStatusSchema, // This will be injected live during execution to reflect the current status of the step
 });
 
 export type TriggerNodeData = z.infer<typeof TriggerNodeDataSchema>;

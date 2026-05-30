@@ -2,13 +2,29 @@ import { db } from "@/lib/prisma/db";
 import { getAction } from "@/lib/workflow-types/action-registry";
 import { appendStepOutputToContext } from "./state";
 import { ActionContext } from "@/lib/workflow-types/type";
+import { Redis } from '@upstash/redis';
+import { pusherServer } from "@/lib/pusher/pusher-server";
+
+
+export const redis = Redis.fromEnv();
 
 const MAX_RETRIES = 3;
+
+const broadcastStatus = async (runId: string, stepId: string, status: string) => {
+  // Fire and forget. 
+  // Notice the channel name exactly matches your frontend hook: `private-workflow-${runId}`
+  await pusherServer.trigger(`private-workflow-${runId}`, "STEP_STATE_CHANGE", {
+    stepId,
+    status,
+    timestamp: Date.now()
+  }).catch(err => console.error(`[PUSHER] Failed to broadcast status for ${stepId}:`, err));
+};
 
 export async function wrapStepOperation(
   runId: string,
   stepId: string,
   actionId: string,
+  kind: "TRIGGER" | "ACTION",
   // Optional: Only provided during EXECUTE. Compensate pulls from the DB.
   resolvedInputs?: Record<string, any>,
   operation: "EXECUTE" | "COMPENSATE" = "EXECUTE"
@@ -22,9 +38,39 @@ export async function wrapStepOperation(
   if (!stepRun) {
     throw new Error(`CRITICAL: StepRun ${stepId} not found for Run ${runId}`);
   }
+  console.log(kind, "kind");
+
 
   console.log(`[${new Date().toISOString()}] 🔍 Worker: Attempting to claim step ${stepId} for ${operation}`);
 
+
+  if (
+    kind ===
+    "TRIGGER"
+  ) {
+
+
+    
+    console.log(
+      `[TRIGGER] Auto-completing ${stepId} since it's a trigger.`
+
+    );
+
+
+    await db.stepRun.update({
+      where: {
+        id: stepRun.id,
+      },
+      data: {
+        status: "SUCCESS",
+        completedAt:
+          new Date(),
+      },
+    });
+
+    await broadcastStatus(runId, stepRun.stepId, "SUCCESS");
+    return { success: true };
+  }
   // 2. PRE-FLIGHT: Atomic Claim
   // We use different target statuses based on the operation
   const targetStatus = operation === "EXECUTE" ? "PENDING" : "SUCCESS"; // Only compensate if the original execution succeeded
@@ -45,6 +91,13 @@ export async function wrapStepOperation(
     return { success: true };
   }
 
+
+
+  // 🔊 BROADCAST: Step has started
+  await broadcastStatus(runId, stepRun.stepId, runningStatus);
+
+
+
   // Audit Log
   await db.executionAuditLog.create({
     data: {
@@ -56,6 +109,8 @@ export async function wrapStepOperation(
       payload: operation === "EXECUTE" ? resolvedInputs || {} : { inputs: stepRun.inputs, outputs: stepRun.outputs },
     }
   });
+
+
 
   // 3. ACTION LOOKUP
   const action = getAction(actionId);
@@ -110,12 +165,18 @@ export async function wrapStepOperation(
         where: { id: stepRun.id },
         data: { status: "SUCCESS", completedAt: new Date(), outputs: result.data || {} },
       });
+
+      // 🔊 BROADCAST: Forward execution succeeded
+      await broadcastStatus(runId, stepRun.stepId, "SUCCESS");
     } else {
       // Reverse path does NOT write to global context, it just marks as COMPENSATED
       await db.stepRun.update({
         where: { id: stepRun.id },
         data: { status: "COMPENSATED" },
       });
+
+      // 🔊 BROADCAST: Rollback execution succeeded
+      await broadcastStatus(runId, stepRun.stepId, "COMPENSATED");
     }
 
     await db.executionAuditLog.create({
@@ -187,6 +248,9 @@ async function handleFailure(
       }
     })
   ]);
+
+  // 🔊 BROADCAST: Failure or Retry state
+  await broadcastStatus(stepRun.runId, stepRun.stepId, finalStatus);
 
   return { success: false, status: finalStatus, error: errorMessage };
 }
