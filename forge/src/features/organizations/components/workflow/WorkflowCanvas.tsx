@@ -32,6 +32,7 @@ import Sidebar from './sidebar';
 import { Loader2, Save } from 'lucide-react'; // Ensure AppEdge is imported
 import { init } from 'next/dist/compiled/webpack/webpack';
 import PropertiesPanel from './PropertiesPanel';
+// import RunWorkflowButton from './RunWorkflowButton';
 
 interface WorkflowCanvasProps {
   workflowId?: string; // If undefined, we are creating a new one
