@@ -1,7 +1,0 @@
-{
-  "dependencies": {
-    "@upstash/qstash": "^2.10.1",
-    "resend": "^6.10.0",
-    "zod": "^4.3.5"
-  }
-}
