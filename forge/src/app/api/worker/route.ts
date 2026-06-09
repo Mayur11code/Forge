@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createWorker } from "@/lib/events/worker";
 
-// Import your wrapped workers
+
 import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
 import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 import { aiWorkerHandler } from "@/app/api/worker/ai-worker/ai-worker";
@@ -17,12 +17,9 @@ export async function POST(req: NextRequest) {
   try {
     const clonedReq = req.clone();
     const body = await clonedReq.json();
-    const { id, type, data, time } = body;
-    const ip =
-      req.headers.get("x-forwarded-for") ||
-      req.headers.get("x-real-ip") ||
-      "unknown";
-    console.log(`🚀 [WORKER] Event received: ${type}`);
+    const { type } = body;
+ 
+    console.log(`[WORKER] Event received: ${type}`);
  
 
     if (!type) {

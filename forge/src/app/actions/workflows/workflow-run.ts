@@ -1,4 +1,3 @@
-// src/app/actions/workflow-run.ts
 "use server";
 
 import { startWorkflow } from "@/lib/workflow/execution/trigger";
@@ -9,7 +8,7 @@ export async function triggerWorkflowRun(
   triggerPayload: Record<string, any> = {} // The dynamic payload
 ) {
   try {
-    // Pass the dynamic payload directly into your engine's starter motor
+  
     const run = await startWorkflow(workflowId, triggerPayload);
 
     return {

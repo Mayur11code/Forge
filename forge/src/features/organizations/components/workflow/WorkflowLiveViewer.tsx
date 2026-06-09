@@ -37,7 +37,6 @@ function LiveCanvasArea({ runId, initialNodes, initialEdges, onNodesUpdate }: Wo
     onNodesUpdate?.(nodes);
   }, [nodes, onNodesUpdate]);
 
-  // 🔌 THE MAGIC HOOK: This listens to Redis and calls setNodes automatically
   useWorkflowLiveStream(runId, setNodes);
 
  useEffect(() => {
@@ -100,13 +99,13 @@ function LiveCanvasArea({ runId, initialNodes, initialEdges, onNodesUpdate }: Wo
         nodes={nodes}
         edges={edges}
         edgeTypes={edgeTypes}
-        // Notice we still pass these so the user can pan around the canvas
+
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         fitView
         colorMode="dark"
-        // 🔒 ENTERPRISE GUARDRAILS: Lock the canvas down!
+       
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={true} // Allow them to click nodes to see details, but not move them
@@ -122,7 +121,7 @@ function LiveCanvasArea({ runId, initialNodes, initialEdges, onNodesUpdate }: Wo
 export default function WorkflowLiveViewer(props: WorkflowLiveViewerProps) {
   return (
     <div className="flex w-full border-grey-800 rounded-xl overflow-hidden shadow-sm">
-      {/* Notice: No Sidebar, No Properties Panel, No Save Button! */}
+   
       <ReactFlowProvider>
         <LiveCanvasArea {...props} />
       </ReactFlowProvider>

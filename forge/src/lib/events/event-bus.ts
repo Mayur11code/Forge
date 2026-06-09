@@ -1,4 +1,3 @@
-import OrgLayout from "@/app/org/[orgId]/layout";
 import { publishEvent } from "./queue";
 import { EventType } from "./schema";
 
@@ -11,7 +10,7 @@ type EventHandler = (payload: any) => {
 const EVENT_ROUTING: Record<string, EventHandler[]> = {
    
     USER_SIGNED_UP: [
-    (p) => ({
+    (p :{ orgId: string; userId: string }) => ({
       type: "SEND_WELCOME_EMAIL",
       payload: {
         orgId: p.orgId,
@@ -21,14 +20,14 @@ const EVENT_ROUTING: Record<string, EventHandler[]> = {
       },
     }),
 
-    (p) => ({
+    (p :{ orgId: string; userId: string }) => ({
       type: "CREATE_DEFAULT_ORG",
       payload: {
         orgId: p.orgId,
       },
     }),
 
-    (p) => ({
+    (p :{ orgId: string; userId: string }) => ({
       type: "ANALYTICS_EVENT",
       payload: {
         orgId: p.orgId,
@@ -40,9 +39,7 @@ const EVENT_ROUTING: Record<string, EventHandler[]> = {
     }),
   ],
 
-  // -----------------------------------
-  // TASK CREATED
-  // -----------------------------------
+
   TASK_CREATED: [
     (p) => ({
       type: "EMBEDDING_REQUESTED",
@@ -76,9 +73,7 @@ const EVENT_ROUTING: Record<string, EventHandler[]> = {
         }),
   ],
 
-  // -----------------------------------
-  // TASK COMPLETED
-  // -----------------------------------
+
   TASK_COMPLETED: [
     (p) => ({
       type: "NOTIFY_PROJECT_OWNER",
@@ -100,9 +95,6 @@ const EVENT_ROUTING: Record<string, EventHandler[]> = {
     }),
   ],
 
-  // -----------------------------------
-  // FILE UPLOADED
-  // -----------------------------------
   FILE_UPLOADED: [
     (p) => ({
       type: "PROCESS_FILE",
@@ -122,9 +114,6 @@ const EVENT_ROUTING: Record<string, EventHandler[]> = {
     }),
   ],
 
-  // -----------------------------------
-  // PROJECT COMPLETED
-  // -----------------------------------
   PROJECT_COMPLETED: [
     (p) => ({
       type: "NOTIFY_PROJECT_OWNER",
@@ -151,9 +140,7 @@ const EVENT_ROUTING: Record<string, EventHandler[]> = {
     }),
   ],
 
-  // -----------------------------------
-  // AI SUMMARY REQUESTED (CHAINING)
-  // -----------------------------------
+
   AI_SUMMARY_REQUESTED: [
     (p) => ({
       type: "ANALYTICS_EVENT",
@@ -167,9 +154,6 @@ const EVENT_ROUTING: Record<string, EventHandler[]> = {
     }),
   ],
 
-  // -----------------------------------
-  // CRON EVENT (OPTIONAL FAN-OUT)
-  // -----------------------------------
   CRON_DAILY_DIGEST: [
     (p) => ({
       type: "SEND_EMAIL",
@@ -198,7 +182,7 @@ export async function dispatchEvent<K extends keyof typeof EVENT_ROUTING>(trigge
 
     if (!handlers) return;
 
-    // Use allSettled so one failure doesn't kill the whole batch
+  
     const results = await Promise.allSettled(
         handlers.map((handlerFn) => {
             const job = handlerFn(payload);
@@ -206,14 +190,15 @@ export async function dispatchEvent<K extends keyof typeof EVENT_ROUTING>(trigge
         })
     );
 
-    // Optional: Log errors for failed jobs so they don't disappear into the void
+    // Log errors for failed jobs so they don't disappear into the void
     results.forEach((result, index) => {
         if (result.status === 'rejected') {
             console.error(
-                `❌ Event failed at index ${index} for trigger "${trigger}":`, 
+                `Event failed at index ${index} for trigger "${trigger}":`, 
                 result.reason
             );
-            // Here you could also send this to an error tracking service like Sentry
-        }
+            //sentry later
+
+            }
     });
 }

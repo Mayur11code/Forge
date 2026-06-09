@@ -7,9 +7,6 @@ import { waitUntil } from "@vercel/functions";
 
 
 
-// -----------------------------
-// HANDLER TYPE
-// -----------------------------
 type WorkerHandler<K extends EventType> = (params: {
   event: {
     id: string;
@@ -19,14 +16,12 @@ type WorkerHandler<K extends EventType> = (params: {
   };
 }) => Promise<void>;
 
-// -----------------------------
-// CREATE WORKER
-// -----------------------------
+
 export function createWorker<K extends EventType>(
   eventType: K,
   handler: WorkerHandler<K>
 ) {
-  // Define the internal logic
+
   const internalHandler = async (req: NextRequest) => {
     let messageId: string | null = null;
 
@@ -50,16 +45,9 @@ export function createWorker<K extends EventType>(
       const validatedData = parsed.data as EventPayloadMap[K];
 
 
-      // -----------------------------
-      // 📊 UNIVERSAL ANALYTICS INTERCEPT
-      // -----------------------------
-      // We construct the "event" object your function expects.
-      // Notice there is NO "await" here! It fires in the background.
 
-      
-      // ------------------------------------------------------
-      // IDEMPOTENCY & STATE CHECK
-      // ------------------------------------------------------
+
+      //state check
       let proceedToExecute = false;
 
       try {
@@ -72,7 +60,7 @@ export function createWorker<K extends EventType>(
             status: "PENDING",
           },
         });
-        proceedToExecute = true; // It's the first time, proceed!
+        proceedToExecute = true; 
       } catch (error: any) {
         if (error.code === "P2002") {
           const existingLog = await db.eventLog.findUnique({
@@ -89,7 +77,7 @@ export function createWorker<K extends EventType>(
           }
 
           if (existingLog?.status === "FAILED") {
-            // Attempt to claim the retry (Atomic Update)
+            // retry
             const updated = await db.eventLog.updateMany({
               where: { messageId, status: "FAILED" },
               data: { status: "PENDING", error: null },
@@ -102,9 +90,7 @@ export function createWorker<K extends EventType>(
         }
       }
 
-      // ------------------------------------------------------
-      // EXECUTION
-      // ------------------------------------------------------
+
       if (proceedToExecute) {
         try {
           await handler({
@@ -137,6 +123,6 @@ export function createWorker<K extends EventType>(
     }
   };
 
-  // WRAP AND RETURN (This is where the signature check happens)
+ //signature check
   return verifySignatureAppRouter(internalHandler);
 }

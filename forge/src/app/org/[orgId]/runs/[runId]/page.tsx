@@ -1,6 +1,5 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/prisma/db";
-import WorkflowLiveViewer from "@/features/organizations/components/workflow/WorkflowLiveViewer";
 import type {
   AppNode,
   AppEdge,
@@ -14,50 +13,33 @@ interface RunPageProps {
   }>;
 }
 
-function getStatusStyles(status: string) {
-  switch (status) {
-    case "RUNNING":
-      return "border-blue-500/20 bg-blue-500/10 text-blue-400";
 
-    case "SUCCESS":
-    case "COMPLETED":
-      return "border-emerald-500/20 bg-emerald-500/10 text-emerald-400";
 
-    case "ROLLING_BACK":
-      return "border-amber-500/20 bg-amber-500/10 text-amber-400";
 
-    case "FAILED":
-    case "COMPENSATION_FAILED":
-      return "border-red-500/20 bg-red-500/10 text-red-400";
-
-    case "COMPENSATED":
-      return "border-purple-500/20 bg-purple-500/10 text-purple-400";
-
-    default:
-      return "border-zinc-700 bg-zinc-900 text-zinc-400";
-  }
-}
 
 export default async function WorkflowRunPage({
   params
 }: RunPageProps) {
-  const { runId, orgId } = await params;
+ const { runId, orgId } = await params;
 
   // Fetch workflow run + graph
-  const run = await db.workflowRun.findFirst({
-    where: {
-      id: runId,
-      workflow: {
-        orgId,
+const run = await db.workflowRun.findFirst({
+  where: {
+    id: runId,
+    workflow: {
+      organization: {
+        slug: orgId,
       },
     },
-    include: {
-      workflow: true,
-      stepRuns: true,
-    },
-  });
+  },
+  include: {
+    workflow: true,
+    stepRuns: true,
+  },
+});
 
   if (!run) {
+    console.log(`Run ${runId} not found for org ${orgId}`);
     notFound();
   }
 

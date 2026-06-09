@@ -1,5 +1,5 @@
-// src/lib/workflow/registry.ts
 // FOR UI
+
 // 1. Core Types for our I/O System
 export type FieldDef = {
   name: string;
@@ -20,18 +20,18 @@ export type ActionDef = {
   id: string;
   label: string;
   description: string;
-  requires: string[]; // Variables this action MUST receive from upstream
-  outputs: string[];  // Variables this action creates for downstream
+  requires: string[]; 
+  outputs: string[];  
   fields: FieldDef[]; // The UI form fields
 };
 
-// 2. The Triggers (Based on your Prisma Schema)
+
 export const AVAILABLE_TRIGGERS: TriggerDef[] = [
   { 
     id: 'task.created', 
     label: 'On Task Created', 
     description: 'Triggers when a new task is added.',
-    // When this event fires from your EventBus, it will provide these variables:
+    // When this event fires from EventBus, it will provide these variables
     outputs: ['taskId', 'projectId', 'assigneeId'] 
   },
   { 
@@ -48,15 +48,14 @@ export const AVAILABLE_TRIGGERS: TriggerDef[] = [
   },
 ];
 
-// 3. The Actions (Based on your Prisma Schema)
+
 export const AVAILABLE_ACTIONS: ActionDef[] = [
   {
     id: 'task.create',
     label: 'Create a Task',
     description: 'Automatically generate a new task.',
-    // Requires a projectId to exist somewhere upstream!
     requires: ['projectId'], 
-    // Outputs the ID of the newly created task
+  
     outputs: ['taskId'], 
     fields: [
       { name: 'title', label: 'Task Title', type: 'string', required: true },
