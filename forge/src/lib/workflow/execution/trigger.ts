@@ -2,11 +2,8 @@
 import { db } from "@/lib/prisma/db";
 import { advanceWorkflow } from "./evaluator";
 
-/**
- * THE STARTER MOTOR
- * Call this function when an event happens (e.g., from your EVENT_ROUTING, 
- * or from a Next.js API route, or a webhook).
- */
+
+
 export async function startWorkflow(workflowId: string, triggerData: Record<string, any> = {}) {
   const workflow = await db.workflow.findUnique({
     where: { id: workflowId },
@@ -16,9 +13,9 @@ export async function startWorkflow(workflowId: string, triggerData: Record<stri
     throw new Error(`Cannot start workflow: ${workflowId} not found.`);
   }
 
-  // (Optional: Check if workflow.status === "PUBLISHED", etc.)
 
-  // 2. INITIALIZE THE GLOBAL CONTEXT (Phase 3 Integration)
+
+  // 2. INITIALIZE THE GLOBAL CONTEXT
   // We mock a "trigger" step output so that Node 1 can use {{trigger.outputs.userId}}
   const initialContext = {
     trigger: {

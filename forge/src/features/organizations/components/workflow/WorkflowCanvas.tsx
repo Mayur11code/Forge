@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -9,105 +9,98 @@ import {
   useNodesState,
   useEdgesState,
   addEdge,
-  getOutgoers, // Utility to find connected nodes (for tree traversal)
+  getOutgoers, 
   useReactFlow,
   type Connection,
 } from '@xyflow/react';
 
-import { autoMapNodeVariables, getNodeDefinition } from '@/lib/workflow/graph-ui/utils';
-import { ActionDef } from '@/lib/workflow-types/registry';
-// import { toast } from "sonner"; // Or whatever toast library you use
+import RunWOrkflowButton from './RunWorkflowButton';
+
+import { autoMapNodeVariables} from '@/lib/workflow/graph-ui/utils';
+
 
 import { saveWorkflowState, updateWorkflowState } from '@/app/actions/workflows/workflow';
 import { useRouter, useParams } from 'next/navigation';
 import { useTransition } from 'react';
 
-// import '@xyflow/react/dist/style.css'; // Import React Flow style
 
-// 1. Import our custom nodes and types!
+
 import TriggerNode from './nodes/TriggerNode';
 import ActionNode from './nodes/ActionNode';
-import type { AppNode, AppEdge } from '@/lib/workflow-types/workflow'; // Import the union type for all nodes
+import type { AppNode, AppEdge } from '@/lib/workflow-types/workflow'; 
 import Sidebar from './sidebar';
-import { Loader2, Save } from 'lucide-react'; // Ensure AppEdge is imported
-import { init } from 'next/dist/compiled/webpack/webpack';
+import { Loader2, Save } from 'lucide-react'; 
 import PropertiesPanel from './PropertiesPanel';
+import RunWorkflowButton from './RunWorkflowButton';
 // import RunWorkflowButton from './RunWorkflowButton';
 
 interface WorkflowCanvasProps {
-  workflowId?: string; // If undefined, we are creating a new one
+  workflowId?: string; // undefined for new workflows
   initialNodes?: AppNode[];
   initialEdges?: AppEdge[];
 }
 
 
-// 2. Register the nodes OUTSIDE the component so they don't re-render infinitely
+// rerender prevention
 const nodeTypes = {
   trigger: TriggerNode,
   action: ActionNode,
 };
 
-// 3. We create an internal component to use the `useReactFlow` hook safely
+// internal component to use the useReactFlow hook safely
 function CanvasArea({ workflowId, initialNodes, initialEdges }: WorkflowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes || []);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges || []);
   const { screenToFlowPosition, getNodes } = useReactFlow();
 
+  const params = useParams();
+  const orgId = params.orgId as string;
 
-  // --- ENTERPRISE GUARDRAIL: Cycle Detection ---
+
   const isValidConnection = useCallback(
     (connection: Connection | AppEdge) => {
-      // 1. Prevent self-loops (node connecting to itself)
+
       if (connection.source === connection.target) return false;
 
       const targetNode = nodes.find((n) => n.id === connection.target);
       // THis is a sanity check. In theory, React Flow shouldn't even allow this 
-      // connection to be attempted since the target node wouldn't 
-      // exist in the first place. But we check just in case!
-      if (!targetNode) return false;
-      //
 
-      // 2. Prevent infinite loops (cycles)
-      // We check if connecting [source] -> [target] creates a loop.
-      // It's a loop if the [source] is ALREADY a downstream descendant of [target].
+      if (!targetNode) return false;
+  
+
+  
       const hasCycle = (node: AppNode, visited = new Set<string>()): boolean => {
-        //earlier you used Node: node but this is wrong since typescript already have a node type in scope. You should use a different variable name to avoid confusion.
         if (visited.has(node.id)) return false;
         visited.add(node.id);
 
-        // getOutgoers instantly fetches the immediate downstream children
-        const outgoers = getOutgoers(node, nodes, edges);
+        const outgoers = getOutgoers(node, nodes, edges); //immediate downwnstream nodes
         for (const outgoer of outgoers) {
-          if (outgoer.id === connection.source) return true; // Cycle detected!
+          if (outgoer.id === connection.source) return true; 
           if (hasCycle(outgoer, visited)) return true;
         }
         return false;
       };
 
       if (hasCycle(targetNode)) {
-        // Optional: you can use a toast notification here instead of an alert
         alert("Action blocked: This connection would create an infinite loop.");
         return false;
       }
 
-      return true; // Connection is valid!
+      return true;
     },
     [nodes, edges]
   );
 
 const onConnect = useCallback(
     (connection: Connection) => {
-      // 1. Draw the visual wire on the canvas immediately
+   
       setEdges((eds) => addEdge(connection, eds));
 
-      // 2. Trigger the "Self-Healing" Auto-Mapper
-      // We wrap this in setEdges to ensure the utility has access to the 
-      // edge list that INCLUDES the wire we just drew.
+    
       setEdges((currentEdges) => {
         autoMapNodeVariables(
-          connection.target, // The receiver of the wire
-          getNodes() as AppNode[], 
+          connection.target, 
           currentEdges, 
           setNodes
         );
@@ -117,13 +110,13 @@ const onConnect = useCallback(
     [getNodes, setEdges, setNodes]
   );
 
-  // Allows the canvas to accept dropped items
+ 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
-  // The math: What happens when the user lets go of the mouse
+  
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
@@ -131,14 +124,14 @@ const onConnect = useCallback(
       const type = event.dataTransfer.getData('application/reactflow');
       if (!type) return;
 
-      // --- ENTERPRISE GUARDRAIL: Single Entry Point ---
+
       if (type === 'trigger') {
-        // FIX: Use getNodes() to get the absolute latest state, bypassing the stale closure!
-        const currentNodes = getNodes();
+    
+        const currentNodes = getNodes(); //to prevent stale closure issues
         const alreadyHasTrigger = currentNodes.some((n) => n.type === 'trigger');
         if (alreadyHasTrigger) {
           alert("Workflows can only have one Trigger event.");
-          return; // Drop rejected!
+          return; 
         }
       }
 
@@ -152,7 +145,7 @@ const onConnect = useCallback(
       // Declare the variable with our strict type first
       let newNode: AppNode;
 
-      // Use explicit if/else so TypeScript can "narrow" the type safely
+  
       if (type === 'trigger') {
         newNode = {
           id: newNodeId,
@@ -178,7 +171,7 @@ const onConnect = useCallback(
 
 
   const router = useRouter();
-  const params = useParams();
+
   const [isPending, startTransition] = useTransition();
 
 
@@ -186,18 +179,19 @@ const onConnect = useCallback(
     startTransition(async () => {
       const orgId = params.orgId as string;
 
-      // If we have a workflowId, we are EDITING an existing DAG
+      
       if (workflowId) {
         const result = await updateWorkflowState(orgId, workflowId, nodes, edges);
         if (result.success) alert("Workflow Updated!");
         else alert("Failed to update.");
       }
-      // Otherwise, we are CREATING a brand new DAG
+    
       else {
         const result = await saveWorkflowState(orgId, "My First Automation", nodes, edges);
         if (result.success) {
           alert("Workflow Created!");
-          // Redirect to the Edit page so they aren't stuck on the /new page
+  
+          //edit page
           router.push(`/org/${orgId}/workflows/${result.workflowId}`);
         } else {
           alert("Failed to save.");
@@ -206,11 +200,30 @@ const onConnect = useCallback(
     });
   };
 
+
+
+  // The verification payload to check if the workflow is working as expected for the admin
+  const mockProjectPayload = {
+    projectId: `cmnj8u44p0003a0gcvqgt25dv`,
+    projectName: "Forge Core",
+    createdAt: new Date().toISOString(),
+  };
+
   return (
     <div className="flex-grow h-[80vh]" ref={reactFlowWrapper}>
 
-      {/* Sleek Floating Save Button */}
-      <div className="absolute top-4 right-4 z-10">
+{/* Sleek Floating Action Bar */}
+      <div className="absolute top-4 right-4 z-10 flex items-center gap-3">
+        
+        {/* Only show the Run button if the workflow exists in the database */}
+        {workflowId && (
+          <RunWorkflowButton 
+            workflowId={workflowId} 
+            orgId={orgId} 
+            payload={mockProjectPayload} 
+          />
+        )}
+
         <button
           onClick={handleSave}
           disabled={isPending || nodes.length === 0}
@@ -240,12 +253,12 @@ const onConnect = useCallback(
   );
 }
 
-// 4. The Main Export wrapped in a Provider
+
 export default function WorkflowBuilder(props: WorkflowCanvasProps) {
   return (
     <div className="flex w-full border-grey-800 rounded-xl overflow-hidden shadow-sm">
       <Sidebar />
-      {/* The Provider is REQUIRED so CanvasArea can use the screenToFlowPosition hook */}
+      {/*CanvasArea can use the screenToFlowPosition hook */}
       <ReactFlowProvider>
         <CanvasArea {...props} />
         <PropertiesPanel />

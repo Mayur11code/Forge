@@ -1,8 +1,5 @@
 import { z } from "zod";
 
-// -----------------------------
-// EVENT TYPES
-// -----------------------------
 export const EventTypes = [
   "TASK_CREATED",
   "TASK_COMPLETED",
@@ -17,14 +14,12 @@ export const EventTypes = [
   "GENERATE_COMPLETION_REPORT",
   "CREATE_DEFAULT_ORG",
   "SEND_WELCOME_EMAIL",
-  "EXECUTE_WORKFLOW_NODE" // <-- Successfully registered
+  "EXECUTE_WORKFLOW_NODE" 
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
 
-// -----------------------------
-// BASE SCHEMA
-// -----------------------------
+
 const baseEventSchema = z.object({
   orgId: z.string(),
   actorId: z.string().optional(),
@@ -88,9 +83,6 @@ export const eventSchemas = {
     userId: z.string(),
   }),
   
-  // -----------------------------
-  // WORKFLOW ENGINE INTEGRATION
-  // -----------------------------
   EXECUTE_WORKFLOW_NODE: z.object({
     runId: z.string(),
     stepRunId: z.string(),
@@ -100,7 +92,7 @@ export const eventSchemas = {
 } satisfies Record<EventType, z.ZodTypeAny>;
 
 // -----------------------------
-// INFERRED TYPES (VERY IMPORTANT)
+// INFERRED TYPES
 // -----------------------------
 export type EventPayloadMap = {
   [K in EventType]: z.infer<(typeof eventSchemas)[K]>;

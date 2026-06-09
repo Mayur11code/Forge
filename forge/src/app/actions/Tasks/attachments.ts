@@ -32,11 +32,6 @@ export async function createAttachment({
   });
 }
 
-/* UploadThing → stores file → gives URL
-Server Action → stores metadata → links Task
-UI → just orchestrates  */
-
-
 
 
 export async function getAttachments(taskId: string) {
@@ -67,8 +62,6 @@ export async function getSignedDownloadUrl(fileKey: string | null) {
   const { url } = await utapi.getSignedURL(fileKey, {
     expiresIn: 60, // seconds
   });
-
-  console.log( "💕💕");
 
   return url;
 }

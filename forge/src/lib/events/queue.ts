@@ -11,9 +11,8 @@ const qstashClient = new Client({
 });
 
 const USE_MULTI_TOPICS = false;
-// -----------------------------
-// TOPIC MAP (EVENT → TOPIC)
-// -----------------------------
+
+
 const topicMap: Record<EventType, string> = {
   TASK_CREATED: "task-created",
   TASK_COMPLETED: "task-completed",
@@ -26,7 +25,6 @@ const topicMap: Record<EventType, string> = {
   CRON_DAILY_DIGEST: "cron-daily-digest",
   NOTIFY_PROJECT_OWNER: "notify-project-owner",
   GENERATE_COMPLETION_REPORT: "generate-completion-report",
-  
   CREATE_DEFAULT_ORG: "create-default-org",
   SEND_WELCOME_EMAIL: "send-welcome-email",
   EXECUTE_WORKFLOW_NODE: "execute-workflow-node"
@@ -41,9 +39,7 @@ export function getTopic(event: EventType): string {
   return "events";
 }
 
-// -----------------------------
-// CLOUD EVENTS ENVELOPE
-// -----------------------------
+
 function buildCloudEvent<K extends EventType>(
   eventName: K,
   payload: EventPayloadMap[K]
@@ -62,9 +58,7 @@ function buildCloudEvent<K extends EventType>(
   };
 }
 
-// -----------------------------
-// MAIN PUBLISH FUNCTION
-// -----------------------------
+// main publishing
 export async function publishEvent<K extends EventType>(
   eventName: K,
   payload: EventPayloadMap[K],
@@ -81,9 +75,6 @@ export async function publishEvent<K extends EventType>(
     throw new Error(`No topic configured for event: ${eventName}`);
   }
 
-  // -----------------------------
-  // VALIDATE PAYLOAD
-  // -----------------------------
   const schema = eventSchemas[eventName];
   const validatedPayload = schema.safeParse(payload);
 
@@ -91,16 +82,13 @@ export async function publishEvent<K extends EventType>(
     throw new Error(`Invalid payload for event: ${eventName}`);
   }
 
-  // -----------------------------
-  // BUILD CLOUDEVENT
-  // -----------------------------
+
   const cloudEvent = buildCloudEvent(
     eventName,
     validatedPayload.data as EventPayloadMap[K]
   );
-  // -----------------------------
-  // PRODUCER IDEMPOTENCY KEY
-  // -----------------------------
+
+
   const deduplicationId = crypto
     .createHash("sha256")
     .update(JSON.stringify(cloudEvent))
@@ -132,12 +120,12 @@ export async function publishEvent<K extends EventType>(
       ? res[0].messageId
       : res.messageId;
 
-    console.log("━━━━━━━━━━━━━━━━━━━━━━");
-    console.log("📡 EVENT PUBLISHED");
+    
+    console.log(" EVENT PUBLISHED");
     console.log("Event:", eventName);
     console.log("Message ID:", messageId);
     console.log("Topic:", topic);
-    console.log("━━━━━━━━━━━━━━━━━━━━━━");
+   
 
     return res;
   } catch (error) {

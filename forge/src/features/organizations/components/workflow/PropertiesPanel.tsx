@@ -108,7 +108,7 @@ export default function PropertiesPanel() {
               // NEW: When a trigger changes, it might satisfy downstream actions.
               // We trigger the mapper for the whole graph to ensure children update.
               getNodes().forEach(n => {
-                if (n.type === 'action') autoMapNodeVariables(n.id, getNodes() as any, edges as any, setNodes);
+                if (n.type === 'action') autoMapNodeVariables(n.id, edges as any, setNodes);
               });
             }}
           >
@@ -147,7 +147,6 @@ export default function PropertiesPanel() {
                 // Immediately check if existing wires can fill this NEW action's needs
                 autoMapNodeVariables(
                   selectedNodeId,
-                  getNodes() as any,
                   edges as any,
                   setNodes
                 );

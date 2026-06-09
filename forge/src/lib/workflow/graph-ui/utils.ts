@@ -1,4 +1,3 @@
-// src/lib/workflow/utils.ts
 
 import {
   AppNode,
@@ -11,11 +10,6 @@ import {
   AVAILABLE_TRIGGERS,
 } from "@/lib/workflow-types/registry";
 
-/**
- * ============================================================
- * Node Definition Resolver
- * ============================================================
- */
 
 export function getNodeDefinition(node: AppNode) {
   if (
@@ -39,24 +33,8 @@ export function getNodeDefinition(node: AppNode) {
   return null;
 }
 
-/**
- * ============================================================
- * Upstream Output Scanner
- *
- * Recursively walks the graph upward and
- * returns all available outputs.
- *
- * Priority:
- * Direct Parent > Grandparent > Higher Ancestors
- *
- * Prevents:
- * - infinite loops
- * - duplicate outputs
- * - unstable ordering
- *
- * ============================================================
- */
 
+//recursively walks the graph upwards and return all available outputs
 export function getAvailableUpstreamOutputs(
   targetNodeId: string,
   nodes: AppNode[],
@@ -66,29 +44,21 @@ export function getAvailableUpstreamOutputs(
   sourceNodeId: string;
   outputKey: string;
 }[] {
-  /**
-   * Cycle protection
-   */
+
+
   if (visited.has(targetNodeId)) {
     return [];
   }
 
   visited.add(targetNodeId);
 
-  /**
-   * Fast lookup maps
-   *
-   * O(1) instead of repeated O(n)
-   */
+
+  //for o1 lookup
   const nodeMap = new Map(
     nodes.map((n) => [n.id, n])
   );
 
-  /**
-   * Build parent adjacency list
-   *
-   * target -> incoming edges
-   */
+  //adjecency list for incoming edges to quickly find parents of a node
   const incomingEdgeMap =
     new Map<string, AppEdge[]>();
 
@@ -104,29 +74,10 @@ export function getAvailableUpstreamOutputs(
     );
   }
 
-  /**
-   * Stores resolved outputs.
-   *
-   * Key:
-   * sourceNodeId.outputKey
-   *
-   * Preserves insertion order.
-   */
-  const resolvedOutputs =
-    new Map<
-      string,
-      {
-        sourceNodeId: string;
-        outputKey: string;
-      }
-    >();
 
-  /**
-   * DFS traversal
-   *
-   * depth matters:
-   * lower depth = higher priority
-   */
+  const resolvedOutputs = new Map<string, { sourceNodeId: string; outputKey: string; }>();
+
+
   const traverse = (
     nodeId: string,
     depth: number
@@ -140,9 +91,6 @@ export function getAvailableUpstreamOutputs(
 
       if (!parentNode) continue;
 
-      /**
-       * Prevent cycles
-       */
       if (visited.has(parentNode.id)) {
         continue;
       }
@@ -152,23 +100,12 @@ export function getAvailableUpstreamOutputs(
       const parentDef =
         getNodeDefinition(parentNode);
 
-      /**
-       * Add direct parent outputs FIRST
-       *
-       * This guarantees:
-       * Parent > Grandparent
-       */
+
       if (parentDef?.outputs?.length) {
         for (const outputKey of parentDef.outputs) {
           const key =
             `${parentNode.id}.${outputKey}`;
 
-          /**
-           * First write wins.
-           *
-           * Closer ancestors
-           * always have priority.
-           */
           if (!resolvedOutputs.has(key)) {
             resolvedOutputs.set(key, {
               sourceNodeId:
@@ -193,27 +130,10 @@ export function getAvailableUpstreamOutputs(
   );
 }
 
-/**
- * ============================================================
- * Auto Variable Mapper
- *
- * Automatically injects:
- *
- * {{node.outputs.key}}
- *
- * Resolution Priority:
- *
- * 1. Direct parent
- * 2. Grandparent
- * 3. Higher ancestors
- *
- * Existing config values are never overwritten.
- * ============================================================
- */
+
 
 export function autoMapNodeVariables(
   targetNodeId: string,
-  nodes: AppNode[],
   edges: AppEdge[],
   setNodes: (
     payload:
@@ -224,9 +144,7 @@ export function autoMapNodeVariables(
   ) => void
 ) {
   setNodes((nds) => {
-    /**
-     * Fast node lookup
-     */
+
     const nodeMap = new Map(
       nds.map((n) => [n.id, n])
     );
@@ -234,9 +152,7 @@ export function autoMapNodeVariables(
     const targetNode =
       nodeMap.get(targetNodeId);
 
-    /**
-     * Only actions require inputs
-     */
+
     if (
       !targetNode ||
       targetNode.type !== "action"
@@ -253,21 +169,12 @@ export function autoMapNodeVariables(
       return nds;
     }
 
-    /**
-     * Clone config
-     * Never mutate original
-     */
     const updatedConfig = {
       ...targetNode.data.config,
     };
 
     let hasChanges = false;
 
-    /**
-     * Get ALL upstream outputs
-     *
-     * Ordered by proximity.
-     */
     const availableOutputs =
       getAvailableUpstreamOutputs(
         targetNodeId,
@@ -275,14 +182,9 @@ export function autoMapNodeVariables(
         edges
       );
 
-    /**
-     * Resolve every required input
-     */
+
     for (const requiredInput of targetDef.requires) {
-      /**
-       * Respect manual config.
-       * Never overwrite.
-       */
+
       const existingValue =
         updatedConfig[
         requiredInput
@@ -297,12 +199,7 @@ export function autoMapNodeVariables(
         continue;
       }
 
-      /**
-       * Find nearest provider
-       *
-       * Parent first.
-       * Grandparent fallback.
-       */
+
       const provider =
         availableOutputs.find(
           (output) =>
@@ -325,9 +222,7 @@ export function autoMapNodeVariables(
           ? "trigger"
           : provider.sourceNodeId;
 
-      /**
-       * Inject variable syntax
-       */
+
       updatedConfig[
         requiredInput
       ] =
@@ -336,16 +231,12 @@ export function autoMapNodeVariables(
       hasChanges = true;
     }
 
-    /**
-     * No update → avoid rerender
-     */
+
     if (!hasChanges) {
       return nds;
     }
 
-    /**
-     * Immutable update
-     */
+
     return nds.map((node) => {
       if (
         node.id === targetNodeId &&

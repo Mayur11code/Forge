@@ -19,14 +19,13 @@ export type ActionResult = {
   // If success is false, this goes to the ExecutionAuditLog and StepRun.error.
   error?: string; 
   
-  // CRITICAL FOR STEP 12: Differentiating between a 500 (API down, try again) 
-  // and a 400 (Bad email format, retrying will never work).
+  //Differentiaing between 500 and 400 level errors can help us decide whether to retry or not.
   isRetriable?: boolean; 
 };
 
 export type ExecuteFunction = (ctx: ActionContext) => Promise<ActionResult>;
 
-// 2. The Reverse Signature (Notice the injected historical outputs!)
+
 export type CompensateFunction = (
   ctx: ActionContext & { outputs: any } 
 ) => Promise<ActionResult>;
