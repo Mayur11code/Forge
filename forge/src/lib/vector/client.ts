@@ -44,7 +44,7 @@ export function getTenantVectorStore(orgId: string) {
   }
 
   const index = getRawPineconeIndex();
-  
+
   // 1. Absolute Isolation: Lock all subsequent operations to this specific orgId
   const tenantNamespace = index.namespace(orgId);
 
@@ -57,7 +57,7 @@ export function getTenantVectorStore(orgId: string) {
         vector,
         topK,
         includeMetadata: true,
-        filter 
+        filter
       });
     },
 
@@ -73,11 +73,41 @@ export function getTenantVectorStore(orgId: string) {
       const safeRecord = PineconeRecordSchema.parse(rawPayload);
 
       // 4. Upsert strictly into the locked namespace
-      return await tenantNamespace.upsert({records: [safeRecord]});
+      return await tenantNamespace.upsert({ records: [safeRecord] });
     },
-    
+
     async deleteRecord(id: string) {
-        return await tenantNamespace.deleteOne({id});
+      return await tenantNamespace.deleteOne({ id });
+    },
+// Replace the existing deleteByTask method in src/lib/vector/client.ts
+async deleteByTask(taskId: string) {
+  if (!taskId) throw new Error("taskId is required for a wipe operation.");
+
+  // Pinecone Serverless in certain regions throws a 404 for metadata deletions.
+  // Because we used Deterministic Suffixing (e.g., task_123#0, task_123#1),
+  // we can completely bypass the bug by fetching IDs by prefix and deleting them explicitly.
+
+  const chunkIds: string[] = [];
+  let paginationToken: string | undefined = undefined;
+
+  // 1. Fetch all vector IDs that start with this specific task's ID
+  do {
+    const listResult = await tenantNamespace.listPaginated({ 
+      prefix: `${taskId}#`,
+      paginationToken 
+    });
+
+    if (listResult.vectors && listResult.vectors.length > 0) {
+      chunkIds.push(...listResult.vectors.map(v => v.id as string));
     }
-  };
+    
+    paginationToken = listResult.pagination?.next;
+  } while (paginationToken);
+
+  // 2. Delete the exact IDs directly (100% supported on all serverless regions)
+  if (chunkIds.length > 0) {
+    await tenantNamespace.deleteMany(chunkIds);
+  }
 }
+
+}}

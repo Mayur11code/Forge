@@ -36,6 +36,11 @@ export function createWorker<K extends EventType>(
       );
       messageId = req.headers.get("Upstash-Message-Id");
 
+      // 1. DEV TOGGLE: Auto-mock the messageId for local testing
+      if (!messageId && process.env.NODE_ENV === "development") {
+        messageId = `local-mock-${Date.now()}`;
+      }
+
       if (!messageId) return NextResponse.json({ error: "Missing messageId" }, { status: 400 });
       if (type !== eventType) return NextResponse.json({ error: "Invalid type" }, { status: 400 });
 
@@ -123,6 +128,11 @@ export function createWorker<K extends EventType>(
     }
   };
 
- //signature check
+// 2. DEV TOGGLE: Bypass QStash signature verification entirely in local development
+  if (process.env.NODE_ENV === "development") {
+    return internalHandler;
+  }
+
+  // Production remains strictly locked down
   return verifySignatureAppRouter(internalHandler);
 }

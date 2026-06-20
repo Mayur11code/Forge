@@ -6,12 +6,17 @@ import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
 import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 import { aiWorkerHandler } from "@/app/api/worker/ai-worker/ai-worker";
 import { cronWorkerHandler } from "@/app/api/worker/cron-worker/cw";
+import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
 
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
 const handleEmail = createWorker("SEND_EMAIL", emailWorkerHandler);
 const handleCron = createWorker("CRON_DAILY_DIGEST", cronWorkerHandler);
 const handleAI = createWorker("EMBEDDING_REQUESTED", aiWorkerHandler);
+// 2. Create the CDC Workers routing to the single Idempotent handler
+const handleTaskCreated = createWorker("TASK_CREATED", embeddingWorkerHandler);
+const handleTaskUpdated = createWorker("TASK_UPDATED", embeddingWorkerHandler);
+const handleTaskDeleted = createWorker("TASK_DELETED", embeddingWorkerHandler);
 
 export async function POST(req: NextRequest) {
   try {
@@ -44,6 +49,13 @@ export async function POST(req: NextRequest) {
 
       case "CRON_DAILY_DIGEST":
   return await handleCron(req);
+
+  case "TASK_CREATED":
+        return await handleTaskCreated(req);
+      case "TASK_UPDATED":
+        return await handleTaskUpdated(req);
+      case "TASK_DELETED":
+        return await handleTaskDeleted(req);
 
       default:
         console.log(`⚠️ No handler configured for event: ${type}`);

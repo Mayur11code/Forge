@@ -30,6 +30,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-  ],
+, "src/tests/vector/worker-test.js"  ],
   "exclude": ["node_modules"]
 }

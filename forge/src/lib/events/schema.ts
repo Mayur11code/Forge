@@ -3,6 +3,8 @@ import { z } from "zod";
 export const EventTypes = [
   "TASK_CREATED",
   "TASK_COMPLETED",
+  "TASK_UPDATED",
+  "TASK_DELETED",
   "FILE_UPLOADED",
   "SEND_EMAIL",
   "PROCESS_FILE",
@@ -30,6 +32,16 @@ const baseEventSchema = z.object({
 // -----------------------------
 export const eventSchemas = {
   TASK_CREATED: baseEventSchema.extend({
+    taskId: z.string(),
+    projectId: z.string(),
+  }),
+
+  TASK_UPDATED: baseEventSchema.extend({
+    taskId: z.string(),
+    projectId: z.string(),
+  }),
+
+  TASK_DELETED: baseEventSchema.extend({
     taskId: z.string(),
     projectId: z.string(),
   }),

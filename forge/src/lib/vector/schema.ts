@@ -27,7 +27,7 @@ export const VectorMetadataSchema = z.object({
 
 export const PineconeRecordSchema = z.object({
   id: z.string().min(1, "Record ID is required"), // Must map exactly to the Prisma Primary Key
-  values: z.array(z.number()).length(1536, "Embedding must be exactly 1536 dimensions"), 
+  values: z.array(z.number()).length(768, "Embedding must be exactly 768 dimensions"), 
   metadata: VectorMetadataSchema
 });
 

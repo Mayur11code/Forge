@@ -16,6 +16,8 @@ const USE_MULTI_TOPICS = false;
 const topicMap: Record<EventType, string> = {
   TASK_CREATED: "task-created",
   TASK_COMPLETED: "task-completed",
+  TASK_UPDATED: "task-updated",
+  TASK_DELETED: "task-deleted",
   FILE_UPLOADED: "file-uploaded",
   SEND_EMAIL: "send-email",
   PROCESS_FILE: "process-file",
