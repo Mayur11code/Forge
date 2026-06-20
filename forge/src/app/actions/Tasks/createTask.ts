@@ -1,6 +1,6 @@
 "use server";
 
-import { db } from "@/lib/prisma/db";
+import { prisma } from "@/lib/prisma/extended";
 import { rateLimit } from "@/lib/redis/rate-limit";
 import { dispatchEvent } from "@/lib/events/event-bus";
 import { auth } from "@/lib/auth/auth";
@@ -23,7 +23,7 @@ export async function createTask(input: unknown) {
   const data = createTaskSchema.parse(input);
 
   // 3️⃣ Org access check (via project → org)
-  const project = await db.project.findFirst({
+  const project = await prisma.project.findFirst({
     where: {
       id: data.projectId,
     },
@@ -37,7 +37,7 @@ export async function createTask(input: unknown) {
     throw new Error("Project not found");
   }
 
-  const organization = await db.organization.findUnique({
+  const organization = await prisma.organization.findUnique({
     where: { id: project.orgId }
   });
   if (!organization) {
@@ -65,7 +65,7 @@ console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.l
   }
 
   // 4️⃣ Create task
-  const task = await db.task.create({
+  const task = await prisma.task.create({
     data: {
       title: data.title,
       projectId: data.projectId,
@@ -75,16 +75,17 @@ console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.l
   });
 
  
-  await dispatchEvent("TASK_CREATED", {
-    orgId: organization.id,
-    taskId: task.id,
-    userId: session.user.id,
-    projectId: data.projectId,
-    subject: "New Task Added",
-    body: `A new task "${task.title}" has been added to your project.`,
-  });
-
+  // await dispatchEvent("TASK_CREATED", {
+  //   orgId: organization.id,
+  //   taskId: task.id,
+  //   userId: session.user.id,
+  //   projectId: data.projectId,
+  //   subject: "New Task Added",
+  //   body: `A new task "${task.title}" has been added to your project.`,
+  // });
+//THIS WAS MOVED TO THE PRISMA EXTENDED CREATE HOOK IN extended.ts TO AVOID DUAL WRITE PROBLEMS
   //REFACTOR LATER TO INCLUDE OUTBOX PATTERN TO AVOID DUAL WRITE PROBLEMS
+  console.log("CDC WORKING YAYYYYYYY🖤🖤🖤");
 
   revalidatePath(`/org/${organization.slug}/projects/${data.projectId}`);
   return {
