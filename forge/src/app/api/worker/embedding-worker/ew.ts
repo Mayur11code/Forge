@@ -13,23 +13,27 @@ import {
 // 1. Initialize Gemini Client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-interface TaskEventParams {
-    event: {
-        type: string;
-        data: {
-            taskId: string;
-            orgId: string;
-            projectId: string;
-            actorId?: string;
-        }
-    }
+// 1. PERFECTLY MATCH THE ZOD SCHEMA
+interface EmbeddingEventParams {
+  event: {
+    id: string;
+    type: "EMBEDDING_REQUESTED";
+    data: {
+      orgId: string;
+      entityId: string;
+      type: "TASK" | "ATTACHMENT";
+      actorId?: string;
+    };
+    time: string;
+  }
 }
 
-export async function embeddingWorkerHandler({ event }: TaskEventParams): Promise<void> {
+export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): Promise<void> {
     try {
-        const { taskId, orgId, projectId } = event.data;
+    // We now destructure entityId instead of taskId
+    const { entityId, orgId, type } = event.data;
 
-        if (!taskId || !orgId) {
+        if (!entityId || !orgId) {
             console.error("❌ [EMBEDDING] Missing routing parameters", event.data);
             return;
         }
@@ -37,14 +41,14 @@ export async function embeddingWorkerHandler({ event }: TaskEventParams): Promis
         const vectorStore = getTenantVectorStore(orgId);
 
         // 1. WIPE PROTOCOL
-        console.log(`[EMBEDDING] Wiping old vectors for task: ${taskId}`);
-        await vectorStore.deleteByTask(taskId);
+        console.log(`[EMBEDDING] Wiping old vectors for entity: ${entityId}`);
+        await vectorStore.deleteByTask(entityId);
 
         // 2. Fetch current state
-        const task = await prisma.task.findUnique({ where: { id: taskId } });
+        const task = await prisma.task.findUnique({ where: { id: entityId } });
 
         if (!task) {
-            console.log(`[EMBEDDING] Task ${taskId} deleted or not found. Wipe complete.`);
+            console.log(`[EMBEDDING] Task ${entityId} deleted or not found. Wipe complete.`);
             return;
         }
 
@@ -53,7 +57,7 @@ export async function embeddingWorkerHandler({ event }: TaskEventParams): Promis
         const chunks = await chunkTextSemantically(cleanText);
 
         if (chunks.length === 0) {
-            console.log(`[EMBEDDING] Task ${taskId} yielded an empty payload.`);
+            console.log(`[EMBEDDING] Task ${entityId} yielded an empty payload.`);
             return;
         }
 
@@ -81,15 +85,15 @@ export async function embeddingWorkerHandler({ event }: TaskEventParams): Promis
 
         // 5. Rewrite to Pinecone
         const upsertPromises = chunks.map((chunkText, i) => {
-            const deterministicId = `${task.id}#${i}`;
+            const deterministicId = `${entityId}#${i}`;
 
             return vectorStore.upsert(
                 deterministicId,
                 embeddings[i],
                 {
                     text: chunkText,
-                    taskId: task.id,
-                    projectId: projectId || "",
+                    taskId: entityId,
+                    projectId: task.projectId || "",
                     type: "task" as const
                 }
             );
