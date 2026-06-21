@@ -11,6 +11,8 @@
     "test:watch": "jest --watch"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.83",
+    "@ai-sdk/react": "^3.0.210",
     "@auth/prisma-adapter": "^2.11.1",
     "@google/generative-ai": "^0.24.1",
     "@langchain/textsplitters": "^1.0.1",
@@ -23,6 +25,7 @@
     "@upstash/redis": "^1.37.0",
     "@vercel/functions": "^3.4.3",
     "@xyflow/react": "^12.10.2",
+    "ai": "^6.0.208",
     "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
@@ -40,6 +43,7 @@
     "razorpay": "^2.9.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
     "recharts": "^3.7.0",
     "remove-markdown": "^0.6.4",
     "resend": "^6.10.0",
