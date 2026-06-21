@@ -23,6 +23,8 @@ export function Sidebar({ orgId }: { orgId: string }) {
     { label: "Members", href: `/org/${orgId}/members`, icon: Users },
     { label: "Profile", href: `/org/${orgId}/user/profile`, icon: Users },
     { label : "Workflow", href: `/org/${orgId}/workflows`, icon: Workflow },
+    { label: "AI Assistant", href: `/org/${orgId}/ai`, icon: Command },
+    { label: "Audit Logs", href: `/org/${orgId}/audit`, icon: Command },
   ];
 
   return (
