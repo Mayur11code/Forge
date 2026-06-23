@@ -44,7 +44,7 @@ export default function RunWorkflowButton({
       ) : (
         <Play size={14} className="fill-zinc-100" />
       )}
-      {isPending ? "Starting Engine..." : "Run Workflow"}
+      {isPending ? "Starting Engine..." : "Test Workflow"}
     </button>
   );
 }
