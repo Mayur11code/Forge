@@ -194,7 +194,7 @@ model Membership {
 
 model Attachment {
   id        String   @id @default(cuid())
-  fileKey   String?   // 👈 NEW (required for signed downloads)
+  fileKey   String?   
   url       String
   name      String
   size      Int
@@ -243,28 +243,19 @@ model Workflow {
   description String?
   isActive    Boolean  @default(false)
   
-  // ------------------------------------------------------
-  // 1. THE VISUAL STATE (For React Flow UI - Assignment 25)
-  // Stores { id, type, position: {x,y}, data }
-  // ------------------------------------------------------
+
   uiNodes     Json     @default("[]") 
   uiEdges     Json     @default("[]")
   
-  // ------------------------------------------------------
-  // 2. THE EXECUTION BLUEPRINT (For DAG Engine - Assignment 26)
-  // An Adjacency Dictionary stripped of UI bloat.
-  // e.g. { "trigger_1": ["action_email"], "action_email": ["action_slack"] }
-  // ------------------------------------------------------
+
   definition  Json     @default("{}")
   
-  // ------------------------------------------------------
-  // 3. MULTI-TENANCY & EVENT TRIGGERS
-  // ------------------------------------------------------
+
   orgId       String
   organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   
   eventId     String? // Nullable initially until the user connects a trigger
-  // Assuming you have an Event model:
+
   // event    Event?  @relation(fields: [eventId], references: [id], onDelete: Restrict)
   
   runs        WorkflowRun[] // Excellent addition for observability
@@ -276,34 +267,27 @@ model Workflow {
   @@index([eventId])
 }
 
-// ------------------------------------------------------
-// WORKFLOW RUN: The overarching execution of a specific graph
-// ------------------------------------------------------
+
 model WorkflowRun {
   id          String                  @id @default(cuid())
   workflowId  String
   status      WorkflowExecutionStatus @default(PENDING)
-  
-  // THE GLOBAL CONTEXT: This is where we will store the accumulated outputs of all steps.
-  // Format: { "step_1": { outputs: {...} }, "step_2": { outputs: {...} } }
+
   context     Json                    @default("{}") 
 
   startedAt   DateTime                @default(now())
   completedAt DateTime?
 
-  // Relations
+ 
   workflow    Workflow                @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   stepRuns    StepRun[]
   auditLogs ExecutionAuditLog[]
 
-  // Indexes for high-performance querying by the Orchestrator
   @@index([workflowId])
   @@index([status])
 }
 
-// ------------------------------------------------------
-// STEP RUN: The atomic execution of a single node in the DAG
-// ------------------------------------------------------
+
 model StepRun {
   id          String              @id @default(cuid())
   runId       String
@@ -316,8 +300,8 @@ model StepRun {
   compensationAttempts  Int @default(0) 
 
   // Execution Payloads
-  inputs      Json?               // The resolved inputs passed into the wrapper
-  outputs     Json?               // What the ActionFunction returned
+  inputs      Json?             
+  outputs     Json?               
   error       String?             @db.Text // Stack traces or API failure reasons
 
   startedAt   DateTime?
@@ -335,9 +319,7 @@ model StepRun {
   @@unique([runId, stepId])
 }
 
-// ------------------------------------------------------
-// EXECUTION AUDIT LOG: The append-only black box ledger
-// ------------------------------------------------------
+
 model ExecutionAuditLog {
   id          String    @id @default(cuid())
   
@@ -347,21 +329,21 @@ model ExecutionAuditLog {
   
   logLevel    LogLevel  @default(INFO)
   
-  // e.g., "QSTASH_DISPATCHED", "EVALUATOR_CALLED", "ACTION_TIMEOUT"
+
   eventType   String    
   
-  // Human-readable explanation of what occurred
+
   message     String    @db.Text
   
-  // The exact state of the variables, inputs, or API responses at this millisecond
+ 
   payload     Json?     
   
-  // Observability: How long did this specific micro-operation take?
+
   latencyMs   Int?      
   
   createdAt   DateTime  @default(now())
 
-  // Relations
+ 
   run         WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   step        StepRun     @relation(fields: [stepId], references: [id], onDelete: Cascade)
 
