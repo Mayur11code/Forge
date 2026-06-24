@@ -29,7 +29,9 @@ const topicMap: Record<EventType, string> = {
   GENERATE_COMPLETION_REPORT: "generate-completion-report",
   CREATE_DEFAULT_ORG: "create-default-org",
   SEND_WELCOME_EMAIL: "send-welcome-email",
-  EXECUTE_WORKFLOW_NODE: "execute-workflow-node"
+  EXECUTE_WORKFLOW_NODE: "execute-workflow-node",
+    AGENT_LOOP_REQUESTED: "agent-loop-requested",
+  AGENT_TOOL_EXECUTION_REQUESTED: "agent-tool-execution-requested",
 };
 
 export function getTopic(event: EventType): string {

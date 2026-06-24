@@ -16,7 +16,9 @@ export const EventTypes = [
   "GENERATE_COMPLETION_REPORT",
   "CREATE_DEFAULT_ORG",
   "SEND_WELCOME_EMAIL",
-  "EXECUTE_WORKFLOW_NODE" 
+  "EXECUTE_WORKFLOW_NODE",
+  "AGENT_LOOP_REQUESTED",
+  "AGENT_TOOL_EXECUTION_REQUESTED",
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
@@ -88,19 +90,32 @@ export const eventSchemas = {
   GENERATE_COMPLETION_REPORT: baseEventSchema.extend({
     projectId: z.string(),
   }),
-  
+
   CREATE_DEFAULT_ORG: baseEventSchema,
 
   SEND_WELCOME_EMAIL: baseEventSchema.extend({
     userId: z.string(),
   }),
-  
+
   EXECUTE_WORKFLOW_NODE: z.object({
     runId: z.string(),
     stepRunId: z.string(),
     kind: z.enum(["TRIGGER", "ACTION"]),
+
   }),
-  
+
+    AGENT_LOOP_REQUESTED:baseEventSchema.extend({
+      sessionId: z.string(),
+      expectedStep: z.number().int().min(0),
+    }),
+
+    AGENT_TOOL_EXECUTION_REQUESTED: baseEventSchema.extend({
+      sessionId: z.string(),
+      executionId: z.string(),
+      expectedStep: z.number().int().min(0),
+    }),
+
+
 } satisfies Record<EventType, z.ZodTypeAny>;
 
 // -----------------------------

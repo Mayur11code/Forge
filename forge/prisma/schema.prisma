@@ -66,6 +66,68 @@ enum LogLevel {
   FATAL
 }
 
+enum AgentSessionStatus {
+  RUNNING
+  WAITING_CONFIRMATION
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AgentToolExecutionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model AgentSession {
+  id            String             @id @default(cuid())
+  orgId         String
+  userId        String
+
+  status        AgentSessionStatus @default(RUNNING)
+  currentStep   Int                @default(0)
+
+  // Durable agent context. Queue events will carry only sessionId + expectedStep.
+  messages      Json               @default("[]")
+
+  finalResponse String?            @db.Text
+  errorMessage  String?            @db.Text
+
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  organization  Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  toolExecutions AgentToolExecution[]
+
+  @@index([orgId, userId, createdAt])
+  @@index([userId, updatedAt])
+  @@index([status, updatedAt])
+}
+
+model AgentToolExecution {
+  id          String                   @id @default(cuid())
+  sessionId   String
+  toolCallId  String                   @unique
+
+  toolName    String
+  args        Json
+  result      Json?
+  error       String?                  @db.Text
+  status      AgentToolExecutionStatus @default(PENDING)
+
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  session     AgentSession             @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([sessionId, status])
+}
+
 model Invitation {
   id         String            @id @default(cuid())
   email      String
@@ -123,6 +185,7 @@ model User {
   memberships Membership[]
   tasks       Task[]       @relation("UserTasks")
   comments    Comment[]
+  agentSessions AgentSession[]
 
 }
 
@@ -175,6 +238,7 @@ model Organization {
   subscriptionStatus      String?
   currentPeriodEnd        DateTime?
   workflows   Workflow[]
+  agentSessions AgentSession[]
 }
 
 model Membership {
@@ -353,3 +417,5 @@ model ExecutionAuditLog {
   @@index([eventType])
   @@index([createdAt])
 }
+
+
