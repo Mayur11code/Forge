@@ -6,6 +6,8 @@ import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
 import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 import { cronWorkerHandler } from "@/app/api/worker/cron-worker/cw";
 import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
+import { handleAgentLoop } from "./agent-loop/al";
+
 
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
@@ -14,6 +16,7 @@ const handleCron = createWorker("CRON_DAILY_DIGEST", cronWorkerHandler);
 // 2. Create the CDC Workers routing to the single Idempotent handler
 // FIX: Point the EMBEDDING_REQUESTED event directly to our Gemini worker
 const handleEmbedding = createWorker("EMBEDDING_REQUESTED", embeddingWorkerHandler);
+const AgentloopHandler = createWorker("AGENT_LOOP_REQUESTED", handleAgentLoop)
 
 export async function POST(req: NextRequest) {
   try {
@@ -46,6 +49,9 @@ export async function POST(req: NextRequest) {
 
       case "CRON_DAILY_DIGEST":
   return await handleCron(req);
+
+      case "AGENT_LOOP_REQUESTED":
+          return await AgentloopHandler(req);
 
 
       default:
