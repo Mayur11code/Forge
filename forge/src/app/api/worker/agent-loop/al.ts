@@ -4,6 +4,7 @@ import {
 } from "@/lib/ai/agent/session-service";
 import { withAgentSessionLock } from "@/lib/ai/agent/mutex";
 import type { EventPayloadMap } from "@/lib/events/schema";
+import { decideNextAction } from "@/lib/ai/agent/decision-engine";
 
 type AgentLoopWorkerEvent = {
   event: {
