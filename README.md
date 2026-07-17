@@ -107,7 +107,7 @@ graph TD
 
 ### Layer 7: DevOps & Deployment
 
-* **Infrastructure:** Deployed on Vercel utilizing a monorepo structure separating web UI, database packages, and shared config.
+* **Infrastructure:** Deployed on Vercel utilizing a monorepo structure separating web UI, database packages, and shared configuration.
 * **CI/CD Pipeline:** Strict GitHub Actions block deployments that fail ESLint, TypeScript compilation, or Prisma migrations.
 
 ---
