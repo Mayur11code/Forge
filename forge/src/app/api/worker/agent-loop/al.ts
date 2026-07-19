@@ -61,7 +61,7 @@ export async function handleAgentLoop({
               sessionId: session.id,
               toolCallId: result.toolCallId,
               toolName: result.toolName,
-              args: result.args,
+              input: result.args,
             });
 
           await publishEvent("AGENT_TOOL_EXECUTION_REQUESTED", {
