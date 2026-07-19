@@ -114,7 +114,7 @@ model AgentToolExecution {
   toolCallId  String                   @unique
 
   toolName    String
-  args        Json
+  input        Json
   result      Json?
   error       String?                  @db.Text
   status      AgentToolExecutionStatus @default(PENDING)

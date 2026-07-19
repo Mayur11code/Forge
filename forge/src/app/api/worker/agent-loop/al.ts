@@ -2,11 +2,11 @@ import {
   claimNextAgentStep,
   getAgentSessionForWorker,
 } from "@/lib/ai/agent/session-service";
-import { withAgentSessionLock } from "@/lib/ai/agent/mutex";
+import { withAgentSessionLock } from "@/lib/ai/agent/locks";
 import type { EventPayloadMap } from "@/lib/events/schema";
 import { decideNextAction } from "@/lib/ai/agent/decision-engine";
 import { runAgentLoop } from "@/lib/ai/agent/loop-runner";
-import { createToolExecution } from "@/lib/ai/services/tool-execution-service";
+import { createToolExecution } from "@/lib/ai/agent/services/tool-execution-service";
 import { publishEvent } from "@/lib/events/queue";
 
 type AgentLoopWorkerEvent = {
