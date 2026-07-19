@@ -7,6 +7,7 @@ import type { EventPayloadMap } from "@/lib/events/schema";
 import { decideNextAction } from "@/lib/ai/agent/decision-engine";
 import { runAgentLoop } from "@/lib/ai/agent/loop-runner";
 import { createToolExecution } from "@/lib/ai/services/tool-execution-service";
+import { publishEvent } from "@/lib/events/queue";
 
 type AgentLoopWorkerEvent = {
   event: {
@@ -56,12 +57,19 @@ export async function handleAgentLoop({
 
         case "TOOL_CALL": {
           const execution =
-        await createToolExecution({
+            await createToolExecution({
+              sessionId: session.id,
+              toolCallId: result.toolCallId,
+              toolName: result.toolName,
+              args: result.args,
+            });
+
+          await publishEvent("AGENT_TOOL_EXECUTION_REQUESTED", {
+            orgId: session.orgId,
             sessionId: session.id,
-            toolCallId: result.toolCallId,
-            toolName: result.toolName,
-            args: result.args,
-        });
+            executionId: execution.id,
+            expectedStep: session.currentStep + 1,
+          });
 
           break;
         }
