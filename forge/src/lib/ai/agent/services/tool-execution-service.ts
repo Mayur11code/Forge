@@ -3,7 +3,7 @@
 import { AgentToolExecutionStatus } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma/extended";
-import { JsonValue } from "../agent/types";
+import { JsonValue } from "../types";
 
 export interface CreateToolExecutionInput {
   sessionId: string;

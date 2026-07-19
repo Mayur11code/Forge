@@ -6,6 +6,10 @@ export const MAX_AGENT_STEPS = 5;
  */
 export const AGENT_SESSION_LOCK_TTL_MS = 30_000;
 
+
+export const AGENT_TOOL_EXECUTION_LOCK_TTL_MS = 30_000;
+
+
 /**
  * Builds an absolute URL only when we need one later.
  * Keep APP_URL server-only — never use NEXT_PUBLIC_APP_URL for backend URLs.
