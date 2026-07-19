@@ -104,16 +104,16 @@ export const eventSchemas = {
 
   }),
 
-    AGENT_LOOP_REQUESTED:baseEventSchema.extend({
-      sessionId: z.string(),
-      expectedStep: z.number().int().min(0),
-    }),
+  AGENT_LOOP_REQUESTED: baseEventSchema.extend({
+    sessionId: z.string(),
+    expectedStep: z.number().int().min(0),
+  }),
 
-    AGENT_TOOL_EXECUTION_REQUESTED: baseEventSchema.extend({
-      sessionId: z.string(),
-      executionId: z.string(),
-      expectedStep: z.number().int().min(0),
-    }),
+  AGENT_TOOL_EXECUTION_REQUESTED: baseEventSchema.extend({
+    sessionId: z.string(),
+    executionId: z.string(),
+    expectedStep: z.number().int().min(0),
+  }),
 
 
 } satisfies Record<EventType, z.ZodTypeAny>;
