@@ -15,7 +15,7 @@ export type LoopResult =
       kind: "TOOL_CALL";
       toolName: string;
       toolCallId: string;
-      args: JsonValue;
+      input: JsonValue;
     };
 
 export async function runAgentLoop(
@@ -54,7 +54,7 @@ export async function runAgentLoop(
       kind: "TOOL_CALL",
       toolName: toolCall.toolName,
       toolCallId: toolCall.toolCallId,
-      args: toolCall.input as JsonValue,
+      input: toolCall.input as JsonValue,
     };
   }
 

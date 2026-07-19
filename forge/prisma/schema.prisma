@@ -81,6 +81,13 @@ enum AgentToolExecutionStatus {
   FAILED
 }
 
+enum AgentMessageRole {
+    USER
+    ASSISTANT
+    TOOL
+    SYSTEM
+}
+
 model AgentSession {
   id            String             @id @default(cuid())
   orgId         String
@@ -89,8 +96,6 @@ model AgentSession {
   status        AgentSessionStatus @default(RUNNING)
   currentStep   Int                @default(0)
 
-  // Durable agent context. Queue events will carry only sessionId + expectedStep.
-  messages      Json               @default("[]")
 
   finalResponse String?            @db.Text
   errorMessage  String?            @db.Text
@@ -102,6 +107,7 @@ model AgentSession {
   user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   toolExecutions AgentToolExecution[]
+  messages AgentMessage[]
 
   @@index([orgId, userId, createdAt])
   @@index([userId, updatedAt])
@@ -115,7 +121,7 @@ model AgentToolExecution {
 
   toolName    String
   input        Json
-  result      Json?
+
   error       String?                  @db.Text
   status      AgentToolExecutionStatus @default(PENDING)
 
@@ -126,6 +132,28 @@ model AgentToolExecution {
 
   @@index([sessionId, createdAt])
   @@index([sessionId, status])
+}
+
+model AgentMessage {
+  id String @id @default(cuid())
+
+  sessionId String
+
+  role AgentMessageRole
+
+  content Json
+
+  toolCallId String?
+
+  step Int
+
+  createdAt DateTime @default(now())
+
+  session AgentSession
+      @relation(fields:[sessionId],references:[id],onDelete:Cascade)
+
+  @@index([sessionId, createdAt])
+  @@index([sessionId, step])
 }
 
 model Invitation {
