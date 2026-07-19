@@ -1,6 +1,8 @@
 // src/lib/ai/agent/services/tool-execution-service.ts
 
-import { AgentToolExecutionStatus } from "@prisma/client";
+import {
+  AgentToolExecutionStatus,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma/extended";
 import { JsonValue } from "../types";
@@ -9,21 +11,21 @@ export interface CreateToolExecutionInput {
   sessionId: string;
   toolCallId: string;
   toolName: string;
-  args: JsonValue;
+  input: JsonValue;
 }
 
 export async function createToolExecution({
   sessionId,
   toolCallId,
   toolName,
-  args,
+  input,
 }: CreateToolExecutionInput) {
   return prisma.agentToolExecution.create({
     data: {
       sessionId,
       toolCallId,
       toolName,
-      args,
+      input,
       status: AgentToolExecutionStatus.PENDING,
     },
   });
@@ -60,16 +62,17 @@ export async function getToolExecutionForWorker(
 
 export async function markToolExecutionRunning(
   executionId: string,
-) {
-  const { count } = await prisma.agentToolExecution.updateMany({
-    where: {
-      id: executionId,
-      status: AgentToolExecutionStatus.PENDING,
-    },
-    data: {
-      status: AgentToolExecutionStatus.RUNNING,
-    },
-  });
+): Promise<boolean> {
+  const { count } =
+    await prisma.agentToolExecution.updateMany({
+      where: {
+        id: executionId,
+        status: AgentToolExecutionStatus.PENDING,
+      },
+      data: {
+        status: AgentToolExecutionStatus.RUNNING,
+      },
+    });
 
   return count === 1;
 }
@@ -102,7 +105,7 @@ export async function failToolExecution(
       status: AgentToolExecutionStatus.FAILED,
       error:
         error instanceof Error
-          ? error.stack ?? error.message
+          ? (error.stack ?? error.message)
           : String(error),
     },
   });
