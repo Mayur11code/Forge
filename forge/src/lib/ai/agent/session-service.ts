@@ -86,9 +86,18 @@ export async function getAgentSessionForOwner({
  */
 export async function getAgentSessionForWorker(sessionId: string) {
   return prisma.agentSession.findUnique({
-    where: { id: sessionId },
-    select: sessionSelect,
-  });
+  where: {
+    id: sessionId,
+  },
+  include: {
+    organization: {
+      select: {
+        id: true,
+        name: true,
+      },
+    },
+  },
+});
 }
 
 /**

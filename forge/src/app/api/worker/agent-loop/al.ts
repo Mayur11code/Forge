@@ -5,6 +5,8 @@ import {
 import { withAgentSessionLock } from "@/lib/ai/agent/mutex";
 import type { EventPayloadMap } from "@/lib/events/schema";
 import { decideNextAction } from "@/lib/ai/agent/decision-engine";
+import { runAgentLoop } from "@/lib/ai/agent/loop-runner";
+import { createToolExecution } from "@/lib/ai/services/tool-execution-service";
 
 type AgentLoopWorkerEvent = {
   event: {
@@ -41,27 +43,29 @@ export async function handleAgentLoop({
         return;
       }
 
-      console.info(
-        `[AGENT] Processing session ${session.id} (step ${expectedStep}).`,
-      );
+      const result = await runAgentLoop(session.id);
 
-      /*
-       * Next step:
-       * - Retrieve RAG context (if needed)
-       * - Call Gemini
-       * - Complete session OR enqueue tool execution
-       */
-        const decision =
-    await decideNextAction(session.id);
+      switch (result.kind) {
+        case "COMPLETE": {
+          console.info(
+            `[AGENT] Session ${session.id} completed.`,
+          );
 
-switch (decision.kind) {
+          break;
+        }
 
-    case "FINAL_RESPONSE":
-        break;
+        case "TOOL_CALL": {
+          const execution =
+        await createToolExecution({
+            sessionId: session.id,
+            toolCallId: result.toolCallId,
+            toolName: result.toolName,
+            args: result.args,
+        });
 
-    case "TOOL_CALL":
-        break;
-}
+          break;
+        }
+      }
 
 
     },
