@@ -13,6 +13,12 @@ export type AgentLoopEventPayload = {
   expectedStep: number;
 };
 
+// src/lib/ai/agent/types.ts
+
+import type { Prisma } from "@prisma/client";
+
+export type JsonValue = Prisma.InputJsonValue;
+
 /**
  * The executor receives only a durable database pointer.
  * It must load args/toolCallId from AgentToolExecution,
