@@ -99,11 +99,7 @@ export async function getAgentSessionForWorker(sessionId: string) {
       email: true,
     },
   },
-  messages: {
-    orderBy: {
-      createdAt: "asc",
-    },
-  },
+  
 },
 });
 }

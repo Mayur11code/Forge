@@ -10,6 +10,8 @@ import {
 import { getToolExecutor } from "./tools/registry";
 import type { ToolExecutionWorkerEvent } from "./worker-types";
 import { createMessage } from "./services/message-service";
+import { failAgentSession } from "./session-service";
+import { publishAgentStatus } from "./status";
 
 export async function handleToolExecution({
   event,
@@ -48,25 +50,26 @@ export async function handleToolExecution({
             execution.input,
           );
 
+
+        await createMessage({
+          sessionId: execution.sessionId,
+          step: execution.session.currentStep,
+          toolCallId: execution.toolCallId,
+          message: {
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: execution.toolCallId,
+              toolName: execution.toolName,
+              output: result,
+            }],
+          },
+        });
+
         await completeToolExecution(
           execution.id
         );
-
-        await createMessage({
-    sessionId: execution.sessionId,
-    step: execution.session.currentStep,
-    toolCallId: execution.toolCallId,
-    message: {
-        role: "tool",
-        content: [{
-            type: "tool-result",
-            toolCallId: execution.toolCallId,
-            toolName: execution.toolName,
-            output :result,
-        }],
-    },
-});
-
+        
         await publishEvent(
           "AGENT_LOOP_REQUESTED",
           {
@@ -78,12 +81,35 @@ export async function handleToolExecution({
           },
         );
       } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown tool execution error";
+
         await failToolExecution(
           execution.id,
+          message,
+        );
+
+        await failAgentSession(
+          execution.sessionId,
+          message,
+        );
+
+        await publishAgentStatus(
+          execution.sessionId,
+          {
+            type: "FAILED",
+            message,
+          },
+        );
+
+        console.error(
+          `[AGENT] Tool execution ${execution.id} failed.`,
           error,
         );
 
-        throw error;
+        return;
       }
     },
   );
