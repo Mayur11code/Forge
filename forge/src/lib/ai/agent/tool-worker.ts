@@ -9,6 +9,7 @@ import {
 } from "./services/tool-execution-service";
 import { getToolExecutor } from "./tools/registry";
 import type { ToolExecutionWorkerEvent } from "./worker-types";
+import { createMessage } from "./services/message-service";
 
 export async function handleToolExecution({
   event,
@@ -48,9 +49,23 @@ export async function handleToolExecution({
           );
 
         await completeToolExecution(
-          execution.id,
-          result,
+          execution.id
         );
+
+        await createMessage({
+    sessionId: execution.sessionId,
+    step: execution.session.currentStep,
+    toolCallId: execution.toolCallId,
+    message: {
+        role: "tool",
+        content: [{
+            type: "tool-result",
+            toolCallId: execution.toolCallId,
+            toolName: execution.toolName,
+            output :result,
+        }],
+    },
+});
 
         await publishEvent(
           "AGENT_LOOP_REQUESTED",

@@ -7,6 +7,7 @@ import { getAgentSessionForWorker } from "./session-service";
 import { JsonValue } from "./types";
 import { buildModelMessages } from "./message-mapper";
 import { getMessages } from "./services/message-service";
+import { createMessage } from "./services/message-service";
 
 export type LoopResult =
   | {
@@ -38,6 +39,14 @@ const result = await generateText({
   messages,
   tools: agentTools,
 });
+
+for (const message of result.response.messages) {
+    await createMessage({
+        sessionId: session.id,
+        step: session.currentStep,
+        message,
+    });
+}
 
   if (result.finishReason === "tool-calls") {
     const toolCall = result.toolCalls[0];

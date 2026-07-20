@@ -6,9 +6,11 @@ import {
   searchKnowledgeTool,
 } from "./search-knowledge";
 
+import type { ToolResultPart } from "ai";
+
 export type ToolExecutor = (
   input: Prisma.JsonValue,
-) => Promise<Prisma.InputJsonValue>;
+) => Promise<ToolResultPart["output"]>;
 
 export const agentTools = {
   searchKnowledge: searchKnowledgeTool,
