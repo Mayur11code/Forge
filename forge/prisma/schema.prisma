@@ -135,25 +135,21 @@ model AgentToolExecution {
 }
 
 model AgentMessage {
-  id String @id @default(cuid())
+  id         String @id @default(cuid())
+  sessionId  String
 
-  sessionId String
-
-  role AgentMessageRole
-
-  content Json
+  message    Json
 
   toolCallId String?
+  step       Int
 
-  step Int
-
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
 
   session AgentSession @relation(fields:[sessionId],references:[id],onDelete:Cascade)
 
   @@index([sessionId, createdAt])
-  @@index([sessionId, step])
 }
+
 
 model Invitation {
   id         String            @id @default(cuid())
