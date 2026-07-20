@@ -149,8 +149,7 @@ model AgentMessage {
 
   createdAt DateTime @default(now())
 
-  session AgentSession
-      @relation(fields:[sessionId],references:[id],onDelete:Cascade)
+  session AgentSession @relation(fields:[sessionId],references:[id],onDelete:Cascade)
 
   @@index([sessionId, createdAt])
   @@index([sessionId, step])
