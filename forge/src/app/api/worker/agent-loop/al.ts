@@ -1,13 +1,15 @@
 import {
   claimNextAgentStep,
   getAgentSessionForWorker,
+  completeAgentSession,
+  failAgentSession
 } from "@/lib/ai/agent/session-service";
 import { withAgentSessionLock } from "@/lib/ai/agent/locks";
 import type { EventPayloadMap } from "@/lib/events/schema";
-import { decideNextAction } from "@/lib/ai/agent/decision-engine";
 import { runAgentLoop } from "@/lib/ai/agent/loop-runner";
 import { createToolExecution } from "@/lib/ai/agent/services/tool-execution-service";
 import { publishEvent } from "@/lib/events/queue";
+import { publishAgentStatus } from "@/lib/ai/agent/status";
 
 type AgentLoopWorkerEvent = {
   event: {
@@ -44,37 +46,77 @@ export async function handleAgentLoop({
         return;
       }
 
-      const result = await runAgentLoop(session.id);
+      await publishAgentStatus(session.id, {
+        type: "RUNNING",
+        message: "Thinking...",
+      });
 
-      switch (result.kind) {
-        case "COMPLETE": {
-          console.info(
-            `[AGENT] Session ${session.id} completed.`,
-          );
+      try {
+        const result = await runAgentLoop(session.id);
 
-          break;
-        }
+        switch (result.kind) {
+          case "COMPLETE": {
+            await completeAgentSession(
+              session.id,
+              result.response,
+            );
 
-        case "TOOL_CALL": {
-          const execution =
-            await createToolExecution({
-              sessionId: session.id,
-              toolCallId: result.toolCallId,
-              toolName: result.toolName,
-              input: result.input,
+            await publishAgentStatus(session.id, {
+              type: "COMPLETED",
+              content: result.response,
             });
 
-          await publishEvent("AGENT_TOOL_EXECUTION_REQUESTED", {
-            orgId: session.orgId,
-            sessionId: session.id,
-            executionId: execution.id,
-            expectedStep: session.currentStep + 1,
-          });
+            console.info(
+              `[AGENT] Session ${session.id} completed.`,
+            );
 
-          break;
+            break;
+          }
+
+          case "TOOL_CALL": {
+            const execution =
+              await createToolExecution({
+                sessionId: session.id,
+                toolCallId: result.toolCallId,
+                toolName: result.toolName,
+                input: result.input,
+              });
+
+            await publishEvent(
+              "AGENT_TOOL_EXECUTION_REQUESTED",
+              {
+                orgId: session.orgId,
+                sessionId: session.id,
+                executionId: execution.id,
+                expectedStep: session.currentStep + 1,
+              },
+            );
+
+            break;
+          }
         }
-      }
+      } catch (error) {
+        console.error(
+          `[AGENT] Session ${session.id} failed.`,
+          error,
+        );
 
+        await failAgentSession(
+          session.id,
+          error instanceof Error
+            ? error.message
+            : "Unknown agent error",
+        );
+
+        await publishAgentStatus(session.id, {
+          type: "FAILED",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unknown agent error",
+        });
+
+      }
 
     },
   );

@@ -42,10 +42,17 @@ async function withLock<T>({
   }
 
   try {
-    return await callback();
-  } finally {
+  return await callback();
+} finally {
+  try {
     await redis.eval(releaseLockScript, [key], [token]);
+  } catch (error) {
+    console.error(
+      `[LOCK] Failed to release lock "${key}".`,
+      error,
+    );
   }
+}
 }
 
 export async function withAgentSessionLock<T>(
