@@ -5,6 +5,8 @@ import { buildAgentSystemPrompt } from "./prompts/system-prompt";
 import { agentTools } from "./tools/registry";
 import { getAgentSessionForWorker } from "./session-service";
 import { JsonValue } from "./types";
+import { buildModelMessages } from "./message-mapper";
+import { getMessages } from "./services/message-service";
 
 export type LoopResult =
   | {
@@ -26,20 +28,16 @@ export async function runAgentLoop(
   if (!session) {
     throw new Error(`Agent session '${sessionId}' not found.`);
   }
+const dbMessages = await getMessages(session.id);
 
-  const messages = session.messages as ModelMessage[];
+const messages = buildModelMessages(dbMessages);
 
-  const result = await generateText({
-    model: agentModel,
-
-    system: buildAgentSystemPrompt({
-      organizationName: session.organization.name,
-    }),
-
-    messages,
-
-    tools: agentTools,
-  });
+const result = await generateText({
+  model: agentModel,
+  system: buildAgentSystemPrompt({organizationName : session.organization.name}),
+  messages,
+  tools: agentTools,
+});
 
   if (result.finishReason === "tool-calls") {
     const toolCall = result.toolCalls[0];

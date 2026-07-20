@@ -5,13 +5,13 @@ import {
   type Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma/extended";
-import type { AgentSessionMessage } from "./types";
+
 
 type CreateAgentSessionInput = {
   orgId: string;
   userId: string;
-  initialMessage: AgentSessionMessage;
 };
+
 
 type AgentSessionForOwnerInput = {
   sessionId: string;
@@ -25,13 +25,11 @@ const sessionSelect = {
   userId: true,
   status: true,
   currentStep: true,
-  messages: true,
   finalResponse: true,
   errorMessage: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.AgentSessionSelect;
-
 /**
  * Create a fresh, user-private agent session.
  *
@@ -43,7 +41,6 @@ const sessionSelect = {
 export async function createAgentSession({
   orgId,
   userId,
-  initialMessage,
 }: CreateAgentSessionInput) {
   return prisma.agentSession.create({
     data: {
@@ -51,7 +48,6 @@ export async function createAgentSession({
       userId,
       status: AgentSessionStatus.RUNNING,
       currentStep: 0,
-      messages: [initialMessage] as Prisma.InputJsonValue,
     },
     select: sessionSelect,
   });
@@ -90,62 +86,29 @@ export async function getAgentSessionForWorker(sessionId: string) {
     id: sessionId,
   },
   include: {
-    organization: {
-      select: {
-        id: true,
-        name: true,
-      },
+  organization: {
+    select: {
+      id: true,
+      name: true,
     },
   },
+  user: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+    },
+  },
+  messages: {
+    orderBy: {
+      createdAt: "asc",
+    },
+  },
+},
 });
 }
 
-/**
- * Append exactly one durable message.
- *
- * We load first because Prisma cannot portably append to a JSON array
- * across databases in the way we need here.
- *
- * Later, the agent session mutex will ensure two workers cannot append
- * concurrently to the same session.
- */
-export async function appendAgentSessionMessage(
-  sessionId: string,
-  message: AgentSessionMessage,
-) {
-  const session = await prisma.agentSession.findUnique({
-    where: { id: sessionId },
-    select: {
-      messages: true,
-      status: true,
-    },
-  });
 
-  if (!session) {
-    throw new Error(`Agent session ${sessionId} not found.`);
-  }
-
-  if (session.status !== AgentSessionStatus.RUNNING) {
-    throw new Error(
-      `Cannot append message to agent session in ${session.status} state.`,
-    );
-  }
-
-  const currentMessages = Array.isArray(session.messages)
-    ? session.messages
-    : [];
-
-  return prisma.agentSession.update({
-    where: { id: sessionId },
-    data: {
-      messages: [
-        ...currentMessages,
-        message,
-      ] as Prisma.InputJsonValue,
-    },
-    select: sessionSelect,
-  });
-}
 
 /**
  * Advance the durable step counter only if the worker is acting on

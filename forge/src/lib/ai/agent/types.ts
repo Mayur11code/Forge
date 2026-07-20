@@ -1,6 +1,17 @@
 import type { ModelMessage } from "ai";
 
-export type AgentSessionMessage = ModelMessage;
+
+
+
+
+export type StoredAgentMessage = {
+  role: ModelMessage["role"];
+  content: ModelMessage["content"];
+};
+
+
+
+
 
 /**
  * This is all the loop event needs.
