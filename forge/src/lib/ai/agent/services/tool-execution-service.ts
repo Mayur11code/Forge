@@ -79,7 +79,7 @@ export async function markToolExecutionRunning(
 
 export async function completeToolExecution(
   executionId: string,
-  result: JsonValue,
+
 ) {
   return prisma.agentToolExecution.update({
     where: {
@@ -87,7 +87,6 @@ export async function completeToolExecution(
     },
     data: {
       status: AgentToolExecutionStatus.COMPLETED,
-      result,
       error: null,
     },
   });
