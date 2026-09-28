@@ -33,14 +33,31 @@ import type { Prisma } from "@prisma/client";
 export type JsonValue = Prisma.InputJsonValue;
 
 /**
- * The executor receives only a durable database pointer.
- * It must load args/toolCallId from AgentToolExecution,
- * never trust them from a queue payload.
+ * The queue payload is only a durable database pointer.
+ * It must never be trusted for identity.
  */
 export type AgentToolExecutionEventPayload = {
   sessionId: string;
   executionId: string;
   expectedStep: number;
+};
+
+/**
+ * TRUSTED execution context handed to every ToolExecutor.
+ *
+ * Security contract:
+ * - `orgId` / `userId` are loaded by tool-worker.ts from the PERSISTED
+ *   AgentSession row. They are never read from LLM input and never taken
+ *   from the queue payload.
+ * - `executionId` is the durable AgentToolExecution id.
+ *
+ * A tool must use `ctx.orgId` to scope every read and write, and must never
+ * accept an orgId (or userId) as a model-controlled input field.
+ */
+export type ToolExecutionContext = {
+  orgId: string;
+  userId: string;
+  executionId: string;
 };
 
 export type AgentStatusEvent =
