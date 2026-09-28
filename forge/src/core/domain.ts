@@ -21,6 +21,10 @@ export const createTaskSchema = z.object({
     .string()
     .cuid("Invalid project ID"),
 
+  description: z
+    .string()
+    .optional(),
+
   // Optional for future extensibility
   assigneeId: z
     .string()
