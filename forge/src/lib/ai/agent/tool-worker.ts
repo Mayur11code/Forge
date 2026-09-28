@@ -48,6 +48,14 @@ export async function handleToolExecution({
         const result =
           await executor(
             execution.input,
+            {
+              // Trusted context. Sourced from the PERSISTED AgentSession row
+              // loaded by getToolExecutionForWorker. Never from the queue
+              // payload, never from model-controlled input.
+              orgId: execution.session.orgId,
+              userId: execution.session.userId,
+              executionId: execution.id,
+            },
           );
 
 
