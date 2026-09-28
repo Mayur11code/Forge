@@ -60,22 +60,77 @@ export type ToolExecutionContext = {
   executionId: string;
 };
 
+/**
+ * Machine-readable reason an AgentSession reached a terminal state.
+ *
+ * Stored in `AgentSession.terminalReason` and published on the wire so that
+ * workers, clients and alerting can branch on the cause instead of parsing
+ * free-text `errorMessage`.
+ */
+export type AgentTerminalReason =
+  | "MAX_STEPS_EXCEEDED"
+  | "MULTIPLE_TOOL_CALLS"
+  | "NO_TOOL_CALL"
+  | "TOOL_NOT_AVAILABLE"
+  | "SESSION_NOT_FOUND"
+  | "ERROR";
+
 export type AgentStatusEvent =
   | {
       type: "RUNNING";
       message: string;
     }
   | {
-      type: "WAITING_CONFIRMATION";
+      /**
+       * A write or destructive tool was proposed and is waiting for the user.
+       *
+       * The loop is halted at this point: no execution is dispatched and no
+       * further model call happens until the user confirms or cancels. The
+       * agent resumes only when a confirm/cancel request re-drives the loop.
+       *
+       * `summary` and `fields` are derived server-side from the PERSISTED
+       * proposal arguments, so the user approves the concrete action rather
+       * than an opaque tool name. They are display-only.
+       */
+      type: "TOOL_PROPOSED";
       executionId: string;
+      toolName: string;
       summary: string;
-      expiresAt: string;
+      fields: { label: string; value: string }[];
+    }
+  | {
+      type: "TOOL_CONFIRMED";
+      executionId: string;
+      toolName: string;
+    }
+  | {
+      type: "TOOL_CANCELLED";
+      executionId: string;
+      toolName: string;
+    }
+  | {
+      /** A tool finished. The authoritative result is in session history. */
+      type: "TOOL_COMPLETED";
+      executionId: string;
+      toolName: string;
     }
   | {
       type: "COMPLETED";
       content: string;
     }
   | {
+      /**
+       * The loop hit MAX_AGENT_STEPS. This is deliberately distinct from
+       * COMPLETED: the run did not produce a final answer.
+       */
+      type: "MAX_STEPS_EXCEEDED";
+      reason: Extract<AgentTerminalReason, "MAX_STEPS_EXCEEDED">;
+      maxSteps: number;
+      currentStep: number;
+      message: string;
+    }
+  | {
       type: "FAILED";
+      reason: AgentTerminalReason;
       message: string;
     };
