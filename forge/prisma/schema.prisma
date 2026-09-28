@@ -79,6 +79,16 @@ enum AgentToolExecutionStatus {
   RUNNING
   COMPLETED
   FAILED
+
+  // Phase 2 confirmation state machine.
+  //
+  // PENDING_CONFIRMATION -> PENDING  (user confirmed; execution is now queued)
+  // PENDING_CONFIRMATION -> CANCELLED (user declined; must never execute)
+  //
+  // CANCELLED is terminal. A cancelled execution is never resurrected and is
+  // never dispatched to the tool worker.
+  PENDING_CONFIRMATION
+  CANCELLED
 }
 
 enum AgentMessageRole {
@@ -100,6 +110,18 @@ model AgentSession {
   finalResponse String?            @db.Text
   errorMessage  String?            @db.Text
 
+  // Machine-readable reason a session stopped. Free-text errorMessage is for
+  // humans; this is for programmatic branching (worker, client, alerting).
+  terminalReason String?
+
+  // Provenance: the prompt contract this session was created under. Sessions
+  // are never rewritten onto a new prompt mid-flight, so this always describes
+  // the instructions that actually produced the transcript.
+  // Contract the session was CREATED under. Defaults to the legacy value, not
+  // the current one, so pre-existing sessions are backfilled truthfully.
+  // createAgentSession always writes AGENT_PROMPT_VERSION explicitly.
+  promptVersion String              @default("v1")
+
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 
@@ -112,6 +134,7 @@ model AgentSession {
   @@index([orgId, userId, createdAt])
   @@index([userId, updatedAt])
   @@index([status, updatedAt])
+  @@index([terminalReason])
 }
 
 model AgentToolExecution {
@@ -124,6 +147,12 @@ model AgentToolExecution {
 
   error       String?                  @db.Text
   status      AgentToolExecutionStatus @default(PENDING)
+
+  // Confirmation audit trail. The proposal itself lives in `input`: the exact
+  // arguments the model proposed are what gets persisted, shown to the user,
+  // and later executed. Confirmation never re-generates them.
+  confirmedAt DateTime?
+  cancelledAt DateTime?
 
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
