@@ -1,16 +1,23 @@
 "use server";
 
+// Thin Next.js server-action adapter for task creation.
+//
+// UI-only concerns live here: NextAuth, org access, rate limiting, cache
+// revalidation, and the UI-shaped response.
+//
+// The actual task business operation (validation, project ownership check,
+// the single prisma.task.create, and the TASK_CREATED CDC) lives in
+// @/lib/tasks/create-task and is shared with the workflow action and the
+// agent tool executor. Do not re-implement the write here.
+
 import { prisma } from "@/lib/prisma/extended";
 import { rateLimit } from "@/lib/redis/rate-limit";
-import { dispatchEvent } from "@/lib/events/event-bus";
 import { auth } from "@/lib/auth/auth";
 import { createTaskSchema } from "@/core/domain";
-// import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { revalidatePath } from "next/cache";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
-import { User } from "lucide-react";
-
+import { createTaskInOrg } from "@/lib/tasks/create-task";
 
 export async function createTask(input: unknown) {
   // 1️⃣ Auth
@@ -22,7 +29,9 @@ export async function createTask(input: unknown) {
   // 2️⃣ Zod barrier
   const data = createTaskSchema.parse(input);
 
-  // 3️⃣ Org access check (via project → org)
+  // 3️⃣ Resolve the project's org, then confirm this user may act in it.
+  //    The UI does not know the org up front: it only has a projectId, so the
+  //    org is derived from the project and access is checked against it.
   const project = await prisma.project.findFirst({
     where: {
       id: data.projectId,
@@ -31,67 +40,62 @@ export async function createTask(input: unknown) {
       orgId: true,
     },
   });
-  //   await new Promise(resolve => setTimeout(resolve, 3000));
 
   if (!project) {
     throw new Error("Project not found");
   }
 
   const organization = await prisma.organization.findUnique({
-    where: { id: project.orgId }
+    where: { id: project.orgId },
+    select: { id: true, slug: true },
   });
   if (!organization) {
     throw new Error("Organization not found");
   }
-  // await requireOrgAccess(organization.slug);
+
   const access = await getOrgAccess(organization.slug);
   if (!access) notFound();
 
-  const { success, limit, remaining, reset } =
-    await rateLimit.limit(session.user.id);
-const result = await rateLimit.limit(session.user.id);
+  // 4️⃣ Rate limit. EXACTLY ONE call, used consistently for the decision and
+  //    for the remaining/reset values. (Previously this was called twice,
+  //    which consumed the budget twice and mixed the two responses.)
+  const { success, remaining, reset } = await rateLimit.limit(session.user.id);
 
-console.log("RATE LIMIT RESULT:", result.remaining, "remaining out of", result.limit, "Limit reset in", result.reset, "seconds");
-  // 3. BLOCK IF EXCEEDED
   if (!success) {
     console.warn(`[RATE LIMIT] User ${session.user.id} blocked`);
-    return{
+    return {
       success: false,
-    error: "RATE_LIMIT",
-    remaining: 0,
-    reset: result.reset,
-    }
-    // throw new Error("You are doing that too fast. Please wait 10 seconds.");
+      error: "RATE_LIMIT",
+      remaining: 0,
+      reset,
+    };
   }
 
-  // 4️⃣ Create task
-  const task = await prisma.task.create({
-    data: {
-      title: data.title,
-      projectId: data.projectId,
-      priority: data.priority,
-      assigneeId: data.assigneeId ?? null,
-    },
+  // 5️⃣ Canonical task creation.
+  //    Trusted org/user are derived above, never taken from `input`.
+  const result = await createTaskInOrg(data, {
+    orgId: organization.id,
+    userId: session.user.id,
   });
 
- 
-  // await dispatchEvent("TASK_CREATED", {
-  //   orgId: organization.id,
-  //   taskId: task.id,
-  //   userId: session.user.id,
-  //   projectId: data.projectId,
-  //   subject: "New Task Added",
-  //   body: `A new task "${task.title}" has been added to your project.`,
-  // });
-//THIS WAS MOVED TO THE PRISMA EXTENDED CREATE HOOK IN extended.ts TO AVOID DUAL WRITE PROBLEMS
-  //REFACTOR LATER TO INCLUDE OUTBOX PATTERN TO AVOID DUAL WRITE PROBLEMS
-  console.log("CDC WORKING YAYYYYYYY🖤🖤🖤");
+  if (!result.success) {
+    return {
+      success: false,
+      error: result.code,
+      message: result.error,
+      remaining,
+      reset,
+    };
+  }
 
+  // 6️⃣ UI-only cache invalidation. The TASK_CREATED CDC is dispatched by the
+  //    extended Prisma hook inside the canonical operation.
   revalidatePath(`/org/${organization.slug}/projects/${data.projectId}`);
+
   return {
-  success: true,
-  task,
-  remaining: result.remaining,
-  reset: result.reset,
-};
+    success: true,
+    task: result.task,
+    remaining,
+    reset,
+  };
 }
