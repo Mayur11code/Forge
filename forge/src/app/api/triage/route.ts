@@ -3,9 +3,24 @@ import { generateObject } from 'ai';
 import { googleProvider } from '@/lib/ai/provider';
 import { triageSchema } from '@/lib/ai/schemas';
 import { prisma } from '@/lib/prisma/extended';
+import { auth } from '@/lib/auth/auth';
+import { getOrgAccess } from '@/features/organizations/getOrgAccess';
+import { createTaskInOrg } from '@/lib/tasks/create-task';
 
 export async function POST(req: Request) {
   try {
+    // 1. Trusted identity. The task write is authorized, so the caller must be
+    //    an authenticated user.
+    const session = await auth();
+    const userId = session?.user?.id;
+
+    if (!userId) {
+      return Response.json(
+        { error: 'Unauthorized.' },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
 
     const rawBugReport =
@@ -29,6 +44,29 @@ if (!projectId) {
       );
     }
 
+    // 2. projectId is UNTRUSTED (it came off the request body). Resolve the
+    //    owning organization from it, then confirm this user may act there.
+    const project = await prisma.project.findFirst({
+      where: { id: projectId },
+      select: { id: true, orgId: true, organization: { select: { slug: true } } },
+    });
+
+    if (!project) {
+      return Response.json(
+        { error: 'Project not found.' },
+        { status: 404 }
+      );
+    }
+
+    const access = await getOrgAccess(project.organization.slug);
+
+    if (!access) {
+      return Response.json(
+        { error: 'You do not have access to this organization.' },
+        { status: 403 }
+      );
+    }
+
     const result = await generateObject({
       model: googleProvider('gemini-2.5-flash'),
       schema: triageSchema,
@@ -47,19 +85,33 @@ const priorityMap = {
   critical: 'HIGH',
 } as const;
 
-const savedTask = await prisma.task.create({
-  data: {
-    title: `Automated Triage: ${structuredIssue.affectedComponent}`,
-    description: rawBugReport,
-    priority: priorityMap[structuredIssue.severity],
-    projectId,
-  },
-});
+    // 3. Canonical task creation. The org comes from the project we just
+    //    authorized against, never from the request body. The canonical
+    //    operation re-verifies project ownership and fires the TASK_CREATED CDC.
+    const created = await createTaskInOrg(
+      {
+        title: `Automated Triage: ${structuredIssue.affectedComponent}`.slice(0, 100),
+        description: rawBugReport,
+        priority: priorityMap[structuredIssue.severity],
+        projectId,
+      },
+      {
+        orgId: project.orgId,
+        userId,
+      }
+    );
+
+    if (!created.success) {
+      return Response.json(
+        { error: created.error, code: created.code },
+        { status: 400 }
+      );
+    }
 
     return Response.json(
       {
         success: true,
-        data: savedTask,
+        data: created.task,
         extracted: structuredIssue,
       },
       { status: 201 }
