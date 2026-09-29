@@ -120,16 +120,43 @@ function resolveDestination() {
 }
 
 /**
+ * Is the caller explicitly asking for a development-tunnel schedule?
+ *
+ * A deliberate, separate opt-in rather than a relaxation of the guard. The guard
+ * stays exactly as strict by default, so a production schedule can never be
+ * created against a tunnel by accident; this only makes the dev case possible
+ * when someone asks for it by name.
+ *
+ * Exact string comparison for the same reason the worker uses one: a truthiness
+ * check would treat "0" and "false" as enabled.
+ */
+function tunnelOptIn() {
+  return env.AGENT_MAINTENANCE_ALLOW_TUNNEL === "yes";
+}
+
+/**
  * Refuse destinations QStash cannot reach.
  *
  * This is a guard, not a style preference. QStash accepts a localhost or tunnel
  * URL without complaint and then fails every delivery, so the schedule exists,
  * appears configured, and does nothing. Catching it here is the difference
  * between a loud failure now and a silently dead recovery system later.
+ *
+ * The tunnel case is refused by default because a schedule pointed at a
+ * development tunnel dies with the tunnel process while still looking
+ * configured. That is the right default for a persistent schedule. It can be
+ * overridden explicitly for live development verification, where the tunnel is
+ * intentional, the lifetime is known, and the schedule is a verification
+ * artifact rather than a production recovery mechanism. Loopback and plaintext
+ * http are never overridable: those are not "temporary", they are unreachable.
+ *
+ * Returns the list of accepted-with-warning problems so the caller can report
+ * them rather than swallow them.
  */
 function assertReachableDestination(destination) {
   const url = new URL(destination);
   const problems = [];
+  const warnings = [];
 
   if (url.protocol !== "https:") {
     problems.push(
@@ -148,10 +175,22 @@ function assertReachableDestination(destination) {
   }
 
   if (host.endsWith(".ngrok-free.dev") || host.endsWith(".ngrok.io")) {
-    problems.push(
-      "host is a temporary ngrok tunnel; the schedule would die with the " +
-        "tunnel process and would look configured until then",
-    );
+    const detail =
+      "host is a temporary ngrok tunnel; the schedule dies with the tunnel " +
+      "process and will look configured until then";
+
+    if (tunnelOptIn()) {
+      warnings.push(
+        `${detail}. ACCEPTED because AGENT_MAINTENANCE_ALLOW_TUNNEL=yes. ` +
+          "This schedule is a development verification artifact and must not " +
+          "be treated as a production recovery mechanism.",
+      );
+    } else {
+      problems.push(
+        `${detail}. For live development verification, re-run with ` +
+          "AGENT_MAINTENANCE_ALLOW_TUNNEL=yes.",
+      );
+    }
   }
 
   if (problems.length > 0) {
@@ -161,6 +200,8 @@ function assertReachableDestination(destination) {
         "\n\nSet APP_URL to the deployed public origin and re-run.",
     );
   }
+
+  return warnings;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,9 +210,14 @@ function assertReachableDestination(destination) {
 
 function buildPlan(client) {
   const destination = resolveDestination();
-  assertReachableDestination(destination);
+  const warnings = assertReachableDestination(destination);
 
-  return { client, destination, cron: env.AGENT_MAINTENANCE_CRON ?? DEFAULT_CRON };
+  return {
+    client,
+    destination,
+    cron: env.AGENT_MAINTENANCE_CRON ?? DEFAULT_CRON,
+    warnings,
+  };
 }
 
 function desired() {
@@ -218,13 +264,17 @@ function check(actual, expected, failures, field) {
 // ---------------------------------------------------------------------------
 
 async function apply() {
-  const { client, destination, cron } = buildPlan(qstashClient());
+  const { client, destination, cron, warnings } = buildPlan(qstashClient());
   const want = { ...desired(), destination, cron };
   const existing = await findExisting(client);
 
   console.log(`destination : ${destination}`);
   console.log(`cron        : ${cron}`);
   console.log(`existing    : ${existing.length} maintenance schedule(s)`);
+
+  for (const warning of warnings) {
+    console.log(`\nWARNING     : ${warning}\n`);
+  }
 
   if (existing.length === 1) {
     const current = existing[0];
@@ -263,9 +313,13 @@ async function apply() {
 }
 
 async function verify() {
-  const { client, destination, cron } = buildPlan(qstashClient());
+  const { client, destination, cron, warnings } = buildPlan(qstashClient());
   const existing = await findExisting(client);
   const failures = [];
+
+  for (const warning of warnings) {
+    console.log(`WARNING     : ${warning}`);
+  }
 
   if (existing.length === 0) {
     console.log("FAIL: no AGENT_MAINTENANCE_REQUESTED schedule exists in QStash");
@@ -285,9 +339,26 @@ async function verify() {
   check(schedule.cron, cron, failures, "cron");
   check(schedule.body, body, failures, "body");
 
-  // Header comparison is normalised: QStash returns header values as arrays.
-  const actualHeaders = JSON.stringify(schedule.header ?? {});
-  check(actualHeaders, JSON.stringify(headers), failures, "header");
+  // QStash round-trips header values as single-element arrays, so a direct
+  // JSON comparison against our own string map reports a mismatch that does not
+  // exist. Normalised to a plain string map before comparing, otherwise this
+  // check would fail on a schedule that is in fact configured correctly.
+  const normalizeHeaders = (raw) => {
+    const out = {};
+
+    for (const [key, value] of Object.entries(raw ?? {})) {
+      out[key] = Array.isArray(value) ? value.join(",") : String(value);
+    }
+
+    return out;
+  };
+
+  check(
+    JSON.stringify(normalizeHeaders(schedule.header)),
+    JSON.stringify(normalizeHeaders(headers)),
+    failures,
+    "header",
+  );
 
   if (schedule.isPaused) {
     failures.push("schedule is paused, so no tick will ever fire");
@@ -329,9 +400,21 @@ async function verify() {
   }
 
   // Delivery history is the only proof the schedule actually fires.
+  //
+  // Schedule run states use a DIFFERENT vocabulary from message states. A
+  // schedule reports SUCCESS/FAIL, while an individual message reports
+  // DELIVERED/ERROR/RETRY. Checking for "DELIVERED" here meant every real,
+  // successful run was counted as a failure, so `verify` could never report
+  // delivery OK and the check was worse than useless - it cried wolf on a
+  // schedule that was demonstrably firing (observed live: SUCCESS for a run
+  // that returned 200 from the worker).
+  const SUCCESS_STATES = new Set(["SUCCESS", "DELIVERED"]);
+
   const states = schedule.lastScheduleStates ?? {};
   const total = Object.keys(states).length;
-  const failed = Object.values(states).filter((s) => s !== "DELIVERED").length;
+  const failed = Object.values(states).filter(
+    (s) => !SUCCESS_STATES.has(s),
+  ).length;
 
   console.log("--- QStash state ---");
   console.log(`scheduleId   : ${schedule.scheduleId}`);
@@ -422,8 +505,18 @@ function plan() {
   console.log(body);
 
   try {
-    assertReachableDestination(destination);
-    console.log("\nguard        : destination looks publicly reachable");
+    const warnings = assertReachableDestination(destination);
+
+    if (warnings.length === 0) {
+      console.log("\nguard        : destination looks publicly reachable");
+    } else {
+      // Accepted, but never silently. A schedule aimed at a tunnel is a
+      // deliberate development choice and has to be visible in the output every
+      // time, not once when it was created.
+      for (const warning of warnings) {
+        console.log(`\nguard        : ACCEPTED WITH WARNING - ${warning}`);
+      }
+    }
   } catch (error) {
     console.log(`\nguard        : ${error.message}`);
     process.exitCode = 1;
