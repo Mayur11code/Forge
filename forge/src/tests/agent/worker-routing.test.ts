@@ -34,6 +34,9 @@ jest.mock("@/app/api/worker/agent-loop/al", () => ({
 jest.mock("@/lib/ai/agent/tool-worker", () => ({
   handleToolExecution: jest.fn(),
 }));
+jest.mock("@/app/api/worker/agent-maintenance/am", () => ({
+  handleAgentMaintenance: jest.fn(),
+}));
 
 // `var` is deliberate: jest hoists the jest.mock call above module
 // declarations, and a const would be in the temporal dead zone when the
@@ -64,6 +67,7 @@ import { NextRequest } from "next/server";
 
 import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentLoop } from "@/app/api/worker/agent-loop/al";
+import { handleAgentMaintenance } from "@/app/api/worker/agent-maintenance/am";
 import { POST } from "@/app/api/worker/route";
 
 const toolHandlerMock = handleToolExecution as jest.MockedFunction<
@@ -71,6 +75,9 @@ const toolHandlerMock = handleToolExecution as jest.MockedFunction<
 >;
 const loopHandlerMock = handleAgentLoop as jest.MockedFunction<
   typeof handleAgentLoop
+>;
+const maintenanceHandlerMock = handleAgentMaintenance as jest.MockedFunction<
+  typeof handleAgentMaintenance
 >;
 
 function bindings(): Map<string, unknown> {
@@ -99,6 +106,15 @@ describe("event to handler bindings", () => {
 
   it("binds AGENT_LOOP_REQUESTED to the agent loop worker", () => {
     expect(bindings().get("AGENT_LOOP_REQUESTED")).toBe(loopHandlerMock);
+  });
+
+  it("binds AGENT_MAINTENANCE_REQUESTED to the maintenance worker", () => {
+    // The QStash schedule posts to this same endpoint. A missing binding would
+    // make the scheduled sweep hit the "known event with no handler" branch and
+    // fail on every single tick.
+    expect(bindings().get("AGENT_MAINTENANCE_REQUESTED")).toBe(
+      maintenanceHandlerMock,
+    );
   });
 
   it("keeps the pre-existing non-agent bindings", () => {
@@ -131,6 +147,16 @@ describe("dispatch", () => {
     await expect(res.json()).resolves.toEqual({
       ok: true,
       eventType: "AGENT_LOOP_REQUESTED",
+    });
+  });
+
+  it("routes AGENT_MAINTENANCE_REQUESTED", async () => {
+    const res = await post("AGENT_MAINTENANCE_REQUESTED");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      eventType: "AGENT_MAINTENANCE_REQUESTED",
     });
   });
 
