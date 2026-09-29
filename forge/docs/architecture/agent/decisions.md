@@ -705,7 +705,15 @@ retries it, while a broken reaper still cannot cost the approval sweep.
 The one thing this does not fix is a missing destination. A schedule pointed at
 `localhost` or a dev tunnel is accepted by QStash and fails on every single tick —
 worse than no schedule, because it looks configured. `scripts/qstash-maintenance-schedule.mjs`
-refuses to create one, which is why the schedule does not exist yet.
+refuses to create one without an explicit opt-in.
+
+> **Update.** The schedule now exists (`scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj`) and
+> real signed ticks have been observed. The tunnel destination was admitted behind
+> a required, explicit `AGENT_MAINTENANCE_ALLOW_TUNNEL=yes` rather than by
+> relaxing the check, so the "looks configured but fails every tick" failure mode
+> is still refused by default. A stable public origin is still owed; the schedule
+> currently depends on a temporary tunnel.
+
 
 ## Decision 20: The outbox deliberately has no foreign keys
 
@@ -723,3 +731,51 @@ The cost is that the table can hold ids that no longer resolve, and
 `redeliverStalledConfirmedExecutions` re-records intent rather than checking
 existence. That is the correct side to err on: a stale row is inert, a missing
 one is a hang.
+
+## Decision 21: A stale session is proven dead by its lock, not its timestamp
+
+**Status:** `IMPLEMENTED`, `SOURCE VERIFIED`, live-proven on one of two sessions
+
+**Decision.** `redriveStalledSessions` treats `AgentSession.updatedAt` as an
+indexed *pre-filter* only. The session lock is the authoritative liveness signal:
+a candidate is re-read under `withAgentSessionLock`, and is only re-driven if it
+is still `RUNNING`, still stale, and still has no in-flight execution.
+
+`updatedAt` is written when a step is **claimed**, and nothing refreshes it during
+a turn. A worker mid-Gemini-call therefore has a session row that looks hours old
+while a live execution heartbeat is running underneath it. Treating the timestamp
+as proof of death lets two sweeps collide with healthy in-flight work — precisely
+the failure the lock exists to prevent. The pre-filter is allowed to make us look;
+the lock is allowed to decide.
+
+**The in-flight set is `PENDING | RUNNING | PENDING_CONFIRMATION`.** The third
+status is not optional. A session parked on human approval is still `RUNNING` at
+the session level, so the "obvious" predicate — no `PENDING`/`RUNNING` execution —
+would drag the model back into a turn nobody approved. Covered by a
+mutation-checked test.
+
+**Re-driving reuses the existing outbox, but needs one bounded exception.** The
+duty records `AGENT_LOOP_REQUESTED:<sessionId>#redrive#<currentStep>` and lets the
+normal dispatcher publish it: no new event type, no new worker, no direct publish.
+
+The exception is `rearmOutboxEvent`, which CAS-transitions a single row
+`PUBLISHED → PENDING`. It is required because of a race that was **observed live,
+not predicted**: the sweep publishes the re-drive while still holding that same
+session's lock; the loop worker treats contention as a successful delivery (logs,
+returns `200`); QStash marks it delivered and never retries. Because the row is
+then `PUBLISHED` and `recordAgentEvent` will never resurrect a published row, the
+session was *permanently* stranded while the sweep re-selected it every tick
+doing nothing. The CAS on `status: PUBLISHED` means it cannot double-queue a
+`PENDING` row or race a dispatcher mid-publish.
+
+**Recovery is bounded, and giving up is terminal.** After
+`AGENT_STALLED_SESSION_MAX_REDRIVES` (3) the session becomes `FAILED` with
+`terminalReason: "ERROR"` and a `FAILED` status event, mirroring the execution
+reaper's terminate-don't-spin behaviour. An unbounded reaper is a reaper that
+hides a permanently broken session behind a `RUNNING` row forever.
+
+**Known gap, deliberately not closed here.** The worker-side lock-contention drop
+in `agent-loop/al.ts` still acknowledges deliveries it refuses. Re-arm bounds it
+to 3 attempts for re-drive traffic only; an ordinary tool→loop handoff that loses
+the race is still dropped silently. Changing consumer semantics is a different
+decision from adding a reaper and should be reviewed on its own.

@@ -115,7 +115,7 @@ Concretely this buys:
 | Duplicate-delivery safety | A `SET NX PX` lock with a TTL heartbeat, plus the `EventLog(messageId)` idempotency guard. |
 | Orphan detection | A claimed execution refreshes its own row every 30 s, so "no heartbeat" means "nobody is working on this" rather than "this is slow". |
 | Durable event intent | Every critical event is an `AgentOutboxEvent` row committed with the domain state, then drained by a lease-claimed dispatcher. Delivery is **at-least-once**, never exactly-once. |
-| Recovery actually runs | `AGENT_MAINTENANCE_REQUESTED` on the signed `/api/worker` runs the approval sweep, the orphan reaper, the stalled redelivery sweep and the outbox drain. A QStash schedule POSTs it every five minutes. **The schedule is not created yet — see below.** |
+| Recovery actually runs | `AGENT_MAINTENANCE_REQUESTED` on the signed `/api/worker` runs the approval sweep, the orphan reaper, the confirmed-execution redelivery sweep, the **stalled-session re-drive** and the outbox drain. A QStash schedule (`scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj`) POSTs it every five minutes and real signed ticks have been observed executing. |
 | Bounded model work | `MAX_AGENT_STEPS = 5`, enforced by a pure policy function. |
 | No long-held connections | Workers are short-lived QStash deliveries. |
 
@@ -227,37 +227,38 @@ exercised end to end. It has not.
   nothing subscribes to a `private-agent-*` channel. The entire agent subsystem
   currently has no UI. The server-side contract is complete; the client is not
   written.
-- **The maintenance schedule does not exist yet.** The handler is implemented,
-  registered on `/api/worker` and tested, but QStash has **no**
-  `AGENT_MAINTENANCE_REQUESTED` schedule — verified by reading the account's
-  schedule list. A schedule cannot be pointed at a public destination until one
-  exists: `APP_URL` is `http://localhost:3000`, and the only endpoint previously
-  registered in QStash (topic `events` and the `CRON_DAILY_DIGEST` schedule) points
-  at a dead `ngrok-free.dev` tunnel that returns 404. So **the four recovery duties
-  have no caller in any running environment.** QStash would accept a localhost or
-  tunnel destination without complaint and then fail every tick, which is worse
-  than nothing because it looks configured — so
-  `scripts/qstash-maintenance-schedule.mjs` refuses to create one.
+- **The maintenance schedule runs, but only through a temporary tunnel.** The
+  handler is implemented, registered on `/api/worker`, and driven by schedule
+  `scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj` every five minutes; real signed ticks have
+  been observed arriving and executing the five duties. What is missing is a
+  *stable* origin: `APP_URL` is `http://localhost:3000` and delivery depends on a
+  temporary `ngrok-free.dev` tunnel. `scripts/qstash-maintenance-schedule.mjs`
+  refuses tunnel destinations unless `AGENT_MAINTENANCE_ALLOW_TUNNEL=yes` is set
+  explicitly, because QStash accepts a dead tunnel without complaint and then
+  fails every tick — which is worse than nothing, since it looks configured.
 - **Destructive tools do not exist.** `DESTRUCTIVE` policy is implemented and
   tested but unused, because the domain has no safe deletion semantics. See
   [`decisions.md`](./decisions.md#decision-13-no-destructive-tools-despite-a-working-policy).
-- **Sessions frozen mid-turn with no execution in flight are still not swept.**
-  The reaper covers executions, not the absence of one.
+- **The loop worker still drops deliveries it refuses on lock contention.** It
+  logs and returns `200`, so the broker treats them as delivered. Re-arm makes
+  this self-healing within 3 attempts for *re-drive* traffic, but an ordinary
+  tool→loop handoff that loses the race is still lost silently. Left as its own
+  change.
 
 ## Testing status
 
-`npx jest` — **19 suites, 253 tests, passing**. `npx tsc --noEmit` — clean.
+`npx jest` — **19 suites, 289 tests, passing**. `npx tsc --noEmit` — clean.
 Scoped ESLint over the changed agent code — clean. No test constructs a real
 `PrismaClient`; `jest.setup-db-guard.ts` fails the run if one is instantiated.
 
 | Suite | Covers |
 | --- | --- |
 | `agent-channel.test.ts` | Channel/body validation. |
-| `agent/` `durability.test.ts` | Lock heartbeat, token-guarded renewal, reaper selection/CAS/staleness, execution liveness transitions, outbox-driven redelivery. |
+| `agent/` `durability.test.ts` | Lock heartbeat, token-guarded renewal, reaper selection/CAS/staleness, execution liveness transitions, outbox-driven redelivery, **stalled-session detection under the lock, `PENDING_CONFIRMATION` exclusion, and bounded re-drive**. |
 | `agent/` `execution-routes.test.ts` | Confirm/cancel auth, session binding, terminal-session refusal, state-before-liveness ordering, idempotency, race outcomes, transactional continuation. |
 | `agent/` `approval-timeout.test.ts` | `EXPIRED` sweep, the null-`expiresAt` exemption, one-transaction expiry, late confirm, bounded batches. |
-| `agent/` `outbox.test.ts` | Outbox row creation inside the caller's transaction, lease exclusivity, backoff, dedup-key collapse, dispatcher isolation. |
-| `agent/` `maintenance.test.ts` | All four duties, per-duty failure isolation, bounded limits, partial-failure retry, payload contract, identifier-free logging. |
+| `agent/` `outbox.test.ts` | Outbox row creation inside the caller's transaction, lease exclusivity, backoff, dedup-key collapse, dispatcher isolation, **`PUBLISHED` re-arm CAS and its attempt cap**. |
+| `agent/` `maintenance.test.ts` | All five duties, per-duty failure isolation, bounded limits, partial-failure retry, payload contract, identifier-free logging. |
 | `agent/` `worker-auth.test.ts` | Signature enforcement, the explicit opt-in, and per-delivery CloudEvent `id`/`time` derivation for schedule bodies. |
 | `agent/` `queue-publish.test.ts` | Deterministic ids, dedup keys, delay-unit conversion, regional `baseUrl`. |
 | `agent/` `provider-binding.test.ts` | `googleProvider` singleton, `gemini-2.5-flash`, `GEMINI_API_KEY` fail-closed. |
