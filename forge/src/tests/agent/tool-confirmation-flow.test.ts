@@ -8,6 +8,23 @@
 
 jest.mock("server-only", () => ({}));
 
+// Both prisma modules are mocked because `prisma/extended` imports
+// `prisma/db` at module scope, so mocking only one still constructs a real
+// PrismaClient - which next/jest points at the live DATABASE_URL from .env.
+// jest.setup-db-guard.ts turns that mistake into an immediate failure instead
+// of a connection timeout.
+jest.mock("@/lib/prisma/extended", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { prismaDouble } = require("./helpers/prisma-double");
+  return { prisma: prismaDouble };
+});
+
+jest.mock("@/lib/prisma/db", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { prismaDouble } = require("./helpers/prisma-double");
+  return { db: prismaDouble };
+});
+
 jest.mock("@/lib/events/queue", () => ({ publishEvent: jest.fn() }));
 
 jest.mock("@/lib/ai/agent/status", () => ({

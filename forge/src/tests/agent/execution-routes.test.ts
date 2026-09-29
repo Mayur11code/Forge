@@ -27,6 +27,16 @@ jest.mock("@/lib/prisma/extended", () => {
   return { prisma: prismaDouble };
 });
 
+// The transactional outbox paths write through the RAW client, not the extended
+// one, so both resolve to the same double. Without this the real db would be
+// constructed and these tests would attempt real network I/O.
+jest.mock("@/lib/prisma/db", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { prismaDouble } = require("./helpers/prisma-double");
+
+  return { db: prismaDouble };
+});
+
 import { auth } from "@/lib/auth/auth";
 import { publishEvent } from "@/lib/events/queue";
 import { publishAgentStatus } from "@/lib/ai/agent/status";
@@ -285,23 +295,32 @@ describe("confirm", () => {
     expect(store.executions[0].status).toBe("PENDING");
     expect(store.executions[0].confirmedAt).toBeInstanceOf(Date);
 
-    expect(publishEventMock).toHaveBeenCalledWith(
-      "AGENT_TOOL_EXECUTION_REQUESTED",
-      {
-        orgId: "org_1",
-        sessionId: SESSION_ID,
-        executionId: EXECUTION_ID,
-        expectedStep: 2,
-      },
-    );
+    // The dispatch is no longer a direct publish. Confirming writes the intent
+    // to the transactional outbox in the SAME transaction as the state
+    // transition, so a crash cannot leave an approved action with nothing to
+    // execute it. The outbox dispatcher publishes later.
+    expect(store.outbox).toHaveLength(1);
+    expect(store.outbox[0]).toMatchObject({
+      eventType: "AGENT_TOOL_EXECUTION_REQUESTED",
+      idempotencyKey: `AGENT_TOOL_EXECUTION_REQUESTED:${EXECUTION_ID}`,
+      status: "PENDING",
+    });
+    expect(store.outbox[0].payload).toEqual({
+      orgId: "org_1",
+      sessionId: SESSION_ID,
+      executionId: EXECUTION_ID,
+      expectedStep: 2,
+    });
   });
 
   it("accepts no body and never forwards tool arguments", async () => {
     await confirm();
 
-    // The dispatch payload carries ids and the claimed step only. Arguments
-    // live on the row, so there is no channel to substitute them.
-    const [, payload] = publishEventMock.mock.calls[0];
+    // The recorded dispatch payload carries ids and the claimed step only.
+    // Arguments live on the execution row, so there is no channel through this
+    // path to substitute what the user approved.
+    const payload = store.outbox[0].payload as Record<string, unknown>;
+
     expect(Object.keys(payload).sort()).toEqual([
       "executionId",
       "expectedStep",
@@ -312,14 +331,17 @@ describe("confirm", () => {
 
   it("is idempotent and does not re-dispatch an already confirmed execution", async () => {
     await confirm();
-    publishEventMock.mockClear();
+
+    // The first confirm is the one that records the dispatch intent.
+    const firstOutboxCount = store.outbox.length;
+    expect(firstOutboxCount).toBe(1);
 
     const res = await confirm();
-    const body = (await res.json()) as Record<string, unknown>;
 
     expect(res.status).toBe(200);
-    expect(body.idempotent).toBe(true);
-    expect(publishEventMock).not.toHaveBeenCalled();
+    // The confirm short-circuits before any transition, so no second intent is
+    // recorded for an execution that is already dispatched.
+    expect(store.outbox).toHaveLength(firstOutboxCount);
   });
 
   it("refuses to confirm a cancelled execution", async () => {
@@ -332,7 +354,29 @@ describe("confirm", () => {
 
     expect(res.status).toBe(409);
     expect(body.code).toBe("ALREADY_CANCELLED");
-    expect(publishEventMock).not.toHaveBeenCalled();
+    expect(store.outbox).toHaveLength(0);
+  });
+
+  it("refuses to confirm an expired execution and schedules nothing", async () => {
+    store.executions = [
+      makeExecution({
+        status: "EXPIRED",
+        expiredAt: new Date(),
+        error: "APPROVAL_TIMEOUT",
+      }),
+    ];
+
+    const res = await confirm();
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // 200 + idempotent, not 409: the outcome is settled and reporting it
+    // truthfully is more useful than reporting an error that implies the user
+    // did something wrong by being late.
+    expect(res.status).toBe(200);
+    expect(body.idempotent).toBe(true);
+    expect(body.status).toBe("EXPIRED");
+    expect(store.outbox).toHaveLength(0);
+    expect(store.executions[0].status).toBe("EXPIRED");
   });
 
   it("returns 409 when a concurrent request wins the compare-and-set", async () => {
@@ -343,7 +387,8 @@ describe("confirm", () => {
     const res = await confirm();
 
     expect(res.status).toBe(409);
-    expect(publishEventMock).not.toHaveBeenCalled();
+    // The CAS lost, so the dispatch intent must not have been recorded either.
+    expect(store.outbox).toHaveLength(0);
   });
 });
 
@@ -361,14 +406,48 @@ describe("cancel", () => {
     expect(store.messages).toHaveLength(1);
     expect(store.messages[0].toolCallId).toBe("call_1");
 
-    expect(publishEventMock).toHaveBeenCalledWith(
-      "AGENT_LOOP_REQUESTED",
-      {
-        orgId: "org_1",
-        sessionId: SESSION_ID,
-        expectedStep: 2,
-      },
-    );
+    // The loop re-drive is a durable outbox intent written in the same
+    // transaction as the cancellation, not a direct publish.
+    expect(publishEventMock).not.toHaveBeenCalled();
+    expect(store.outbox).toHaveLength(1);
+    expect(store.outbox[0]).toMatchObject({
+      eventType: "AGENT_LOOP_REQUESTED",
+      status: "PENDING",
+      sessionId: SESSION_ID,
+      executionId: EXECUTION_ID,
+      payload: { orgId: "org_1", sessionId: SESSION_ID, expectedStep: 2 },
+    });
+  });
+
+  it("records the decline and the continuation in one transaction", async () => {
+    // The cancellation, the transcript entry and the intent must be enclosed by
+    // a single transaction. Enclosure is what is asserted: the in-memory double
+    // has no rollback, so it cannot demonstrate that a mid-transaction failure
+    // undoes the earlier write. That is a real-database property, covered by
+    // the migration and live verification.
+    prismaDouble.$transaction.mockClear();
+
+    await cancel();
+
+    expect(prismaDouble.$transaction).toHaveBeenCalledTimes(1);
+    expect(store.executions[0].status).toBe("CANCELLED");
+    expect(store.messages).toHaveLength(1);
+    expect(store.outbox).toHaveLength(1);
+  });
+
+  it("records nothing when the cancellation loses its CAS", async () => {
+    // A confirm that already dispatched the execution must not also leave a
+    // decline in the transcript, because the model would see the action as both
+    // approved and refused.
+    prismaDouble.agentToolExecution.updateMany.mockResolvedValueOnce({
+      count: 0,
+    });
+
+    const res = await cancel();
+
+    expect(res.status).toBe(409);
+    expect(store.messages).toHaveLength(0);
+    expect(store.outbox).toHaveLength(0);
   });
 
   it("is idempotent for an already cancelled execution", async () => {
@@ -382,6 +461,30 @@ describe("cancel", () => {
     expect(body.idempotent).toBe(true);
     expect(publishEventMock).not.toHaveBeenCalled();
     expect(store.messages).toHaveLength(1);
+  });
+
+  it("cannot cancel an expired execution back to life", async () => {
+    store.executions = [
+      makeExecution({
+        status: "EXPIRED",
+        expiredAt: new Date(),
+        error: "APPROVAL_TIMEOUT",
+      }),
+    ];
+
+    const res = await cancel();
+    const body = (await res.json()) as Record<string, unknown>;
+
+    // 200 + idempotent: EXPIRED is already settled, so there is nothing to
+    // cancel and nothing to undo. Reporting a conflict here would imply the
+    // system timed out because of a cancellation that never happened.
+    expect(res.status).toBe(200);
+    expect(body.idempotent).toBe(true);
+    expect(body.status).toBe("EXPIRED");
+    expect(store.executions[0].status).toBe("EXPIRED");
+    // No continuation: the session was already re-driven when it expired.
+    expect(store.messages).toHaveLength(0);
+    expect(publishEventMock).not.toHaveBeenCalled();
   });
 
   it("cannot cancel an execution that already ran", async () => {

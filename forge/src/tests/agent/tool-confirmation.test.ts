@@ -3,6 +3,23 @@
 // Focused coverage for the durable confirmation state machine and its
 // authorization boundary.
 
+// Both prisma modules are mocked because `prisma/extended` imports
+// `prisma/db` at module scope, so mocking only one still constructs a real
+// PrismaClient - which next/jest points at the live DATABASE_URL from .env.
+// jest.setup-db-guard.ts turns that mistake into an immediate failure instead
+// of a connection timeout.
+jest.mock("@/lib/prisma/extended", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { prismaDouble } = require("./helpers/prisma-double");
+  return { prisma: prismaDouble };
+});
+
+jest.mock("@/lib/prisma/db", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { prismaDouble } = require("./helpers/prisma-double");
+  return { db: prismaDouble };
+});
+
 import { AgentSessionStatus, AgentToolExecutionStatus } from "@prisma/client";
 
 import { requiresConfirmation } from "@/lib/ai/agent/tools/policy";
@@ -46,8 +63,20 @@ describe("tool policy", () => {
   });
 
   it("fails closed for unregistered tools", () => {
+    // A name the model invents must be rejected by the registry rather than
+    // reaching an executor. `isRegisteredTool` is the explicit predicate for
+    // that boundary, so it is asserted in both directions here.
+    expect(isRegisteredTool("deleteEverything")).toBe(false);
     expect(getToolPolicy("deleteEverything")).toBeNull();
     expect(requiresToolConfirmation("deleteEverything")).toBe(true);
+  });
+
+  it("reports every registered tool as registered", () => {
+    // Guards the registry contract: a tool that appears in the projection the
+    // model sees must also be resolvable by name, and vice versa.
+    for (const name of ["createTask", "listTasks", "updateTask"]) {
+      expect(isRegisteredTool(name)).toBe(true);
+    }
   });
 
   it("cannot be overridden through tool input", () => {
