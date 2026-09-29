@@ -84,11 +84,16 @@ enum AgentToolExecutionStatus {
   //
   // PENDING_CONFIRMATION -> PENDING  (user confirmed; execution is now queued)
   // PENDING_CONFIRMATION -> CANCELLED (user declined; must never execute)
+  // PENDING_CONFIRMATION -> EXPIRED   (approval window elapsed; must never execute)
   //
-  // CANCELLED is terminal. A cancelled execution is never resurrected and is
-  // never dispatched to the tool worker.
+  // CANCELLED and EXPIRED are both terminal, and both are never resurrected and
+  // never dispatched to the tool worker. They are deliberately distinct: a user
+  // who actively declines is a different event from a user who simply never
+  // answered, and collapsing them would misreport intent in the audit trail
+  // and in the message the model is told to relay.
   PENDING_CONFIRMATION
   CANCELLED
+  EXPIRED
 }
 
 enum AgentMessageRole {
@@ -154,6 +159,14 @@ model AgentToolExecution {
   confirmedAt DateTime?
   cancelledAt DateTime?
 
+  // Approval expiry. `expiresAt` is written at proposal time (PENDING_CONFIRMATION)
+  // as an explicit deadline, deliberately NOT derived from `updatedAt` -- every
+  // unrelated touch would reset an `updatedAt`-derived deadline and let a
+  // proposal live forever. `expiredAt` records when the timeout was actually
+  // observed, so the two timestamps cannot be confused for each other.
+  expiresAt DateTime?
+  expiredAt DateTime?
+
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
 
@@ -161,6 +174,9 @@ model AgentToolExecution {
 
   @@index([sessionId, createdAt])
   @@index([sessionId, status])
+  // Backs the bounded maintenance scan for due approvals:
+  // WHERE status = PENDING_CONFIRMATION AND expiresAt <= now() ORDER BY expiresAt
+  @@index([status, expiresAt])
 }
 
 model AgentMessage {
@@ -177,6 +193,66 @@ model AgentMessage {
   session AgentSession @relation(fields:[sessionId],references:[id],onDelete:Cascade)
 
   @@index([sessionId, createdAt])
+}
+
+
+enum AgentOutboxStatus {
+  PENDING
+  PUBLISHED
+}
+
+// Transactional outbox for critical agent events.
+//
+// The gap this closes: the agent writes domain state (a tool execution, a
+// confirmation, a tool result) and then publishes to QStash. If the process
+// dies between those two steps, the database says work is required but the
+// event is gone forever, and the session hangs until the reaper notices.
+//
+// This table is written INSIDE the same transaction as the domain state, so
+// the two either both commit or both roll back. A separate dispatcher then
+// moves rows PENDING -> PUBLISHED. That yields durable intent + at-least-once
+// delivery; exactly-once is explicitly not claimed, and duplicate delivery is
+// made safe by consumer-side idempotency (EventLog messageId dedup and the
+// CAS state machine).
+//
+// EventLog cannot serve this role: it is written by the *consumer* after the
+// broker delivers, keyed on a broker-assigned messageId that does not exist
+// at publish time, and it carries no retry scheduling fields.
+//
+// sessionId/executionId are plain strings, deliberately NOT foreign keys. An
+// outbox row is a durable intent to deliver; if it cascaded away with the
+// session it would be deleted before delivery, defeating the purpose.
+model AgentOutboxEvent {
+  id        String @id @default(cuid())
+
+  // Deterministic, producer-side idempotency key, e.g.
+  // "AGENT_TOOL_EXECUTION_REQUESTED:<executionId>". The unique constraint is
+  // what makes a retried or duplicated write collapse into one logical record
+  // instead of fanning out.
+  idempotencyKey String @unique
+  eventType      String
+  // EventLog-compatible key so the published message can be deduped by the
+  // consumer using the existing EventLog(messageId) protection.
+  messageId      String @unique
+
+  sessionId   String?
+  executionId String?
+
+  payload   Json
+
+  status      AgentOutboxStatus @default(PENDING)
+  attempts    Int               @default(0)
+  // Backoff gate. Failed rows are pushed forward here rather than retried
+  // immediately, so a poison event cannot spin the dispatcher.
+  availableAt DateTime          @default(now())
+
+  createdAt   DateTime          @default(now())
+  publishedAt DateTime?
+  lastError   String?           @db.Text
+
+  @@index([status, availableAt])
+  @@index([sessionId])
+  @@index([executionId])
 }
 
 
