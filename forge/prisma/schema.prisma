@@ -467,6 +467,25 @@ model WorkflowRun {
 
   context     Json                    @default("{}") 
 
+  // Optimistic-concurrency token for `context`.
+  //
+  // Parallel branches of a DAG finish at the same time and each one rewrites
+  // the whole `context` blob, so without a version to compare against, the
+  // second write silently discards the first branch's output. The evaluator's
+  // lock does not cover this: step completion happens in the step worker, not
+  // inside the evaluator. See `src/lib/workflow/execution/state.ts`.
+  contextVersion Int                   @default(0)
+
+  // Last time this run made observable progress: a step dispatched, a step
+  // finished, a rollback advanced, or a re-entry was evaluated.
+  //
+  // This is what makes a stuck run detectable at all. `startedAt` alone cannot
+  // distinguish "legitimately long-running" from "crashed three hours ago" -
+  // both are simply an old `startedAt` on a non-terminal row. Bumped on the
+  // paths that change the run, and read by the stale-run sweeper in
+  // `src/lib/workflow/maintenance.ts`.
+  lastAdvancedAt DateTime?
+
   startedAt   DateTime                @default(now())
   completedAt DateTime?
 

@@ -8,6 +8,7 @@ import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
 import { handleAgentLoop } from "./agent-loop/al";
 import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentMaintenance } from "./agent-maintenance/am";
+import { handleWorkflowMaintenance } from "./workflow-maintenance/wm";
 
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
@@ -38,6 +39,15 @@ const handleAgentToolExecution = createWorker(
 const handleAgentMaintenanceEvent = createWorker(
   "AGENT_MAINTENANCE_REQUESTED",
   handleAgentMaintenance,
+);
+
+// Scheduled workflow upkeep. Kept separate from the agent sweep on purpose: this
+// one can FAIL a step whose external side effect is unknowable, which is a
+// different risk class from closing an abandoned session, and the two duties
+// need to be independently scheduled and independently switched off.
+const handleWorkflowMaintenanceEvent = createWorker(
+  "WORKFLOW_MAINTENANCE_REQUESTED",
+  handleWorkflowMaintenance,
 );
 
 const knownEventTypes = new Set<string>(EventTypes);
@@ -102,6 +112,9 @@ export async function POST(req: NextRequest) {
 
       case "AGENT_MAINTENANCE_REQUESTED":
         return await handleAgentMaintenanceEvent(req);
+
+      case "WORKFLOW_MAINTENANCE_REQUESTED":
+        return await handleWorkflowMaintenanceEvent(req);
 
       default: {
         // Never acknowledge work we did not do.

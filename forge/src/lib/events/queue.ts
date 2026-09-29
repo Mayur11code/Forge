@@ -57,6 +57,8 @@ const topicMap: Record<EventType, string> = {
   CREATE_DEFAULT_ORG: "create-default-org",
   SEND_WELCOME_EMAIL: "send-welcome-email",
   EXECUTE_WORKFLOW_NODE: "execute-workflow-node",
+  ADVANCE_WORKFLOW: "advance-workflow",
+  WORKFLOW_MAINTENANCE_REQUESTED: "workflow-maintenance-requested",
     AGENT_LOOP_REQUESTED: "agent-loop-requested",
   AGENT_TOOL_EXECUTION_REQUESTED: "agent-tool-execution-requested",
   AGENT_MAINTENANCE_REQUESTED: "agent-maintenance-requested",

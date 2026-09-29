@@ -17,6 +17,8 @@ export const EventTypes = [
   "CREATE_DEFAULT_ORG",
   "SEND_WELCOME_EMAIL",
   "EXECUTE_WORKFLOW_NODE",
+  "ADVANCE_WORKFLOW",
+  "WORKFLOW_MAINTENANCE_REQUESTED",
   "AGENT_LOOP_REQUESTED",
   "AGENT_TOOL_EXECUTION_REQUESTED",
   "AGENT_MAINTENANCE_REQUESTED",
@@ -104,6 +106,42 @@ export const eventSchemas = {
     kind: z.enum(["TRIGGER", "ACTION"]),
 
   }),
+
+  /**
+   * Re-entry into the workflow evaluator.
+   *
+   * Not `baseEventSchema`, for the same reason `EXECUTE_WORKFLOW_NODE` is not: a
+   * run belongs to an organization, but the durable re-entry is published by the
+   * engine itself while it is mid-flight, and the org is not what the consumer
+   * needs. Carrying a redundant `orgId` here would mean trusting a field that
+   * nothing on the consuming path checks.
+   *
+   * There is no `stepRunId`: the whole point is to re-evaluate the run from a
+   * fresh read, because the caller could not prove which step it was waiting on.
+   */
+  ADVANCE_WORKFLOW: z.object({
+    runId: z.string(),
+  }),
+
+  /**
+   * The scheduled workflow upkeep pass.
+   *
+   * Same reasoning as `AGENT_MAINTENANCE_REQUESTED`, and deliberately kept as a
+   * separate event rather than folded into it: the two sweeps have different
+   * risk profiles and must be able to be scheduled and observed independently.
+   * One recovers abandoned agent sessions, the other fails steps whose outcome
+   * is unknown. Conflating them would make it impossible to disable the more
+   * dangerous duty without losing the harmless one.
+   *
+   * `.strict()` for the same reason: this payload is written by hand in a QStash
+   * schedule body and never passes through TypeScript, so a typo must fail
+   * loudly rather than silently falling back to the default batch size.
+   */
+  WORKFLOW_MAINTENANCE_REQUESTED: z
+    .object({
+      limit: z.number().int().min(1).max(1000).default(100),
+    })
+    .strict(),
 
   AGENT_LOOP_REQUESTED: baseEventSchema.extend({
     sessionId: z.string(),
