@@ -7,6 +7,7 @@ import { cronWorkerHandler } from "@/app/api/worker/cron-worker/cw";
 import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
 import { handleAgentLoop } from "./agent-loop/al";
 import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
+import { handleAgentMaintenance } from "./agent-maintenance/am";
 
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
@@ -29,6 +30,14 @@ const handleAgentLoopEvent = createWorker("AGENT_LOOP_REQUESTED", handleAgentLoo
 const handleAgentToolExecution = createWorker(
   "AGENT_TOOL_EXECUTION_REQUESTED",
   handleToolExecution,
+);
+
+// Scheduled upkeep. Published by a QStash SCHEDULE (not by the app, and not by a
+// platform cron) to the same /api/worker endpoint, so it is signed and recorded
+// exactly like every other job and needs no separate authentication scheme.
+const handleAgentMaintenanceEvent = createWorker(
+  "AGENT_MAINTENANCE_REQUESTED",
+  handleAgentMaintenance,
 );
 
 const knownEventTypes = new Set<string>(EventTypes);
@@ -66,6 +75,9 @@ export async function POST(req: NextRequest) {
       case "AGENT_TOOL_EXECUTION_REQUESTED":
         return await handleAgentToolExecution(req);
 
+      case "AGENT_MAINTENANCE_REQUESTED":
+        return await handleAgentMaintenanceEvent(req);
+
       default: {
         // Never acknowledge work we did not do.
         //
@@ -89,7 +101,7 @@ export async function POST(req: NextRequest) {
         );
       }
     }
-  } catch (error: any) {
+  } catch (error) {
     console.error("❌ ROUTER FATAL ERROR:", error);
     return NextResponse.json({ error: "Router failed" }, { status: 500 });
   }
