@@ -113,9 +113,14 @@ describe("lock heartbeat", () => {
     // The renewal script must re-check the token before extending the TTL.
     // A blind PEXPIRE would extend a lock another worker already re-acquired,
     // locking that worker out of its own lock.
+    //
+    // The script lives in the shared primitive rather than in the agent wrapper,
+    // so this reads that file. It is read as text on purpose: the guarantee is
+    // about the ORDER of two redis.call()s inside one script, which a mocked
+    // `redis.eval` cannot observe - the mock receives an opaque string.
     const source = await import("node:fs").then((fs) =>
       fs.readFileSync(
-        require.resolve("@/lib/ai/agent/locks"),
+        require.resolve("@/lib/locking/redis-lock"),
         "utf8",
       ) as string,
     );
@@ -129,6 +134,49 @@ describe("lock heartbeat", () => {
     expect(
       renewScript!.indexOf("GET"),
     ).toBeLessThan(renewScript!.indexOf("PEXPIRE"));
+  });
+
+  it("guards release on still owning the lock", async () => {
+    // The same ordering argument applies to release, and it is the more dangerous
+    // of the two: an unguarded DEL hands the next worker's lock away.
+    const source = await import("node:fs").then((fs) =>
+      fs.readFileSync(
+        require.resolve("@/lib/locking/redis-lock"),
+        "utf8",
+      ) as string,
+    );
+
+    const releaseScript = source
+      .split("const releaseLockScript = `")[1]
+      ?.split("`")[0];
+
+    expect(releaseScript).toContain('redis.call("GET", KEYS[1]) == ARGV[1]');
+    expect(releaseScript).toContain("DEL");
+    expect(releaseScript!.indexOf("GET")).toBeLessThan(
+      releaseScript!.indexOf("DEL"),
+    );
+  });
+
+  it("shares one lock primitive with the workflow engine", async () => {
+    // Guards against the scripts being copied back into a per-caller module,
+    // which is how two slightly different token protocols came to exist in the
+    // first place. Cheap to assert, expensive to rediscover.
+    const agentLocks = await import("node:fs").then((fs) =>
+      fs.readFileSync(require.resolve("@/lib/ai/agent/locks"), "utf8") as string,
+    );
+
+    expect(agentLocks).toContain("from \"@/lib/locking/redis-lock\"");
+    expect(agentLocks).not.toContain("redis.call(");
+
+    const workflowMutex = await import("node:fs").then((fs) =>
+      fs.readFileSync(
+        require.resolve("@/lib/workflow/execution/mutex"),
+        "utf8",
+      ) as string,
+    );
+
+    expect(workflowMutex).toContain("from \"@/lib/locking/redis-lock\"");
+    expect(workflowMutex).not.toContain("redis.call(");
   });
 
   it("releases only with the matching token", async () => {
