@@ -1,342 +1,608 @@
 // src/lib/workflow/execution/evaluator.ts
-import { db } from "@/lib/prisma/db";
-import { acquireLock, releaseLock } from "./mutex";
-import { publishEvent } from "@/lib/events/queue";
+//
+// The workflow evaluator: one pass of "look at the run, do whatever is now
+// possible, stop".
+//
+// Three properties this file is responsible for, all of which the previous
+// version got wrong in ways that were individually invisible and collectively
+// fatal:
+//
+//   1. NO LOST WAKEUP. A pass that cannot take the run lock must leave a
+//      durable, idempotent trace that re-enters later. It is not enough to
+//      "try again" inside the loser, because the loser is the process that lost
+//      the race; the wakeup has to outlive the request that dropped it.
+//
+//   2. ERRORS PROPAGATE. A swallowed exception means a graph that is stuck and a
+//      QStash message that was acknowledged anyway. The only thing this file
+//      treats as non-error is lock contention, and that is handled explicitly
+//      and separately.
+//
+//   3. THE LOCK IS HELD FOR AS LONG AS THE WORK. Dispatching N steps is N
+//      network round trips; a flat TTL would lapse mid-fan-out and a second
+//      evaluator would start concurrently.
+//
+// Re-entry is durable (a delayed QStash publish), not in-process. This engine
+// runs on serverless, so there is nothing to `queueMicrotask` into: the process
+// that loses a wakeup is frequently a container that is about to be frozen and
+// destroyed, and anything scheduled on its event loop dies with it.
 
-export async function advanceWorkflow(runId: string) {
-  const token = await acquireLock(runId);
-  if (!token) {
-    console.log(`[EVALUATOR] Run ${runId} is currently locked by another worker. Yielding.`);
-    return;
+import crypto from "crypto";
+
+import { db } from "@/lib/prisma/db";
+import { publishEvent, type PublishDelay } from "@/lib/events/queue";
+import { acquireLock, releaseLock, startRunLockHeartbeat } from "./mutex";
+
+/**
+ * How many times one `advanceWorkflow` call will re-read the run and act again
+ * while still holding the lock.
+ *
+ * Some transitions cascade: marking a step CANCELLED can make its dependants
+ * SKIPPED, which can make theirs CANCELLED. The old code handled that with
+ * `queueMicrotask`, which is both unawaitable and process-local. Looping in-lock
+ * fixes both, but an unbounded loop is its own hazard - a cycle in the persisted
+ * graph (which Phase 7 now rejects at write time, but historical rows predate
+ * that) would spin until the TTL lapsed. So it is bounded, and the bound is
+ * asserted by a test rather than assumed.
+ */
+const MAX_EVALUATION_PASSES = 25;
+
+/**
+ * Re-entry delay after losing the run lock.
+ *
+ * A holder is inside at most a few dispatch round trips, and the lock TTL is 5s,
+ * so waiting longer than that mostly adds latency to a run that is about to
+ * progress on its own. This is the same magnitude as the second rung of the
+ * agent outbox backoff (`AGENT_OUTBOX_BACKOFF_MS`, `[1s, 5s, 15s, 60s, 300s]`)
+ * rather than a number invented here: short enough to be unnoticeable, long
+ * enough that the winner is very likely finished.
+ */
+const CONTENTION_REENTRY_DELAY: PublishDelay = "5s";
+
+/**
+ * Backstop re-entry delay for a run that is still waiting on dispatched steps.
+ *
+ * This is the safety net, not the main path, so it must be long enough that a
+ * healthy run never trips it: a step is a QStash delivery plus one action call,
+ * and if the normal wakeups are working this publish is always deduplicated away
+ * before it fires. 30s sits above a normal step and far below the five-minute
+ * maintenance interval, so a genuinely stuck run is noticed long before the
+ * stale sweeper in `maintenance.ts` has to own it.
+ */
+const BACKSTOP_REENTRY_DELAY: PublishDelay = "30s";
+
+export type AdvanceOutcome =
+  /** Did at least one useful thing. */
+  | "ADVANCED"
+  /** Nothing to do, and nothing outstanding. The run is settled. */
+  | "TERMINAL"
+  /** Another worker owns the run; a durable re-entry has been scheduled. */
+  | "CONTENDED"
+  /** The lock lapsed mid-pass. No new work was scheduled from here. */
+  | "LOCK_LOST";
+
+/**
+ * Deterministic QStash `deduplicationId` for one logical re-entry.
+ *
+ * Hashed and prefixed for the same reason the agent outbox's version is: the raw
+ * value is a run id and a status signature, and QStash rejects some characters
+ * outright while accepting others inconsistently across SDK versions. A hash has
+ * neither problem.
+ */
+function buildAdvanceDeduplicationId(runId: string, fingerprint: string) {
+  return `workflow-advance-${crypto
+    .createHash("sha256")
+    .update(`${runId}:${fingerprint}`)
+    .digest("hex")}`;
+}
+
+/**
+ * A stable description of everything the evaluator would look at next time.
+ *
+ * The backstop publish is keyed on this, which is what makes the safety net
+ * cheap instead of a second scheduler: if the graph has not moved, the
+ * fingerprint is identical, the broker drops the duplicate, and a run that is
+ * merely waiting does not accumulate a publish per pass. When the graph does
+ * move, the fingerprint changes and a fresh backstop is armed.
+ */
+function fingerprintStepRuns(stepRuns: Array<{ stepId: string; status: string }>) {
+  return stepRuns
+    .map((row) => `${row.stepId}:${row.status}`)
+    .sort()
+    .join("|");
+}
+
+async function scheduleReentry(
+  runId: string,
+  fingerprint: string,
+  delay: PublishDelay,
+) {
+  await publishEvent("ADVANCE_WORKFLOW", { runId }, delay, {
+    deduplicationId: buildAdvanceDeduplicationId(runId, fingerprint),
+  });
+}
+
+type PassResult = {
+  /** Whether another in-lock pass could usefully do something. */
+  progressed: boolean;
+  /**
+   * Whether this pass durably changed the run.
+   *
+   * Distinct from `progressed`, and the distinction matters: dispatching a step
+   * changes state without warranting another read (the step completes via its
+   * own webhook), while cancelling a skipped node both changes state and makes
+   * its dependants re-examinable. The stale-run sweeper keys off this one -
+   * touching `lastAdvancedAt` on a pass that merely observed a run waiting for
+   * a slow step would let the backstop keep a genuinely stuck run looking
+   * healthy forever.
+   */
+  changed: boolean;
+  /** Whether the run is settled and should not be re-armed. */
+  terminal: boolean;
+  /** Status signature of the step runs as last observed. */
+  fingerprint: string;
+};
+
+/**
+ * One pass over the run.
+ *
+ * Reads its own snapshot every call, so a loop that acts twice in a row cannot
+ * decide from stale state - which is precisely the bug that made the original
+ * single-pass version drop wakeups.
+ */
+async function evaluateOnce(runId: string): Promise<PassResult> {
+  const run = await db.workflowRun.findUnique({
+    where: { id: runId },
+    include: {
+      workflow: true,
+      stepRuns: true,
+    },
+  });
+
+  if (!run) {
+    // Not contention and not "nothing to do": the run this message refers to is
+    // gone. Throwing keeps it visible instead of being acknowledged as done.
+    throw new Error(`WorkflowRun not found: ${runId}`);
   }
 
-  // 1. SAFE LOCK PATTERN
-  // Tracks release state to prevent double-releasing in the finally block
-  let lockReleased = false;
-  const safeReleaseLock = async () => {
-    if (!lockReleased) {
-      await releaseLock(runId, token);
-      lockReleased = true;
+  const fingerprint = fingerprintStepRuns(run.stepRuns);
+
+  if (
+    run.status !== "RUNNING" &&
+    run.status !== "PENDING" &&
+    run.status !== "ROLLING_BACK"
+  ) {
+    // Settled already. Nothing is written, so this pass must not count as
+    // progress - otherwise a stale-run sweep would keep re-arming a finished
+    // run's progress timestamp on every re-entry delivery.
+    return { progressed: false, changed: false, terminal: true, fingerprint };
+  }
+
+  const definition = run.workflow.definition as any;
+  const steps = definition.steps;
+  const existingStepRuns = run.stepRuns;
+
+  // ====================================================================
+  // --- SAGA PIVOT (interception) ---
+  // ====================================================================
+  if (run.status === "RUNNING") {
+    const hasCriticalFailure = existingStepRuns.some(
+      (stepRun) =>
+        stepRun.status === "FAILED" && steps[stepRun.stepId]?.isCritical,
+    );
+
+    if (hasCriticalFailure) {
+      console.warn(`[SAGA] Critical failure detected in run ${runId}. Initiating rollback.`);
+
+      await db.workflowRun.update({
+        where: { id: runId },
+        data: { status: "ROLLING_BACK" },
+      });
+
+      // Re-read and do the reverse math in this same locked pass. The previous
+      // version released the lock and re-entered via `queueMicrotask`, which
+      // meant the continuation existed only on an event loop that a serverless
+      // freeze could take with it.
+      return { progressed: true, changed: true, terminal: false, fingerprint };
     }
-  };
+  }
 
-  try {
-    const run = await db.workflowRun.findUnique({
-      where: { id: runId },
-      include: {
-        workflow: true,
-        stepRuns: true,
-      }
-    }); 
-
-    if (!run) throw new Error("WorkflowRun not found");
-    if (run.status !== "RUNNING" && run.status !== "PENDING" && run.status !== "ROLLING_BACK") return;
-
-    const definition = run.workflow.definition as any;
-    const steps = definition.steps;
-    const existingStepRuns = run.stepRuns;
-
-    // ====================================================================
-    // --- PHASE 6, STEP 3: THE SAGA PIVOT (Interception) ---
-    // ====================================================================
-    if (run.status === "RUNNING") {
-      // 1. Scan for any nodes that crashed
-      const failedSteps = existingStepRuns.filter(s => s.status === "FAILED");
-      let shouldPivot = false;
-
-      for (const failedStep of failedSteps) {
-        // 2. Look at the blueprint: Was this node critical?
-        const nodeDef = steps[failedStep.stepId];
-        if (nodeDef?.isCritical) {
-          shouldPivot = true;
-          break; // One critical failure is enough to sink the ship
-        }
-      }
-
-      if (shouldPivot) {
-        console.warn(`[SAGA] Critical failure detected in Run ${runId}. Initiating Rollback.`);
-
-        // 3. Shift the database state machine into reverse
-        await db.workflowRun.update({
-          where: { id: runId },
-          data: { status: "ROLLING_BACK" }
-        });
-
-        // 4. Clean up memory and instantly reboot the evaluator in reverse gear
-        await safeReleaseLock();
-        queueMicrotask(() => advanceWorkflow(runId));
-        return;
-      }
-    }
-
-    // ====================================================================
-    // --- PHASE 6, STEP 4: REVERSE TOPOLOGICAL MATH (The Brain-Melter) ---
-    // ====================================================================
-
-    if (run.status === "ROLLING_BACK") {
-
-      // 1. BUILD THE REVERSE HASHMAP O(N)
-      // Key: Parent Step ID -> Value: Array of Child Step IDs
-      const childMap = new Map<string, string[]>();
-
-      for (const [stepId, nodeConfig] of Object.entries(steps)) {
-        const node = nodeConfig as any;
-        const dependencies = (node.dependsOn || []) as string[];
-
-        for (const parentId of dependencies) {
-          if (!childMap.has(parentId)) {
-            childMap.set(parentId, []);
-          }
-          childMap.get(parentId)!.push(stepId);
-        }
-      }
-
-      const readyToCompensateIds: string[] = [];
-      const readyToCancelIds: string[] = [];
-
-      const activeStepRuns = existingStepRuns;
-
-      for (const stepRun of activeStepRuns) {
-        // We only compensate SUCCESS nodes. 
-        // (FAILED nodes are already dead, SKIPPED nodes did nothing).
-        if (stepRun.status !== "SUCCESS") {
-          if (stepRun.status === "SKIPPED") readyToCancelIds.push(stepRun.stepId);
-          continue;
-        }
-
-        // --- THE REVERSE DEPENDENCY CHECK ---
-        const downstreamStepIds = childMap.get(stepRun.stepId) || [];
-
-        let isReadyToReverse = true;
-
-        // If this node has downstream children, we must wait for them to die first.
-        for (const childId of downstreamStepIds) {
-          const childRun = existingStepRuns.find(s => s.stepId === childId);
-
-          if (!childRun) {
-            // The child never ran (maybe it was pending when the crash happened)
-            // This is fine. It doesn't exist, so it doesn't block us.
-            continue;
-          }
-
-          // If the child is SUCCESS, RUNNING, or COMPENSATING, we CANNOT reverse yet.
-          if (
-            childRun.status === "SUCCESS" ||
-            childRun.status === "RUNNING" ||
-            childRun.status === "COMPENSATING"
-          ) {
-            isReadyToReverse = false;
-            break;
-          }
-        }
-
-        if (isReadyToReverse) {
-          readyToCompensateIds.push(stepRun.stepId);
-        }
-      }
-
-      // --- DISPATCH REVERSE WORKERS ---
-      if (readyToCancelIds.length > 0) {
-        // Instantly update skipped nodes to CANCELLED since they require no action
-        await db.stepRun.updateMany({
-          where: { runId, stepId: { in: readyToCancelIds } },
-          data: { status: "CANCELLED" }
-        });
-      }
-
-      if (readyToCompensateIds.length > 0) {
-        console.log(`[SAGA] Pushing ${readyToCompensateIds.length} nodes to compensate:`, readyToCompensateIds);
-
-        await Promise.all(
-          readyToCompensateIds.map(async (stepId) => {
-            // Update status to COMPENSATING
-            const stepRun = await db.stepRun.findFirst({ where: { runId, stepId } });
-            if (!stepRun) return;
-
-
-// THE EXECUTION WRAPPER WILL HANDLE THIS AUTOMATICALLY BY LOOKING FOR SUCCESS STATE
-            // await db.stepRun.update({
-            //   where: { id: stepRun.id },
-            //   data: { status: "COMPENSATING" }
-            // });
-
-            // Fire the webhook. Notice we use the same queue, but the worker will look at the DB status!
-            await publishEvent("EXECUTE_WORKFLOW_NODE", {
-              runId,
-              stepRunId: stepRun.id,
-              kind: definition.steps[stepId].kind || "ACTION", // Pass the kind to
-            });
-          })
-        );
-      } else {
-        // --- TERMINAL CONVERGENCE (The Clean Exit) ---
-        // If nothing is ready to compensate, check if we are completely done.
-        const allDone = activeStepRuns.every(s =>
-          s.status === "COMPENSATED" ||
-          s.status === "CANCELLED" ||
-          s.status === "FAILED" ||
-          s.status === "COMPENSATION_FAILED"
-        );
-
-        if (allDone) {
-          // Check for Dead Letters (Did the Stripe Refund fail?)
-          const hasDeadLetters = activeStepRuns.some(s => s.status === "COMPENSATION_FAILED");
-          const finalStatus = hasDeadLetters ? "REQUIRES_INTERVENTION" : "ROLLED_BACK";
-
-          console.log(`[SAGA] Run ${runId} rollback complete. Final status: ${finalStatus}`);
-          await db.workflowRun.update({
-            where: { id: runId },
-            data: { status: finalStatus, completedAt: new Date() }
-          });
-        }
-      }
-
-      // The Engine is in reverse. Let it sleep until a worker finishes compensating.
-      await safeReleaseLock();
-      return;
-    }
-
-    // 2. O(1) LOOKUP OPTIMIZATION (Fixing the N+1 problem)
-    const stepRunMap = new Map(existingStepRuns.map(sr => [sr.stepId, sr]));
-
-    const readyStepIds: string[] = [];
-    const cancelledStepIds: string[] = [];
-    const skippedStepIds: string[] = [];
+  // ====================================================================
+  // --- REVERSE TOPOLOGICAL MATH (the rollback pass) ---
+  // ====================================================================
+  if (run.status === "ROLLING_BACK") {
+    // Parent step id -> child step ids.
+    const childMap = new Map<string, string[]>();
 
     for (const [stepId, nodeConfig] of Object.entries(steps)) {
       const node = nodeConfig as any;
-
-      // O(1) Map Lookup
-      const hasRun = stepRunMap.get(stepId);
-      if (hasRun) continue;
-
       const dependencies = (node.dependsOn || []) as string[];
 
-      let isReady = true;
-      let shouldCancel = false;
-      let shouldSkip = false;
+      for (const parentId of dependencies) {
+        if (!childMap.has(parentId)) {
+          childMap.set(parentId, []);
+        }
+        childMap.get(parentId)!.push(stepId);
+      }
+    }
 
-      let successCount = 0;
-      let skippedCount = 0;
+    const stepRunByStepId = new Map(existingStepRuns.map((sr) => [sr.stepId, sr]));
 
-      if (dependencies.length > 0) {
-        for (const depId of dependencies) {
-          // O(1) Map Lookup
-          const parentStepRun = stepRunMap.get(depId);
-          const status = parentStepRun?.status;
+    const readyToCompensateIds: string[] = [];
+    const readyToCancelIds: string[] = [];
 
-          if (status === "FAILED" || status === "CANCELLED") {
-            shouldCancel = true;
-            isReady = false;
-            break;
-          } else if (status === "SKIPPED") {
-            skippedCount++;
-          } else if (status === "SUCCESS") {
-            const routingConditions = node.routingConditions || {};
-            const requiredBranch = routingConditions[depId];
-            const parentOutputs = (parentStepRun?.outputs as Record<string, any>) || {};
-            const actualBranch = parentOutputs?.branch;
+    for (const stepRun of existingStepRuns) {
+      // Only SUCCESS nodes have anything to compensate. FAILED nodes are
+      // already dead and SKIPPED nodes never ran.
+      if (stepRun.status !== "SUCCESS") {
+        if (stepRun.status === "SKIPPED") readyToCancelIds.push(stepRun.stepId);
+        continue;
+      }
 
-            if (requiredBranch && actualBranch !== requiredBranch) {
-              shouldSkip = true;
-              isReady = false;
-              break;
-            }
-            successCount++;
-          } else {
-            isReady = false;
-          }
+      // A node can only be reversed once everything downstream of it is dead.
+      // A dependant that never started cannot block us; a dependant that is
+      // mid-compensation can, because reversing its parent out from under it
+      // would undo the very state its compensation is reading.
+      let isReadyToReverse = true;
+
+      for (const childId of childMap.get(stepRun.stepId) || []) {
+        const childRun = stepRunByStepId.get(childId);
+        if (!childRun) continue;
+
+        if (
+          childRun.status === "SUCCESS" ||
+          childRun.status === "RUNNING" ||
+          childRun.status === "COMPENSATING"
+        ) {
+          isReadyToReverse = false;
+          break;
         }
       }
 
-      if (shouldCancel) {
-        cancelledStepIds.push(stepId);
-      } else if (shouldSkip || (dependencies.length > 0 && skippedCount === dependencies.length)) {
-        skippedStepIds.push(stepId);
-      } else if (isReady && (successCount > 0 || dependencies.length === 0)) {
-        readyStepIds.push(stepId);
+      if (isReadyToReverse) {
+        readyToCompensateIds.push(stepRun.stepId);
       }
     }
 
-    if (cancelledStepIds.length > 0 || skippedStepIds.length > 0) {
-      if (cancelledStepIds.length > 0) {
-        await db.stepRun.createMany({
-          data: cancelledStepIds.map(id => ({ runId, stepId: id, status: "CANCELLED" }))
-        });
-      }
-
-      if (skippedStepIds.length > 0) {
-        await db.stepRun.createMany({
-          data: skippedStepIds.map(id => ({ runId, stepId: id, status: "SKIPPED" }))
-        });
-      }
-
-      await safeReleaseLock();
-
-      // 3. FLATTEN THE CALL STACK (Preventing infinite recursion depth)
-      queueMicrotask(() => advanceWorkflow(runId));
-      return;
-    }
-
-    // 4. DISPATCH THE WORKERS
-    if (readyStepIds.length > 0) {
-      console.log(`[EVALUATOR] Run ${runId} pushing ${readyStepIds.length} steps to QStash...`);
-
-      // Parallelize the database writes and webhook firing for maximum speed
-      await Promise.all(
-        readyStepIds.map(async (stepId) => {
-          try {
-            const stepRun = await db.stepRun.create({
-              data: {
-                runId,
-                stepId,
-                status: "PENDING",
-              }
-            });
-
-            await publishEvent("EXECUTE_WORKFLOW_NODE", {
-              runId,
-              stepRunId: stepRun.id,
-              kind: definition.steps[stepId].kind || "ACTION", // Pass the kind to the worker
-            });
-
-          } catch (error: any) {
-            // P2002 means the DB physically blocked a duplicate from being created.
-            // Another worker won the race. We safely ignore this and move on.
-            if (error.code === "P2002") {
-              console.warn(`[EVALUATOR] Step ${stepId} already exists for run ${runId}. Ghost worker neutralized.`);
-            } else {
-              // If it's a real database error (e.g., connection lost), we MUST throw it.
-              throw error;
-            }
-          }
-        })
-      );
-    } else {
-      // 4. FIXING THE STALE STATE READ
-      // We must fetch fresh data here to ensure nodes we just pruned or executed aren't missing
-      const latestStepRuns = await db.stepRun.findMany({ where: { runId } });
-      const latestMap = new Map(latestStepRuns.map(sr => [sr.stepId, sr]));
-
-      const allDone = Object.keys(steps).every((stepId) => {
-        const s = latestMap.get(stepId);
-        return s?.status === "SUCCESS" || s?.status === "CANCELLED" || s?.status === "FAILED" || s?.status === "SKIPPED";
+    if (readyToCancelIds.length > 0) {
+      await db.stepRun.updateMany({
+        where: { runId, stepId: { in: readyToCancelIds } },
+        data: { status: "CANCELLED" },
       });
 
-      if (allDone) {
-        const hasFailures = latestStepRuns.some(s => s.status === "FAILED");
-        const finalStatus = hasFailures ? "FAILED" : "COMPLETED";
-
-        await db.workflowRun.update({
-          where: { id: runId },
-          data: { status: finalStatus, completedAt: new Date() }
-        });
-      }
+      // Cancelling skipped nodes can make their dependants cancel in turn, so
+      // this is a cascading transition and another in-lock pass is worthwhile.
+      return { progressed: true, changed: true, terminal: false, fingerprint };
     }
 
+    if (readyToCompensateIds.length > 0) {
+      console.log(
+        `[SAGA] Pushing ${readyToCompensateIds.length} nodes to compensate:`,
+        readyToCompensateIds,
+      );
+
+      await Promise.all(
+        readyToCompensateIds.map(async (stepId) => {
+          const stepRun = stepRunByStepId.get(stepId);
+          if (!stepRun) return;
+
+          // The wrapper claims a compensation by its persisted status rather
+          // than being told which operation to run, so nothing here has to
+          // transition the row first.
+          await publishEvent("EXECUTE_WORKFLOW_NODE", {
+            runId,
+            stepRunId: stepRun.id,
+            kind: steps[stepId].kind || "ACTION",
+          });
+        }),
+      );
+
+      // The compensations are now external work in flight. Looping again would
+      // only re-read the same state.
+      return { progressed: false, changed: false, terminal: false, fingerprint };
+    }
+
+    // --- TERMINAL CONVERGENCE (the clean exit) ---
+    const allDone = existingStepRuns.every(
+      (s) =>
+        s.status === "COMPENSATED" ||
+        s.status === "CANCELLED" ||
+        s.status === "FAILED" ||
+        s.status === "COMPENSATION_FAILED",
+    );
+
+    if (allDone) {
+      // A failed compensation is a dead letter: something with an external side
+      // effect could not be undone and a human has to look at it.
+      const hasDeadLetters = existingStepRuns.some(
+        (s) => s.status === "COMPENSATION_FAILED",
+      );
+
+      await db.workflowRun.update({
+        where: { id: runId },
+        data: {
+          status: hasDeadLetters ? "REQUIRES_INTERVENTION" : "ROLLED_BACK",
+          completedAt: new Date(),
+        },
+      });
+
+      return { progressed: false, changed: true, terminal: true, fingerprint };
+    }
+
+    return { progressed: false, changed: false, terminal: false, fingerprint };
+  }
+
+  // ====================================================================
+  // --- FORWARD PASS ---
+  // ====================================================================
+  const stepRunMap = new Map(existingStepRuns.map((sr) => [sr.stepId, sr]));
+
+  const readyStepIds: string[] = [];
+  const cancelledStepIds: string[] = [];
+  const skippedStepIds: string[] = [];
+
+  for (const [stepId, nodeConfig] of Object.entries(steps)) {
+    // A step that already has a row has been decided. This is the single check
+    // that makes the evaluator safe to run concurrently: it is the only place a
+    // step can be "created", and the database's unique (runId, stepId) is the
+    // backstop underneath it.
+    if (stepRunMap.get(stepId)) continue;
+
+    const node = nodeConfig as any;
+    const dependencies = (node.dependsOn || []) as string[];
+
+    let shouldCancel = false;
+    let shouldSkip = false;
+    let successCount = 0;
+    let skippedCount = 0;
+    let isReady = true;
+
+    for (const depId of dependencies) {
+      const parentStatus = stepRunMap.get(depId)?.status;
+
+      if (parentStatus === "FAILED" || parentStatus === "CANCELLED") {
+        shouldCancel = true;
+        isReady = false;
+        break;
+      }
+
+      if (parentStatus === "SKIPPED") {
+        skippedCount++;
+        continue;
+      }
+
+      if (parentStatus === "SUCCESS") {
+        // Conditional branches: a dependant only runs if the parent produced
+        // the branch it asked for.
+        const requiredBranch = (node.routingConditions || {})[depId];
+        const actualBranch = (
+          (stepRunMap.get(depId)?.outputs as Record<string, any>) || {}
+        ).branch;
+
+        if (requiredBranch && actualBranch !== requiredBranch) {
+          shouldSkip = true;
+          isReady = false;
+          break;
+        }
+
+        successCount++;
+        continue;
+      }
+
+      isReady = false;
+    }
+
+    if (shouldCancel) {
+      cancelledStepIds.push(stepId);
+    } else if (
+      shouldSkip ||
+      (dependencies.length > 0 && skippedCount === dependencies.length)
+    ) {
+      skippedStepIds.push(stepId);
+    } else if (isReady && (successCount > 0 || dependencies.length === 0)) {
+      readyStepIds.push(stepId);
+    }
+  }
+
+  if (cancelledStepIds.length > 0 || skippedStepIds.length > 0) {
+    // These cascade: a skipped node can make its dependants skipped. The old
+    // code released the lock here and hopped back in on a microtask; this is
+    // the same cascade resolved inside the pass that already holds the lock.
+    if (cancelledStepIds.length > 0) {
+      await db.stepRun.createMany({
+        data: cancelledStepIds.map((stepId) => ({
+          runId,
+          stepId,
+          status: "CANCELLED",
+        })),
+      });
+    }
+
+    if (skippedStepIds.length > 0) {
+      await db.stepRun.createMany({
+        data: skippedStepIds.map((stepId) => ({
+          runId,
+          stepId,
+          status: "SKIPPED",
+        })),
+      });
+    }
+
+    return { progressed: true, changed: true, terminal: false, fingerprint };
+  }
+
+  if (readyStepIds.length > 0) {
+    console.log(`[EVALUATOR] Run ${runId} dispatching ${readyStepIds.length} steps.`);
+
+    await Promise.all(
+      readyStepIds.map(async (stepId) => {
+        try {
+          const stepRun = await db.stepRun.create({
+            data: { runId, stepId, status: "PENDING" },
+          });
+
+          await publishEvent("EXECUTE_WORKFLOW_NODE", {
+            runId,
+            stepRunId: stepRun.id,
+            kind: steps[stepId].kind || "ACTION",
+          });
+        } catch (error: any) {
+          // P2002 is the unique (runId, stepId) constraint doing its job: a
+          // concurrent evaluator already created this step. That is a success
+          // for us, not a failure. Anything else is a real fault and must
+          // propagate - swallowing it leaves a step that exists and will never
+          // be dispatched, because the row is PENDING and nothing owns it.
+          if (error?.code === "P2002") {
+            console.warn(
+              `[EVALUATOR] Step ${stepId} already exists for run ${runId}; concurrent pass won.`,
+            );
+            return;
+          }
+
+          throw error;
+        }
+      }),
+    );
+
+    // Real work was started, and it completes via its own webhook. A backstop is
+    // still armed, keyed on the state we just left behind, so a lost completion
+    // webhook is recoverable.
+    return { progressed: false, changed: false, terminal: false, fingerprint };
+  }
+
+  // Nothing left to dispatch. Re-read before declaring the run done: the
+  // snapshot above may predate a step that another pass has just finished, and
+  // concluding "done" from a stale read is how a run gets closed with work
+  // still in it.
+  const latestStepRuns = await db.stepRun.findMany({ where: { runId } });
+  const latestMap = new Map(latestStepRuns.map((sr) => [sr.stepId, sr]));
+
+  const allDone = Object.keys(steps).every((stepId) => {
+    const status = latestMap.get(stepId)?.status;
+    return (
+      status === "SUCCESS" ||
+      status === "CANCELLED" ||
+      status === "FAILED" ||
+      status === "SKIPPED"
+    );
+  });
+
+  if (allDone) {
+    await db.workflowRun.update({
+      where: { id: runId },
+      data: {
+        status: latestStepRuns.some((s) => s.status === "FAILED")
+          ? "FAILED"
+          : "COMPLETED",
+        completedAt: new Date(),
+      },
+    });
+
+    return { progressed: false, changed: true, terminal: true, fingerprint };
+  }
+
+  return { progressed: false, changed: false, terminal: false, fingerprint };
+}
+
+/**
+ * Advance a run as far as it can go right now.
+ *
+ * Contention resolves to a scheduled re-entry and a normal return. Everything
+ * else throws. Callers use that distinction directly: a throw means the caller
+ * should return a 5xx so the delivery is retried, whereas contention means the
+ * work is already accounted for and retrying would only add to the pile-up.
+ */
+export async function advanceWorkflow(runId: string): Promise<AdvanceOutcome> {
+  let token: string | null;
+
+  try {
+    token = await acquireLock(runId);
   } catch (error) {
-    console.error(`[EVALUATOR] Fatal error evaluating run ${runId}:`, error);
+    // Deliberately not folded into the contention path below. A Redis fault
+    // means no lock was taken AND no re-entry was scheduled, so reporting it as
+    // contention would claim the run was being looked after when in fact
+    // nothing has been arranged at all.
+    throw new Error(`Failed to acquire the run lock for workflow run ${runId}`, {
+      cause: error,
+    });
+  }
+
+  if (token === null) {
+    // Someone else owns this run. Their pass may have started before the work
+    // that made it worth waking for, so scheduling the re-entry is the whole
+    // point - the loser is the only party that knows a wakeup is needed.
+    console.log(
+      `[EVALUATOR] Run ${runId} is locked by another worker; scheduling re-entry.`,
+    );
+
+    await scheduleReentry(runId, "contended", CONTENTION_REENTRY_DELAY);
+
+    return "CONTENDED";
+  }
+
+  const heartbeat = startRunLockHeartbeat(runId, token);
+  let released = false;
+
+  const safeRelease = async () => {
+    if (released) return;
+    released = true;
+    await releaseLock(runId, token);
+  };
+
+  try {
+    let result: PassResult = {
+      progressed: false,
+      changed: false,
+      terminal: true,
+      fingerprint: "",
+    };
+    let changed = false;
+
+    for (let pass = 0; pass < MAX_EVALUATION_PASSES; pass++) {
+      // A lapsed lock means a second evaluator is live on this run. Continuing
+      // to fan out would mean two of them both believing they own it, so the
+      // pass stops here and leaves the backstop to the winner.
+      if (heartbeat.hasLostOwnership()) {
+        console.error(
+          `[EVALUATOR] Lost the lock for run ${runId} mid-pass; not scheduling further work.`,
+        );
+        return "LOCK_LOST";
+      }
+
+      result = await evaluateOnce(runId);
+      changed = changed || result.changed;
+
+      if (!result.progressed) break;
+    }
+
+    if (heartbeat.hasLostOwnership()) {
+      return "LOCK_LOST";
+    }
+
+    // Record that this run moved, and when. This is the only signal the stale
+    // sweep has, and it has to be written from inside the run lock: a timestamp
+    // updated outside it could be interleaved with a second evaluator's writes
+    // and describe a state that never existed.
+    //
+    // Only when something actually changed. A pass that found a healthy run
+    // waiting on an in-flight step is evidence of life, not of progress, and
+    // treating it as progress would let the backstop keep a wedged run looking
+    // fresh indefinitely.
+    if (changed) {
+      await db.workflowRun.update({
+        where: { id: runId },
+        data: { lastAdvancedAt: new Date() },
+      });
+    }
+
+    if (!result.terminal) {
+      // The run is mid-flight, so arm the backstop. Keyed on the current
+      // signature: identical state deduplicates, moved state re-arms.
+      await scheduleReentry(runId, result.fingerprint, BACKSTOP_REENTRY_DELAY);
+    }
+
+    return "ADVANCED";
   } finally {
-    await safeReleaseLock();
+    heartbeat.stop();
+    await safeRelease();
   }
 }
