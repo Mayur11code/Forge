@@ -20,6 +20,12 @@ jest.mock("@/lib/prisma/extended", () => {
   return { prisma: prismaDouble };
 });
 
+jest.mock("@/lib/prisma/db", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { prismaDouble } = require("./helpers/prisma-double");
+  return { db: prismaDouble };
+});
+
 import { redis } from "@/lib/redis/client";
 import { publishEvent } from "@/lib/events/queue";
 import { publishAgentStatus } from "@/lib/ai/agent/status";
@@ -195,7 +201,7 @@ describe("reaper", () => {
     );
   });
 
-  it("re-publishes a confirmed execution that was never picked up", async () => {
+  it("re-records a confirmed execution that was never picked up", async () => {
     prisma.agentToolExecution.findMany.mockResolvedValue([
       {
         id: "exec_1",
@@ -208,15 +214,60 @@ describe("reaper", () => {
       await import("@/lib/ai/agent/reaper")
     ).redeliverStalledConfirmedExecutions();
 
-    expect(publishEventMock).toHaveBeenCalledWith(
-      "AGENT_TOOL_EXECUTION_REQUESTED",
-      {
+    // A durable outbox intent, not a direct publish. Publishing directly here
+    // would be the sweep doing the dispatcher's job without the durability,
+    // which is exactly the crash-window the outbox exists to close.
+    expect(publishEventMock).not.toHaveBeenCalled();
+    expect(store.outbox).toHaveLength(1);
+    expect(store.outbox[0]).toMatchObject({
+      eventType: "AGENT_TOOL_EXECUTION_REQUESTED",
+      sessionId: "sess_1",
+      executionId: "exec_1",
+      payload: {
         orgId: "org_1",
         sessionId: "sess_1",
         executionId: "exec_1",
         expectedStep: 3,
       },
-    );
+    });
+  });
+
+  it("does not resurrect an already-delivered intent on redelivery", async () => {
+    // The normal path already recorded this event when the execution was
+    // confirmed. The sweep must collapse onto the existing row rather than
+    // queueing a second event or resetting a delivered one to PENDING.
+    store.outbox = [
+      {
+        id: "outbox_1",
+        eventType: "AGENT_TOOL_EXECUTION_REQUESTED",
+        idempotencyKey: "AGENT_TOOL_EXECUTION_REQUESTED:exec_1",
+        messageId: "agent-outbox-1",
+        sessionId: "sess_1",
+        executionId: "exec_1",
+        payload: {},
+        status: "PUBLISHED",
+        attempts: 1,
+        availableAt: new Date(),
+        createdAt: new Date(),
+        publishedAt: new Date(),
+        lastError: null,
+      },
+    ];
+
+    prisma.agentToolExecution.findMany.mockResolvedValue([
+      {
+        id: "exec_1",
+        sessionId: "sess_1",
+        session: { orgId: "org_1", currentStep: 3 },
+      },
+    ]);
+
+    await (
+      await import("@/lib/ai/agent/reaper")
+    ).redeliverStalledConfirmedExecutions();
+
+    expect(store.outbox).toHaveLength(1);
+    expect(store.outbox[0].status).toBe("PUBLISHED");
   });
 
   it("re-checks staleness in the compare-and-set, not only in the read", async () => {
