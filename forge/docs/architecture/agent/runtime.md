@@ -14,8 +14,9 @@ flowchart TD
     A --> O[startAgentSession]
     O --> S[(AgentSession RUNNING step 0)]
     O --> M[(AgentMessage role=USER step 0)]
-    O --> E[publishEvent AGENT_LOOP_REQUESTED]
-    E --> Q[QStash topic events]
+    O --> E[recordAgentEvent AGENT_LOOP_REQUESTED]
+    E --> D[outbox dispatcher]
+    D --> Q[QStash topic events]
     Q --> W[Agent Loop Worker]
 ```
 
@@ -35,12 +36,22 @@ the current user. Unauthenticated or non-member is `403`.
 > [`security.md`](./security.md).
 
 **Then** `startAgentSession({ orgId, userId, initialMessage })`
-(`forge/src/lib/ai/agent/orchestrator.ts`) does exactly three things, in order:
+(`forge/src/lib/ai/agent/orchestrator.ts`) does exactly three things, **in one
+transaction**:
 
-1. `createAgentSession` → one `AgentSession` row, `status: RUNNING`,
-   `currentStep: 0`.
-2. `createMessage` → one `AgentMessage` row, `role: "user"`, `step: 0`.
-3. `publishEvent("AGENT_LOOP_REQUESTED", { orgId, sessionId, expectedStep: 0 })`.
+1. creates one `AgentSession` row, `status: RUNNING`, `currentStep: 0`,
+   `promptVersion` stamped from the compiled-in constant;
+2. `createMessage` → one `AgentMessage` row, `role: "user"`, `step: 0`;
+3. `recordAgentEvent` → one `AgentOutboxEvent` row for
+   `AGENT_LOOP_REQUESTED`, keyed `AGENT_LOOP_REQUESTED:<sessionId>`.
+
+> **Changed in Assignment 36.** These were three independent steps ending in a
+> direct `publishEvent`. The worst case was a session committed at `RUNNING` with
+> its opening message and no event: it looked live to every read path, nothing
+> would claim it, and no recovery sweep covers a session that never started,
+> because staleness is judged from a heartbeat this row never produced. The
+> user's first message simply vanished. See
+> [Transactional outbox](#transactional-outbox).
 
 The route returns **`202`** with `{ sessionId, status }`. It does **not** block
 on the model, and it publishes **no Pusher event** — the loop worker owns the
@@ -119,20 +130,19 @@ const execution = await createToolExecution({
   toolName: result.toolName,
   input: result.input,          // persisted verbatim
   requiresConfirmation: needsConfirmation,
+  // Required when the tool is dispatchable without approval. Recorded by
+  // createToolExecution INSIDE its own transaction, so the row and the intent
+  // to execute it commit together.
+  dispatchEvent: needsConfirmation
+    ? undefined
+    : { orgId: session.orgId, expectedStep: expectedStep + 1 },
 });
 
 if (needsConfirmation) {
   const proposal = describeToolProposal(result.toolName, execution.input);
   await publishAgentStatus(session.id, { type: "TOOL_PROPOSED", ... });
-  break;                        // ← no event published. The loop halts.
+  break;                        // ← no event recorded. The loop halts.
 }
-
-await publishEvent("AGENT_TOOL_EXECUTION_REQUESTED", {
-  orgId: session.orgId,
-  sessionId: session.id,
-  executionId: execution.id,
-  expectedStep: expectedStep + 1,
-});
 ```
 
 Four things are load-bearing here:
@@ -144,11 +154,11 @@ Four things are load-bearing here:
 2. **The proposal is persisted before anything else happens.** `input` on that
    row is the single copy of the arguments. The confirm path replays it; it
    never receives, reconstructs, or merges arguments of its own.
-3. **A write halts the loop.** No tool event is published, so no worker runs,
-   and the next model call only happens after a confirm or a cancel re-drives
-   the loop.
+3. **A write halts the loop.** No dispatch intent is recorded, so no worker
+   runs, and the next model call only happens after a confirm or a cancel
+   re-drives the loop.
 4. **`expectedStep + 1` only applies to the immediate dispatch.** The confirm
-   endpoint publishes with `session.currentStep`, which is already the
+   endpoint records with `session.currentStep`, which is already the
    post-claim value — the same number. Both paths converge.
 
 The assistant message has already been persisted by the loop runner. The tool
@@ -216,14 +226,15 @@ testable without mocking Prisma, Gemini or Redis.
 ```mermaid
 flowchart TD
     L[Agent Loop] --> RO{requiresConfirmation}
-    RO -->|no| TE[(AgentToolExecution PENDING)]
+    RO -->|no| TE[(AgentToolExecution PENDING<br/>+ dispatch intent, one tx)]
     RO -->|yes| PF[(AgentToolExecution PENDING_CONFIRMATION)]
     PF --> UC{user decision}
-    UC -->|confirm| CF[CAS → PENDING]
-    UC -->|cancel| CC[CAS → CANCELLED<br/>+ decline tool-result]
-    TE --> EV[publishEvent AGENT_TOOL_EXECUTION_REQUESTED]
-    CF --> EV
-    EV --> TW[Tool Worker]
+    UC -->|confirm| CF[CAS → PENDING + intent, one tx]
+    UC -->|cancel| CC[CAS → CANCELLED + decline result<br/>+ intent, one tx]
+    PF -->|timeout| EX[CAS → EXPIRED + timeout result<br/>+ intent, one tx]
+    TE --> D[outbox dispatcher]
+    CF --> D
+    D --> TW[Tool Worker]
     TW --> TL[withToolExecutionLock executionId]
     TL --> LD[getToolExecutionForWorker]
     LD --> CAS{markToolExecutionRunning<br/>PENDING only}
@@ -232,12 +243,13 @@ flowchart TD
     LIVE -->|no| AB[abandonToolExecution → CANCELLED]
     LIVE -->|yes| EX[getToolExecutor + execute input, ctx]
     EX --> DOM[canonical domain operation]
-    DOM --> MSG[(tool-result AgentMessage)]
+    DOM --> MSG[(tool-result AgentMessage<br/>+ re-arm intent, one tx)]
     MSG --> DONE[completeToolExecution]
     DONE --> EV2[publishAgentStatus TOOL_COMPLETED]
-    EV2 --> REARM[publishEvent AGENT_LOOP_REQUESTED]
-    REARM --> L
-    CC --> REARM
+    EV2 --> D
+    D --> L
+    CC --> D
+    EX --> D
 ```
 
 `forge/src/lib/ai/agent/tool-worker.ts` — `handleToolExecution`.
@@ -261,12 +273,21 @@ Sequence:
    left in flight.
 5. `getToolExecutor(execution.toolName)`.
 6. `executor(execution.input, { orgId, userId, executionId })`.
-7. `createMessage(..., { role: "tool", content: [{ type: "tool-result", … }] })`.
+7. `createMessage(..., { role: "tool", … })` **and**
+   `recordAgentEvent("AGENT_LOOP_REQUESTED")` in **one transaction** — the
+   transcript must not contain a tool result whose continuation was never
+   recorded. Previously these were separate, and a crash between them left a
+   dangling tool call with nothing to close it.
 8. `completeToolExecution(executionId)` — **CAS from `RUNNING`**, so a losing
    duplicate delivery cannot stamp `COMPLETED` over a row another worker
    advanced.
 9. `publishAgentStatus(TOOL_COMPLETED)`.
-10. `publishEvent("AGENT_LOOP_REQUESTED", { sessionId, expectedStep, orgId })`.
+
+> The `AGENT_LOOP_REQUESTED` intent is recorded in step 7, before the
+> `completeToolExecution` CAS in step 8. This ordering is deliberate: the CAS can
+> legitimately lose to another worker, and the continuation is idempotent by step
+> CAS at the consumer. Recording it first means a lost CAS never costs the
+> transcript its answer.
 
 On failure: `failToolExecution` (which stores the **stack**), then
 `failAgentSession(..., "ERROR")`, and a `FAILED` Pusher event **only if** the
@@ -318,6 +339,7 @@ stateDiagram-v2
     [*] --> PENDING_CONFIRMATION: loop persists a WRITE / DESTRUCTIVE proposal
     PENDING_CONFIRMATION --> PENDING: user confirms (CAS)
     PENDING_CONFIRMATION --> CANCELLED: user cancels (CAS)
+    PENDING_CONFIRMATION --> EXPIRED: approval window closed (CAS)
     PENDING --> RUNNING: tool worker claims (CAS)
     RUNNING --> RUNNING: worker heartbeat (CAS, liveness signal)
     RUNNING --> COMPLETED
@@ -326,11 +348,22 @@ stateDiagram-v2
     COMPLETED --> [*]
     FAILED --> [*]
     CANCELLED --> [*]
+    EXPIRED --> [*]
 ```
 
-Both `PENDING_CONFIRMATION` and `CANCELLED` are new in Phase 2, along with the
-`confirmedAt` / `cancelledAt` audit columns. `CANCELLED` is **terminal**: no
-transition leaves it, and nothing dispatches it.
+`PENDING_CONFIRMATION`, `CANCELLED` and `EXPIRED` are the approval-gate states,
+with the `confirmedAt` / `cancelledAt` / `expiredAt` / `expiresAt` audit
+columns. `CANCELLED` and `EXPIRED` are **terminal**: no transition leaves them,
+and nothing dispatches them.
+
+`EXPIRED` is **new in Assignment 36** and is deliberately distinct from
+`CANCELLED`. Nobody declined — the window simply closed, so the model is told
+`APPROVAL_TIMEOUT` and reports "the approval window closed" rather than claiming
+the user refused something they were never asked about. Before this, a proposal
+awaiting a human was parked exactly where the system put it, and **no amount of
+`RUNNING`-expiry sweeping would ever release it**: a user who never answered
+would hold their session indefinitely. See
+[Approval expiry](#approval-expiry-new-in-assignment-36).
 
 The `RUNNING → CANCELLED` edge is the one worth reading twice. The worker takes
 it only after claiming the row *itself* and finding the session terminal, and
@@ -346,12 +379,23 @@ and both are `POST` with **no request body**. A confirm needs no arguments and a
 cancel needs none either; accepting any would only create a channel for
 smuggling substitute arguments past review.
 
-| | Confirm | Cancel |
-| --- | --- | --- |
-| Route | `.../confirm/route.ts` | `.../cancel/route.ts` |
-| Transition | `PENDING_CONFIRMATION → PENDING` | `PENDING_CONFIRMATION → CANCELLED` |
-| On success | publishes `TOOL_CONFIRMED`, then `AGENT_TOOL_EXECUTION_REQUESTED` | writes a `CANCELLED` tool-result, publishes `TOOL_CANCELLED`, then `AGENT_LOOP_REQUESTED` |
-| Re-running it | `200` + `idempotent: true`, **no re-dispatch** | `200` + `idempotent: true`, no second message |
+Each of the three user-visible outcomes (confirm, cancel, expire) is **one
+transaction** covering the state transition, the transcript, and the delivery
+intent. See [Transactional outbox](#transactional-outbox) for why that is not
+merely tidier.
+
+| | Confirm | Cancel | Expire |
+| --- | --- | --- | --- |
+| Route | `.../confirm/route.ts` | `.../cancel/route.ts` | reaper only, no route |
+| Trigger | user clicks approve | user clicks decline | deadline passes |
+| Transition | `PENDING_CONFIRMATION → PENDING` | `→ CANCELLED` | `→ EXPIRED` |
+| Records | `AGENT_TOOL_EXECUTION_REQUESTED` | `CANCELLED` tool-result + `AGENT_LOOP_REQUESTED` | `APPROVAL_TIMEOUT` tool-result + `AGENT_LOOP_REQUESTED` |
+| Pusher | `TOOL_CONFIRMED` | `TOOL_CANCELLED` | `TOOL_EXPIRED` |
+| Re-running it | `200` + `idempotent: true`, **no re-dispatch** | `200` + `idempotent: true`, no second message | `200` + `idempotent: true`; a late confirm cannot talk the system out of it |
+
+A confirm against an `EXPIRED` proposal returns `200` + `idempotent: true`, not
+`409`. The outcome is settled, and reporting it truthfully beats reporting an
+error that implies the user did something wrong by being late.
 
 ### The authorization ladder
 
@@ -413,13 +457,43 @@ So the cancel writes a real tool-result:
 The loop treats it like any other result, and the system prompt tells the model
 a decline is final.
 
-### Approval has no timeout
+### Approval expiry (new in Assignment 36)
 
-There is no expiry on `PENDING_CONFIRMATION`, and `AgentSessionStatus` is never
-set to `WAITING_CONFIRMATION` — the loop simply stops publishing. `cancelAgentSession`
-still has zero callers. A proposal therefore persists until the user acts or
-the session terminates by some other route. The `WAITING_CONFIRMATION` enum
-value and the `cancelAgentSession` helper remain `DECLARED ONLY`.
+`PENDING_CONFIRMATION` **does** have a deadline. `AgentToolExecution.expiresAt`
+is stamped at proposal time from `getAgentApprovalTimeoutMs()`, which defaults
+to 15 minutes and is overridable with `AGENT_APPROVAL_TIMEOUT_MS`. A row with a
+**null** `expiresAt` is never expired — rows written before this column existed
+stay `PENDING_CONFIRMATION` rather than being closed against a deadline nobody
+agreed to. SQL agrees with that reading: `NULL <= x` is `NULL`, not true.
+
+`expireStaleApprovals` in `forge/src/lib/ai/agent/reaper.ts` sweeps proposals
+whose window has closed and calls `expireToolExecutionAndContinue`, which is
+**one transaction**: the `PENDING_CONFIRMATION → EXPIRED` CAS, an
+`APPROVAL_TIMEOUT` tool-result, and the `AGENT_LOOP_REQUESTED` intent.
+
+That atomicity is the point, not tidiness. These were three separate steps, and
+once the CAS committed the execution was terminal — so `findDueApprovalCandidates`
+would never return it again. A crash before the publish stranded the session
+*permanently*: the proposal closed, the transcript still held an unanswered tool
+call, and the only query that would have found the work was the one that had just
+marked it done. Atomicity removes that state: either all three commit, or the
+proposal stays `PENDING_CONFIRMATION` and the next tick retries it.
+
+A **terminal session is still closed but not continued** — there is no turn left
+to continue, and a terminal session has no step to claim. The same applies when
+the session row has vanished (e.g. an org cascade): the execution is closed so it
+cannot hang forever, and nothing is published.
+
+The model is told explicitly that the action did **not** happen, must not be
+retried, and must not be attempted by another route. That last clause matters
+more than it looks: a capable model asked to "handle the timeout" will otherwise
+often find a different way to achieve the same outcome, which defeats the entire
+approval gate.
+
+`AgentSessionStatus` is still never set to `WAITING_CONFIRMATION` — the loop
+simply stops publishing, and the *execution* row is what carries the waiting
+state. The `WAITING_CONFIRMATION` enum value and the `cancelAgentSession` helper
+remain `DECLARED ONLY`.
 
 ## Concurrency
 
@@ -519,6 +593,18 @@ the 19-entry `topicMap` is **entirely unused**. `publishEvent` validates the
 payload against the Zod schema in `events/schema.ts`, wraps it in a CloudEvents
 1.0 envelope, and publishes with `retries: 3`.
 
+`publishEvent` now takes an optional fourth `PublishOptions` argument:
+
+- `messageId` — the CloudEvent `id`, so an outbox publish carries a **stable**
+  id instead of a fresh `Date.now()`-derived one;
+- `deduplicationId` — the QStash dedup key.
+
+Both are supplied by the outbox dispatcher and derive from the outbox row id.
+Delays are typed `PublishDelay` (`"30s"`, `"5m"`, …) and converted to QStash's
+seconds. That was previously a compile-time fiction: a human-readable string was
+cast to a number, so any call site passing `"5m"` type-checked and then failed at
+runtime. An unrecognised unit is now a compile error.
+
 Agent payload schemas:
 
 ```ts
@@ -529,14 +615,24 @@ AGENT_TOOL_EXECUTION_REQUESTED:    { orgId, sessionId, executionId, expectedStep
 **Signing:** outbound publishing relies on `QSTASH_TOKEN`; there is no payload
 signing in `queue.ts`. Inbound verification is `verifySignatureAppRouter` in
 `events/worker.ts`, using `QSTASH_CURRENT_SIGNING_KEY` /
-`QSTASH_NEXT_SIGNING_KEY` — and it is **bypassed entirely when
-`NODE_ENV === "development"`**.
+`QSTASH_NEXT_SIGNING_KEY`.
 
-> **The `deduplicationId` is not doing what its name suggests.** It is a SHA-256
-> of the whole CloudEvent, which includes `time` and a `Date.now()`-derived
-> `id`. It is therefore unique per publish and can never collapse a genuine
-> re-publish. All real duplicate protection comes from the
-> `EventLog(messageId)` guard, not from QStash.
+> **Changed in Assignment 36.** Inbound verification was bypassed whenever
+> `NODE_ENV === "development"`. An environment *name* is not a security
+> boundary: a deployed, preview, or tunnelled process reporting that value
+> accepts forged deliveries to handlers that perform real writes. The bypass is
+> now the explicit `ALLOW_UNSIGNED_LOCAL_WORKER === "true"`, evaluated by
+> `isUnsignedWorkerAllowed()`. It is an exact string compare on purpose — a
+> truthiness check would treat `=0` and `=false` as enabled, which is the opposite
+> of what an operator writing them intends. See
+> [Maintenance](#maintenance).
+
+> **The `deduplicationId` is still not a general-purpose dedup key** — the
+> default is a SHA-256 of the whole CloudEvent, which includes `time` and a
+> `Date.now()`-derived `id`, so a *legacy* publish still gets a per-publish-unique
+> key. The outbox path overrides it with a deterministic value, which is the
+> first case where it actually collapses a repeat. Primary duplicate protection
+> remains the consumers' own CAS; `EventLog(messageId)` is the third layer.
 
 ### Idempotency — `forge/src/lib/events/worker.ts`
 
@@ -544,7 +640,9 @@ signing in `queue.ts`. Inbound verification is `verifySignatureAppRouter` in
 
 1. `waitUntil(analyticsWorkerHandler(…))` — runs **before** validation, for
    every delivery including duplicates and invalid payloads.
-2. `Upstash-Message-Id` header; in development only, a synthetic id if absent.
+2. `Upstash-Message-Id` header; a synthetic id is substituted only when
+   `isUnsignedWorkerAllowed()` is true, never merely because the environment is
+   named `development`.
 3. An `EventLog` create with a unique `messageId`. `P2002` is handled as
    already-processed / already-running / retry-from-`FAILED`.
 
@@ -592,12 +690,24 @@ full machine, including the two new Phase 2 states.
 
 | Function | Selects | Acts |
 | --- | --- | --- |
+| `expireStaleApprovals` | `PENDING_CONFIRMATION`, `expiresAt <= now`, session live | CAS the execution to `EXPIRED`, write the `APPROVAL_TIMEOUT` tool-result, record the `AGENT_LOOP_REQUESTED` intent — one transaction |
 | `reapOrphanedToolExecutions` | `RUNNING`, no heartbeat for 10 min, session `RUNNING` | CAS the execution to `CANCELLED`; CAS the session to `FAILED` + `terminalReason: "ERROR"`; publish `FAILED` |
-| `redeliverStalledConfirmedExecutions` | `PENDING`, stale, session `RUNNING` | re-publish `AGENT_TOOL_EXECUTION_REQUESTED` |
+| `redeliverStalledConfirmedExecutions` | `PENDING`, stale, session `RUNNING` | re-record the `AGENT_TOOL_EXECUTION_REQUESTED` intent |
 
-Both are idempotent: the second run matches nothing. Both are bounded (`take:
-50`). Re-publishing is safe precisely because the worker claims with a CAS, so a
-second delivery is a no-op if the first already started.
+All three are idempotent: the second run matches nothing. All are bounded by
+`AGENT_MAINTENANCE_BATCH_SIZE` (100) and ordered, so a pass never walks an
+unbounded result set and anything beyond the cap is simply handled on the next
+tick.
+
+`redeliverStalledConfirmedExecutions` **re-records intent rather than
+publishing**. In normal operation this is a no-op: `confirmToolExecution`
+already recorded the intent in the same transaction as the `PENDING` transition,
+so the unique `idempotencyKey` collapses the re-record onto the existing row and
+does not reset a delivered one. It exists for the two cases the normal path
+cannot cover — an intent recorded but not yet drained, and a genuinely missing
+outbox row after manual intervention or a restore. Publishing directly here
+would be the sweep doing the dispatcher's job without the durability, which is
+exactly the gap the outbox exists to close.
 
 #### Liveness is a heartbeat, not a timestamp
 
@@ -619,10 +729,10 @@ read. The read-then-write gap is exactly the window a periodic sweep is most
 likely to fire in; without it, a heartbeat landing between the two calls would
 be overwritten and healthy work cancelled.
 
-> **These functions are not scheduled.** Nothing in the repository invokes them
-> on a timer or in a cron. They are implemented and tested but inert until a
-> scheduler is wired up, which is Phase 4 work. Until then a stranded
-> execution still hangs its session in practice.
+> **These functions are now scheduled** (new in Assignment 36). See
+> [Maintenance](#maintenance) below. Previously nothing in the repository
+> invoked them on a timer, so a stranded execution still hung its session in
+> practice.
 
 ## Terminal reasons
 `AgentTerminalReason` (`forge/src/lib/ai/agent/types.ts`):
@@ -640,7 +750,7 @@ Persisted in `AgentSession.terminalReason` (`String?`, indexed) and published on
 the wire. The reason exists so a consumer never has to parse `errorMessage`
 prose to decide what happened.
 
-> Three migrations exist and **none has been applied to any live database**:
+> Five migrations exist and **none has been applied to any live database**:
 > - `20260929120000_agent_session_terminal_reason` — the `terminalReason` column
 >   and its index.
 > - `20260929140000_agent_tool_execution_confirmation` — the two new enum
@@ -650,8 +760,14 @@ prose to decide what happened.
 >   contract they actually ran under. New sessions are unaffected:
 >   `createAgentSession` writes `AGENT_PROMPT_VERSION` explicitly, so the default
 >   is only ever reached by legacy rows.
+> - `20260929160000_agent_approval_expiry` — the `EXPIRED` enum value,
+>   `expiresAt` / `expiredAt`, and the `[status, expiresAt]` index that the sweep
+>   needs to stay bounded.
+> - `20260929200000_agent_outbox` — `AgentOutboxEvent` and its indexes.
 >
-> The Prisma client is regenerated. Applying them is an operational step.
+> The Prisma client is regenerated. Applying them is an operational step, and
+> **the target database must be confirmed non-production first** — the only
+> configured `DATABASE_URL` in this environment is a live Neon primary.
 
 ## Session recovery API
 `GET /api/agent/session/[sessionId]` — implemented at
@@ -719,6 +835,7 @@ Channel authorization is documented in
 sequenceDiagram
     participant C as Client
     participant I as /api/agent/init
+    participant O as Outbox dispatcher
     participant Q as QStash
     participant L as Agent Loop Worker
     participant M as Gemini
@@ -726,9 +843,9 @@ sequenceDiagram
     participant D as DB
 
     C->>I: POST { orgSlug, message }
-    I->>D: AgentSession(RUNNING, step 0, promptVersion=v2) + AgentMessage
-    I->>Q: AGENT_LOOP_REQUESTED { expectedStep: 0 }
+    I->>D: ONE TX: AgentSession(RUNNING, step 0, promptVersion=v2) + AgentMessage + outbox row
     I-->>C: 202 { sessionId }
+    O->>Q: AGENT_LOOP_REQUESTED { expectedStep: 0 }
     Q->>L: deliver
     L->>D: CAS currentStep 0 -> 1
     L->>M: generateText(tools=[createTask, listTasks, updateTask])
@@ -736,21 +853,21 @@ sequenceDiagram
     L->>D: persist assistant message
     L->>D: persist execution PENDING_CONFIRMATION + input
     L-->>C: Pusher TOOL_PROPOSED { summary, fields }
-    Note over L: loop halts — no tool event published
+    Note over L: loop halts — no dispatch intent recorded
 
     C->>L: POST /api/agent/session/{id}/executions/{execId}/confirm
     L->>D: 401? no. 404? no. state + liveness -> TRANSITION.
-    L->>D: CAS execution PENDING_CONFIRMATION -> PENDING
-    L->>Q: AGENT_TOOL_EXECUTION_REQUESTED { expectedStep: 1 }
+    L->>D: ONE TX: CAS PENDING_CONFIRMATION -> PENDING + outbox row
+    O->>Q: AGENT_TOOL_EXECUTION_REQUESTED { expectedStep: 1 }
     Q->>T: deliver
     T->>D: CAS execution PENDING -> RUNNING
     T->>D: session still RUNNING? yes
     Note over T,D: heartbeat every 30 s while executing
     T->>D: createTaskInOrg(ctx.orgId, ctx.userId, persisted input)
-    T->>D: persist tool-result message
+    T->>D: ONE TX: tool-result message + outbox row
     T->>D: execution COMPLETED
     T-->>C: Pusher TOOL_COMPLETED
-    T->>Q: AGENT_LOOP_REQUESTED { expectedStep: 1 }
+    O->>Q: AGENT_LOOP_REQUESTED { expectedStep: 1 }
     Q->>L: deliver
     L->>D: CAS currentStep 1 -> 2
     L->>M: generateText (now includes the tool result)
@@ -761,16 +878,161 @@ sequenceDiagram
 
 The **cancel** path diverges at the confirm call: the CAS goes to `CANCELLED`, a
 `CANCELLED` tool-result is written, `TOOL_CANCELLED` is published, and
-`AGENT_LOOP_REQUESTED` is published — the same re-arm, so the model still gets a
-turn to acknowledge the decline.
+`AGENT_LOOP_REQUESTED` is recorded — the same re-arm, so the model still gets a
+turn to acknowledge the decline. All three of the first steps are one
+transaction.
+
+## Transactional outbox
+
+`forge/src/lib/ai/agent/outbox.ts`. New in Assignment 36.
+
+The agent used to persist domain state and then publish to QStash as two
+independent steps. A crash in between left the database asserting that work was
+required while the event was gone permanently, and the session hung. This was the
+largest remaining durability gap.
+
+The pattern:
+
+1. write the domain state **and** the delivery intent in **one** transaction
+   (`recordAgentEvent`, whose `tx` parameter is deliberately required — an outbox
+   writer that could be called outside a transaction is a way to silently
+   reintroduce the exact bug this exists to remove);
+2. a dispatcher later moves rows `PENDING → PUBLISHED`.
+
+### What it guarantees, precisely
+
+| Property | Holds? | Why |
+| --- | --- | --- |
+| Durable intent | **yes** | The row commits with the domain state |
+| At-least-once delivery | **yes** | A crash after send but before marking `PUBLISHED` causes a redelivery |
+| Idempotent consumers | **yes** | See below |
+| **Exactly-once delivery** | **NO — never claimed** | Not achievable with an at-least-once broker |
+
+The two critical consumers are guarded by compare-and-set, not by `EventLog`: the
+tool worker only claims rows still `PENDING`, and the loop handler only advances a
+session whose step it already holds. A duplicate publish therefore finds the work
+gone and no-ops. The deterministic `deduplicationId` is a second layer that makes
+the broker drop obvious repeats before a consumer ever sees them. **None of this
+relies on the publish happening exactly once.**
+
+### Why `EventLog` could not serve this role
+
+`EventLog` is written by the *consumer* after delivery, keyed on a
+broker-assigned `Upstash-Message-Id` that does not exist at publish time, and it
+carries no retry scheduling fields. It is a consumer dedup ledger, not a producer
+outbox. `AgentOutboxEvent` is a separate table for that reason.
+
+`AgentOutboxEvent.sessionId` / `.executionId` are plain strings, deliberately
+**not** foreign keys. An outbox row is a durable intent to deliver; if it cascaded
+away with its session it would be deleted before delivery, defeating the purpose.
+
+### Claiming is a lease, not a status check
+
+`claimOutboxBatch` pushes `availableAt` forward to a lease deadline
+(`AGENT_OUTBOX_CLAIM_LEASE_MS`, 30 s) and requires the row to still be due against
+a single `now` captured once per batch. That is a genuine CAS because the claim
+mutates the very field the predicate tests on:
+
+```
+pass 1  matches availableAt <= now  ->  sets availableAt = now + LEASE
+pass 2  reads availableAt = now+LEASE -> not due -> matches nothing
+```
+
+A predicate of `status = PENDING` alone **cannot** work: the claim does not change
+status, so an overlapping maintenance tick reads `PENDING` again and "wins" too,
+publishing the same event twice from inside the app. Using `attempts` as an
+optimistic-concurrency version number does not work either — a later pass reads
+the already-incremented value and its predicate matches again. Comparing a field
+back to the value just read only excludes writers that raced *before* the read.
+
+A crash mid-publish strands the row until the lease expires, which is the intended
+trade: a duplicate is made safe by the consumers' CAS and the deduplication key,
+whereas a lost event is never made safe.
+
+### Failure handling
+
+A failed publish **never deletes or marks the row**. It goes back to `PENDING` with
+`attempts` incremented and `availableAt` pushed along
+`AGENT_OUTBOX_BACKOFF_MS` (`1s, 5s, 15s, 1m, 5m`, last value reused). Dropping
+the row on a transient QStash error would turn the outbox into exactly the lossy
+queue it replaced.
+
+## Maintenance
+
+`AGENT_MAINTENANCE_REQUESTED` — `forge/src/app/api/worker/agent-maintenance/am.ts`.
+
+Maintenance is a **queue event, not an HTTP cron route.** It arrives through the
+single `/api/worker` dispatcher, so it inherits the property that makes the rest
+of the system survivable: QStash signs the delivery, the `EventLog` records it, and
+a crash is retried by the broker instead of being lost. A dedicated cron endpoint
+would have required a second authentication scheme, a second scheduler, and a
+second place to look when one of them silently stops firing.
+
+> **Superseded design note.** This originally shipped as
+> `GET`/`POST /api/cron/agent-maintenance` driven by `vercel.json`, authenticated
+> by `AGENT_MAINTENANCE_SECRET` / `CRON_SECRET`. That was replaced. A Vercel cron
+> is capped at once per day on Hobby and once per minute on Pro, so a five-minute
+> sweep is plan-dependent and the whole recovery system would quietly not run; and
+> a self-comparison of one static secret is a weaker boundary than QStash's
+> per-delivery request signing. `vercel.json` and the cron route are deleted.
+
+Performs all four duties in one pass, each bounded by the event payload's `limit`
+(default `AGENT_MAINTENANCE_BATCH_SIZE`, 100; schema-bounded to `1..1000`), and
+reports counts for each:
+
+| Duty | Function |
+| --- | --- |
+| Expire stale approvals | `expireStaleApprovals({ limit })` |
+| Reap orphaned executions | `reapOrphanedToolExecutions({ limit })` |
+| Re-record stalled dispatches | `redeliverStalledConfirmedExecutions({ limit })` |
+| Drain the outbox | `dispatchOutboxBatch(limit)` |
+
+**Authentication is the worker's, not a second scheme.** Verification comes from
+`verifySignatureAppRouter`; the opt-out is the explicit
+`ALLOW_UNSIGNED_LOCAL_WORKER=true` and nothing else. No maintenance secret exists,
+and none should be added — a forged call to a maintenance handler performs real
+writes, so the signing is the boundary, not a bearer value compared to itself.
+
+**A partial failure throws, after every duty has run.** Returning normally would
+let QStash record the tick as delivered while part of the sweep never happened,
+which is indistinguishable from a working sweeper. The throw is safe to retry
+because every duty is idempotent, and the retry genuinely reaches the handler:
+the dispatcher keys idempotency on the QStash message id and re-arms a `FAILED`
+`EventLog` row instead of treating it as processed. The failure is raised *after*
+all four duties settle, so a broken reaper never also costs the approval sweep.
+
+### The schedule
+
+A QStash schedule POSTs the CloudEvent to `/api/worker` on a cron. It is managed
+and verified by `scripts/qstash-maintenance-schedule.mjs`, which reads the
+schedule back out of the QStash API and compares it against the intent:
+
+```bash
+node scripts/qstash-maintenance-schedule.mjs plan    # dry run
+node scripts/qstash-maintenance-schedule.mjs apply   # create or update
+node scripts/qstash-maintenance-schedule.mjs verify  # read-only
+```
+
+The script refuses to create a schedule pointed at a loopback, `http://`, or
+temporary-tunnel destination. QStash accepts such a URL without complaint and then
+fails every single tick, which is strictly worse than having no schedule: it looks
+configured, and nothing reports the failure until someone goes looking for it.
+
+The replayed body **omits** CloudEvents `id` and `time` on purpose. A schedule body
+is a static template replayed verbatim, so a timestamp written into it would be
+frozen at creation time and every tick would claim to have happened then. The
+dispatcher derives both per delivery: `id` from the QStash message id, `time` from
+actual arrival. An explicit `id` still wins, so an outbox retry keeps its identity.
 
 ## Known runtime gaps
 
 | Gap | Status | Scheduled |
 | --- | --- | --- |
-| DB-write → publish-failure window | `PARTIAL` | Phase 4 |
-| Reaper implemented but **not scheduled** | `PARTIAL` | Phase 4 |
-| No proposal/approval timeout | `PLANNED` | Phase 4 |
+| ~~DB-write → publish-failure window~~ | **CLOSED** (outbox) | — |
+| ~~Reaper implemented but not scheduled~~ | **OPEN** — QStash schedule not yet created (no public destination) | — |
+| ~~No proposal/approval timeout~~ | **CLOSED** (`EXPIRED`) | — |
+| Queue signature verification bypassable via `NODE_ENV` | **CLOSED** (explicit opt-in) | — |
+| Outbox relies on at-least-once delivery; duplicates are possible by design | `ACCEPTED` | — |
 | No model-call timeout bound | `PLANNED` | Phase 4 |
 | `EventLog` re-arm CAS loss returns 200 without work | `PARTIAL` | Phase 5 |
 | Message ordering depends on `createdAt` alone | `PARTIAL` | Phase 5 |
@@ -784,9 +1046,8 @@ turn to acknowledge the decline.
 | --- | --- |
 | Lock TTL flat and never renewed | Token-guarded heartbeat at `ttl / 3` |
 | A `RUNNING` row looked identical whether the worker was alive or dead | `heartbeatToolExecution` refreshes it every 30 s, and the reaper re-checks staleness inside its CAS |
-| Executions orphaned in `RUNNING` forever | `reapOrphanedToolExecutions` (needs a scheduler) |
-| Confirmed executions never picked up | `redeliverStalledConfirmedExecutions` (needs a scheduler) |
-| `completeToolExecution` could overwrite a newer state | CAS from `RUNNING` |
+| Executions orphaned in `RUNNING` forever | `reapOrphanedToolExecutions` (now scheduled — see Assignment 36) |
+| Confirmed executions never picked up | `redeliverStalledConfirmedExecutions` (now scheduled — see Assignment 36) || `completeToolExecution` could overwrite a newer state | CAS from `RUNNING` |
 | Tool worker ignored session liveness | Abandons the claimed row and writes a `SESSION_NOT_RUNNING` result |
 | A repeat confirm after the session ended reported a phantom `SESSION_NOT_RUNNING` | Execution state is decided before liveness; the real state is returned |
 | Tool worker discarded its lock-contention result | Logs contention, like the loop worker |
@@ -795,3 +1056,45 @@ turn to acknowledge the decline.
 | Two parallel tool maps that could drift | One registry; `agentTools` derived from it |
 | No record of which prompt a session started under | `AgentSession.promptVersion`, defaulted to the legacy version so backfill is truthful |
 | `WAITING_CONFIRMATION` status event, never published | `TOOL_PROPOSED` with rendered details |
+
+### Closed in Assignment 36
+
+| Previously | Now |
+| --- | --- |
+| Domain rows were committed, then published — a crash between them lost the event permanently | `AgentOutboxEvent` written in the same transaction; a dispatcher drains `PENDING → PUBLISHED` |
+| Every "recover the work" function was inert — nothing called them on a timer | `AGENT_MAINTENANCE_REQUESTED` through the signed worker; a QStash schedule POSTs it every 5 min |
+| A proposal nobody answered parked the execution `PENDING_CONFIRMATION` **indefinitely** | `EXPIRED` after `expiresAt` (15 min default), with an `APPROVAL_TIMEOUT` tool-result so the model is told |
+| Expiry wrote the CAS, the transcript, and the publish as three steps; a crash after the CAS stranded the session forever | `expireToolExecutionAndContinue` — one transaction, so a failure is retryable rather than terminal |
+| Cancel could cancel without a transcript or a continuation | `cancelToolExecutionAndContinue` — one transaction |
+| A tool result and the re-arm were separate writes | Both in one transaction in `tool-worker.ts` |
+| Confirmation, cancellation, expiry, reaping, and redelivery all published straight to QStash | All go through `recordAgentEvent`; `publishEvent` appears only in the dispatcher |
+| Outbox "claims" were a `status = PENDING` read, so two ticks could both win | Lease on `availableAt` (`AGENT_OUTBOX_CLAIM_LEASE_MS`) — a real CAS on the same field the predicate reads |
+| `deduplicationId` was unique per publish and could never dedup anything | Deterministic value derived from the outbox row |
+| QStash delays were cast from `"30s"`-style strings to a number and rejected at runtime | `PublishDelay` template type, converted to seconds; a bad unit is a compile error |
+| Queue signature verification disabled by `NODE_ENV === "development"` | `ALLOW_UNSIGNED_LOCAL_WORKER === "true"`, exact compare, warn-loud |
+| Maintenance behind a Vercel cron — once-daily cap on Hobby, a self-compared static secret for auth | `AGENT_MAINTENANCE_REQUESTED` on the signed worker, triggered by a QStash schedule |
+| Maintenance was unreadable: a failing duty returned 200 and the broker recorded a successful tick | Throws after all duties settle, so QStash retries; the `FAILED` `EventLog` row is re-armed on redelivery |
+| Every publish would have hit the SDK's default `qstash.upstash.io` (eu-central-1) and 404'd against a non-EU token | `QSTASH_URL` is required, passed as the client `baseUrl`, and validated before the try block so the error is not rewritten to "Failed to queue background job" |
+| A schedule body's baked-in `id`/`time` would be replayed verbatim, fabricating the same identity and timestamp on every tick | Dispatcher derives both per delivery from the QStash message id and actual arrival |
+| Maintenance had no authentication at all | Constant-time bearer/`X-Agent-Maintenance-Secret` check; no secret configured means closed |
+| An outbox writer could be called outside a transaction and silently reintroduce the original bug | `recordAgentEvent` requires its `tx` argument |
+| `AgentOutboxEvent` referenced sessions and executions | Plain strings, **no** foreign keys — cascading an outbox row away would delete work that is still owed |
+| Tests could construct a real `PrismaClient` and hit the configured database | `jest.setup-db-guard.ts` fails the test run on any real construction |
+
+### Verified, and not yet verified
+
+`SOURCE VERIFIED` — 19 suites / 253 tests pass, including non-vacuous outbox
+concurrency and expiry coverage. `tsc --noEmit` clean; scoped ESLint clean.
+
+`RUNTIME VERIFIED` — **not claimed.** No worker, queue, or database has been
+exercised in a running process. The maintenance schedule does not exist in the
+QStash account and there is no public worker destination to create it against, so
+the four recovery duties have no caller in any running environment.
+
+`LIVE VERIFIED` — **not claimed.** The five migrations have never been applied,
+and the only configured `DATABASE_URL` in this environment is a live Neon primary.
+No live Gemini round-trip, QStash delivery, Redis lock/heartbeat, reaper tick, or
+Pusher authorization has been observed.
+
+Full breakdown, including the guarantees that are *not* claimed, in
+[`assignments-35-36-audit.md`](./assignments-35-36-audit.md).
