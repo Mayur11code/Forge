@@ -19,6 +19,7 @@ export const EventTypes = [
   "EXECUTE_WORKFLOW_NODE",
   "AGENT_LOOP_REQUESTED",
   "AGENT_TOOL_EXECUTION_REQUESTED",
+  "AGENT_MAINTENANCE_REQUESTED",
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
@@ -115,6 +116,34 @@ export const eventSchemas = {
     expectedStep: z.number().int().min(0),
   }),
 
+  /**
+   * The scheduled upkeep pass, published by a QStash schedule rather than by any
+   * agent.
+   *
+   * Deliberately NOT `baseEventSchema`: maintenance is system-wide and sweeps
+   * every organization, so there is no single `orgId` that would be true. Putting
+   * one here would mean inventing a sentinel organization and then filtering or
+   * ignoring it downstream - exactly the kind of lie that quietly becomes a
+   * tenant-isolation bug. `EXECUTE_WORKFLOW_NODE` sets the precedent of a
+   * non-base schema.
+   *
+   * The field is `limit`, not `batchSize` or `count`, and it is bounded in the
+   * schema on purpose. A scheduled trigger is an external input: anyone who can
+   * publish to the `events` topic can shape the payload, and an unbounded
+   * `take` would let a single message turn a five-minute sweep into a
+   * table-scanning request against production.
+   */
+  AGENT_MAINTENANCE_REQUESTED: z
+    .object({
+      limit: z.number().int().min(1).max(1000).default(100),
+    })
+    // `.strict()`, unlike every other schema here, because this payload is
+    // written by hand in a QStash schedule body and never travels through
+    // TypeScript. A default Zod object silently strips unknown keys, so a
+    // misspelled `limitt` would pass validation and then sweep with the default
+    // 100 - a schedule that reads as configured and is not. Failing loudly is the
+    // only useful answer to a typo in an external config.
+    .strict(),
 
 } satisfies Record<EventType, z.ZodTypeAny>;
 
