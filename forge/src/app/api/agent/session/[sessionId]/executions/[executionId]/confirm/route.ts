@@ -18,7 +18,6 @@ import {
   loadConfirmationTarget,
 } from "@/lib/ai/agent/services/confirmation-service";
 import { confirmToolExecution } from "@/lib/ai/agent/services/tool-execution-service";
-import { publishEvent } from "@/lib/events/queue";
 import { publishAgentStatus } from "@/lib/ai/agent/status";
 
 type RouteContext = {
@@ -91,9 +90,15 @@ export async function POST(
       );
     }
 
+    // The transition and the intent to dispatch now commit together inside
+    // confirmToolExecution, so this route no longer publishes. That removes the
+    // window where the row was confirmed but the process died before the
+    // dispatch was ever requested.
     const confirmed = await confirmToolExecution({
       executionId: execution.id,
       sessionId: session.id,
+      orgId: session.orgId,
+      expectedStep: session.currentStep,
     });
 
     if (!confirmed) {
@@ -115,15 +120,6 @@ export async function POST(
       type: "TOOL_CONFIRMED",
       executionId: execution.id,
       toolName: execution.toolName,
-    });
-
-    // Re-drive the loop. expectedStep is the already-claimed step for the
-    // turn that produced this proposal, so the next claim matches.
-    await publishEvent("AGENT_TOOL_EXECUTION_REQUESTED", {
-      orgId: session.orgId,
-      sessionId: session.id,
-      executionId: execution.id,
-      expectedStep: session.currentStep,
     });
 
     return Response.json(

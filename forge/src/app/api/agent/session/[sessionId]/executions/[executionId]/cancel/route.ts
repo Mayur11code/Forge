@@ -19,9 +19,7 @@ import {
   decideConfirmation,
   loadConfirmationTarget,
 } from "@/lib/ai/agent/services/confirmation-service";
-import { cancelToolExecution } from "@/lib/ai/agent/services/tool-execution-service";
-import { createMessage } from "@/lib/ai/agent/services/message-service";
-import { publishEvent } from "@/lib/events/queue";
+import { cancelToolExecutionAndContinue } from "@/lib/ai/agent/services/tool-execution-service";
 import { publishAgentStatus } from "@/lib/ai/agent/status";
 
 type RouteContext = {
@@ -94,9 +92,20 @@ export async function POST(
       );
     }
 
-    const cancelled = await cancelToolExecution({
+    // CAS the cancellation, close the tool call in the transcript, and record
+    // the intent to re-drive the loop, in ONE transaction.
+    //
+    // An unanswered tool call would leave the next turn malformed, and the model
+    // would be guessing at the outcome rather than being told it. Doing those
+    // three things separately left a window in which a crash produced a
+    // permanently dangling transcript with no recovery path.
+    const cancelled = await cancelToolExecutionAndContinue({
       executionId: execution.id,
       sessionId: session.id,
+      orgId: session.orgId,
+      expectedStep: session.currentStep,
+      toolCallId: execution.toolCallId,
+      toolName: execution.toolName,
     });
 
     if (!cancelled) {
@@ -112,46 +121,13 @@ export async function POST(
       );
     }
 
-    // Close the tool call in the transcript. The loop treats a tool result
-    // like any other, so the model can acknowledge the decline and continue
-    // rather than being left waiting on a call that will never resolve.
-    await createMessage({
-      sessionId: session.id,
-      step: session.currentStep,
-      toolCallId: execution.toolCallId,
-      message: {
-        role: "tool",
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: execution.toolCallId,
-            toolName: execution.toolName,
-            output: {
-              type: "json",
-              value: {
-                ok: false,
-                code: "CANCELLED",
-                error:
-                  "The user declined this action. Do not retry it " +
-                  "and do not attempt to achieve the same result " +
-                  "by another means.",
-              },
-            },
-          },
-        ],
-      },
-    });
-
+    // A UI signal only, so it stays outside the transaction: a failure here
+    // cannot strand the work, because the decline and the continuation intent
+    // have already committed.
     await publishAgentStatus(session.id, {
       type: "TOOL_CANCELLED",
       executionId: execution.id,
       toolName: execution.toolName,
-    });
-
-    await publishEvent("AGENT_LOOP_REQUESTED", {
-      orgId: session.orgId,
-      sessionId: session.id,
-      expectedStep: session.currentStep,
     });
 
     return Response.json(
