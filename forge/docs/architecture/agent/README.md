@@ -114,13 +114,18 @@ Concretely this buys:
 | User approval is durable | The proposal is a row, not a pending HTTP request. A refresh loses nothing. |
 | Duplicate-delivery safety | A `SET NX PX` lock with a TTL heartbeat, plus the `EventLog(messageId)` idempotency guard. |
 | Orphan detection | A claimed execution refreshes its own row every 30 s, so "no heartbeat" means "nobody is working on this" rather than "this is slow". |
+| Durable event intent | Every critical event is an `AgentOutboxEvent` row committed with the domain state, then drained by a lease-claimed dispatcher. Delivery is **at-least-once**, never exactly-once. |
+| Recovery actually runs | `AGENT_MAINTENANCE_REQUESTED` on the signed `/api/worker` runs the approval sweep, the orphan reaper, the stalled redelivery sweep and the outbox drain. A QStash schedule POSTs it every five minutes. **The schedule is not created yet — see below.** |
 | Bounded model work | `MAX_AGENT_STEPS = 5`, enforced by a pure policy function. |
 | No long-held connections | Workers are short-lived QStash deliveries. |
 
-The cost is real and is documented honestly in
-[`decisions.md`](./decisions.md#decision-6-event-driven-continuation): the
-system is eventually consistent, and there is a publish failure window. Phase 4
-of the roadmap exists specifically to close that window.
+The system is still eventually consistent, and that is now a stated property
+rather than an open defect: a committed domain state and the intent to deliver
+its event are atomic, but the publish itself is not. Duplicates are made safe by
+the consumers' compare-and-set and the deterministic `deduplicationId`; the
+weaker guarantee is documented in
+[`decisions.md`](./decisions.md#decision-17-transactional-outbox-at-least-once)
+rather than papered over.
 
 ## Document index
 
@@ -134,6 +139,7 @@ of the roadmap exists specifically to close that window.
 | [`prompt.md`](./prompt.md) | The system prompt, its sections, and prompt provenance. |
 | [`roadmap.md`](./roadmap.md) | Phases 0–6, the current-state matrix, and deferred items. |
 | [`decisions.md`](./decisions.md) | Architectural decisions and the reasoning behind them. |
+| [`assignments-35-36-audit.md`](./assignments-35-36-audit.md) | Closure report for Assignments 35/36: what is proven, what is only implemented, what is not done. |
 | [`../../dev-log/2026-09-29.md`](../../dev-log/2026-09-29.md) | Chronological record of every pass. |
 
 ## Current vs target architecture
@@ -147,21 +153,28 @@ flowchart TD
     S --> L[Agent Loop]
     L --> M[Gemini]
     M -->|listTasks (READ_ONLY)| TW[Tool Worker]
-    M -->|createTask / updateTask (WRITE)| PR[Durable proposal]
+    M -->|createTask / updateTask (WRITE)| PR[Durable proposal + expiresAt]
     PR -->|confirm| TW
     PR -->|cancel| CAN[CANCELLED]
+    PR -->|expiry sweep| EXP[EXPIRED + APPROVAL_TIMEOUT]
     TW --> CTX[Trusted context]
     CTX --> DO[Canonical domain op]
-    DO --> DB[(DB / CDC / events)]
-    DB --> L
+    DO --> DB[(DB)]
+    TX[transaction] --> DB
+    TX --> OB[AgentOutboxEvent]
+    OB --> DIS[Dispatcher]
+    DIS --> L
+    DIS --> TW
+    DIS --> UI[Pusher / live updates]
 ```
 
 Implemented and wired: session persistence, event-driven loop, step claiming,
 lock heartbeat, execution liveness heartbeat, a single registry carrying tool +
 executor + policy with the model-facing map derived from it, one read tool, two
-write tools, durable user confirmation, trusted context, canonical task
-create/update/read operations, Pusher transport, session recovery, prompt
-provenance, and orphan recovery.
+write tools, durable user confirmation **with an expiry**, trusted context,
+canonical task create/update/read operations, Pusher transport, session
+recovery, prompt provenance, a **transactional outbox**, and a **scheduled
+maintenance pass**. The UI is still the only missing piece of this diagram.
 
 ### Target
 
@@ -182,15 +195,16 @@ flowchart TD
     EV --> UI[UI]
 ```
 
-Still missing: the **outbox** (so the publish-failure window is closed rather
-than merely documented), the **UI**, and **destructive** tools. See
-[`roadmap.md`](./roadmap.md) for what remains in each phase.
+Still missing: the **UI** and **destructive** tools. The **outbox** and the
+recovery **scheduler** are now implemented — see
+[`runtime.md`](./runtime.md#transactional-outbox) and
+[`roadmap.md`](./roadmap.md#phase-4--durability--crash-recovery).
 
 ### The difference in one sentence
 
-The model now proposes, the backend decides, and a human approves — with the
-proposal persisted so it survives a refresh and cannot be mutated between
-approval and execution. The remaining gap is the outbox.
+The model proposes, the backend decides, a human approves, and the intent to act
+on that approval is durable: a committed proposal and the event that would
+execute it cannot be separated by a crash.
 
 ## What is *not* proven
 
@@ -201,9 +215,11 @@ exercised end to end. It has not.
   every event to topic `"events"`. Routing in source is correct, but whether a
   *deployed* QStash consumer points at `/api/worker` is an environment fact
   that cannot be read from the repository.
-- **Three migrations have not been applied** to any live database: agent session
-  `terminalReason`, tool execution confirmation states, and session
-  `promptVersion`.
+- **Five migrations have not been applied** to any live database: session
+  `terminalReason`, tool-execution confirmation states, session `promptVersion`,
+  approval expiry, and the outbox table. The only `DATABASE_URL` configured in
+  this environment is a live Neon primary, so applying them is an operational
+  decision, not a code change.
 - **Pusher, NextAuth, Prisma, Redis and QStash are unit-tested or statically
   reviewed only.** No live integration test exists.
 - **There is no client.** Nothing in the app calls `POST /api/agent/init`,
@@ -211,25 +227,42 @@ exercised end to end. It has not.
   nothing subscribes to a `private-agent-*` channel. The entire agent subsystem
   currently has no UI. The server-side contract is complete; the client is not
   written.
-- **The reaper is not scheduled.** `reapOrphanedToolExecutions` and
-  `redeliverStalledConfirmedExecutions` are implemented and tested but nothing
-  invokes them. Until a scheduler does, they are dead code by configuration.
-- **There is still no approval timeout.** A `PENDING_CONFIRMATION` row persists
-  until the user acts. There is no expiry, and `AgentSessionStatus` is never set
-  to `WAITING_CONFIRMATION` (the loop simply stops publishing).
+- **The maintenance schedule does not exist yet.** The handler is implemented,
+  registered on `/api/worker` and tested, but QStash has **no**
+  `AGENT_MAINTENANCE_REQUESTED` schedule — verified by reading the account's
+  schedule list. A schedule cannot be pointed at a public destination until one
+  exists: `APP_URL` is `http://localhost:3000`, and the only endpoint previously
+  registered in QStash (topic `events` and the `CRON_DAILY_DIGEST` schedule) points
+  at a dead `ngrok-free.dev` tunnel that returns 404. So **the four recovery duties
+  have no caller in any running environment.** QStash would accept a localhost or
+  tunnel destination without complaint and then fail every tick, which is worse
+  than nothing because it looks configured — so
+  `scripts/qstash-maintenance-schedule.mjs` refuses to create one.
 - **Destructive tools do not exist.** `DESTRUCTIVE` policy is implemented and
   tested but unused, because the domain has no safe deletion semantics. See
   [`decisions.md`](./decisions.md#decision-13-no-destructive-tools-despite-a-working-policy).
+- **Sessions frozen mid-turn with no execution in flight are still not swept.**
+  The reaper covers executions, not the absence of one.
 
 ## Testing status
 
-`npx jest` — **13 suites, 141 tests, passing**. `npx tsc --noEmit` — clean.
+`npx jest` — **19 suites, 253 tests, passing**. `npx tsc --noEmit` — clean.
+Scoped ESLint over the changed agent code — clean. No test constructs a real
+`PrismaClient`; `jest.setup-db-guard.ts` fails the run if one is instantiated.
 
 | Suite | Covers |
 | --- | --- |
 | `agent-channel.test.ts` | Channel/body validation. |
-| `agent/` `durability.test.ts` | Lock heartbeat, token-guarded renewal, reaper selection/CAS/staleness, execution liveness transitions. |
-| `agent/` `execution-routes.test.ts` | Confirm/cancel auth, session binding, terminal-session refusal, state-before-liveness ordering, idempotency, race outcomes. |
+| `agent/` `durability.test.ts` | Lock heartbeat, token-guarded renewal, reaper selection/CAS/staleness, execution liveness transitions, outbox-driven redelivery. |
+| `agent/` `execution-routes.test.ts` | Confirm/cancel auth, session binding, terminal-session refusal, state-before-liveness ordering, idempotency, race outcomes, transactional continuation. |
+| `agent/` `approval-timeout.test.ts` | `EXPIRED` sweep, the null-`expiresAt` exemption, one-transaction expiry, late confirm, bounded batches. |
+| `agent/` `outbox.test.ts` | Outbox row creation inside the caller's transaction, lease exclusivity, backoff, dedup-key collapse, dispatcher isolation. |
+| `agent/` `maintenance.test.ts` | All four duties, per-duty failure isolation, bounded limits, partial-failure retry, payload contract, identifier-free logging. |
+| `agent/` `worker-auth.test.ts` | Signature enforcement, the explicit opt-in, and per-delivery CloudEvent `id`/`time` derivation for schedule bodies. |
+| `agent/` `queue-publish.test.ts` | Deterministic ids, dedup keys, delay-unit conversion, regional `baseUrl`. |
+| `agent/` `provider-binding.test.ts` | `googleProvider` singleton, `gemini-2.5-flash`, `GEMINI_API_KEY` fail-closed. |
+| `agent/` `worker-auth.test.ts` | Signature required by default; `ALLOW_UNSIGNED_LOCAL_WORKER === "true"` is the only bypass, and `"0"`/`"false"` do not enable it. |
+| `agent/` `queue-publish.test.ts` | Delay conversion to seconds, deterministic ids, `deduplicationId`. |
 | `agent/` `loop-policy.test.ts` | Step budget and one-call-per-turn policy. |
 | `agent/` `pusher-auth.test.ts` | Private channel authorization. |
 | `agent/` `session-read.test.ts` | Session ownership and the recovery response contract. |
@@ -240,7 +273,10 @@ exercised end to end. It has not.
 
 **Still untested:** `createTaskInOrg` and `updateTaskInOrg` against a real
 database, the Prisma migration statements, Pusher delivery, and anything
-requiring a live Redis or QStash.
+requiring a live Redis or QStash. The prisma double does **not** simulate
+rollback, so the tests assert that work is enclosed in a transaction and that
+the writes are correct — not that a mid-transaction failure would undo them. That
+needs a real database.
 
 One property to be aware of when reading the tests: the shared prisma double
 honours each `where` clause, so the CAS assertions are real rather than

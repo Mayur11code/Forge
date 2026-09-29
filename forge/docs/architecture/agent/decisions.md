@@ -260,20 +260,25 @@ that provides durability also provides the place to put idempotency:
 `PENDING → RUNNING` CAS on tool execution. A duplicate event cannot advance a
 step twice or run a tool twice.
 
-### The cost, stated honestly
+### The cost, and what closed it
 
-The system is eventually consistent, and there is a window where the database
-is correct but a consumer has not been told:
+The system is eventually consistent, and there was a window where the database
+was correct but a consumer had not been told:
 
 ```mermaid
 flowchart TD
-    A[DB write succeeds] --> B[pusherServer.trigger fails]
-    B --> C[UI is permanently stale]
+    A[DB write succeeds] --> B[publishEvent fails]
+    B --> C[no event will ever exist]
 ```
 
-There is no outbox and no reaper today. This is a real, accepted-for-now gap,
-not a solved problem, and it is the entire subject of
-[Phase 4](./roadmap.md#phase-4--durability--crash-recovery).
+This was a real gap and the entire subject of
+[Phase 4](./roadmap.md#phase-4--durability--crash-recovery). **Assignment 36
+closed it** with a transactional outbox — see
+[Decision 17](#decision-17-transactional-outbox-at-least-once) — but not the
+Pusher half, which remains transport only by design
+([Decision 8](#decision-8-pusher-is-transport-only)). The UI is still
+eventually consistent with its own live-update path; the *agent's* internal event
+stream is no longer lossy.
 
 The alternative considered was a synchronous long-lived request with streaming,
 rejected because it couples model latency to HTTP connection lifetime and gives
@@ -301,12 +306,13 @@ Locking alone would be wrong: a TTL-expiring lock does not undo a
 double-claim. CAS alone would be safe but would waste a model call on every
 duplicate delivery.
 
-### Known gap
+### Known gap — now closed
 
-The TTL is flat 30 s and never renewed, so a slow `generateText` call can
-outlive its own mutex while still executing. The CAS limits the damage — a
-second worker cannot claim the same step — but the model call is wasted. Lease
-renewal is [Phase 4](./roadmap.md#lock-lease--heartbeat).
+The TTL used to be flat 30 s and never renewed, so a slow `generateText` call
+could outlive its own mutex while still executing. The CAS limited the damage —
+a second worker could not claim the same step — but the model call was wasted.
+Assignment 36 added the token-guarded
+[lease renewal](./roadmap.md#lock-lease--heartbeat).
 
 ## Decision 8: Pusher is transport only
 
@@ -552,3 +558,168 @@ design question, not a field: the template, the rendered prompt, the tool
 descriptions, or all of them. Shipping a version field that says precisely what
 it means, plus a log line for divergence, is more useful than a hash computed
 over the wrong artifact.
+
+## Decision 17: Transactional outbox, at-least-once
+
+**Status:** `IMPLEMENTED` (Assignment 36)
+
+**Decision.** Every critical agent event is written as an `AgentOutboxEvent` row
+in the same transaction as the domain state, and a separate dispatcher publishes
+`PENDING` rows to QStash.
+
+### Why not just publish, and retry on failure
+
+Because "retry on failure" cannot cover the case that matters. The dangerous gap
+is a crash *between* the committed domain write and the publish: nothing failed,
+so nothing is retried, and the event is gone permanently. The rows the recovery
+sweeps inspect all read state saying the work was already done, so no sweep
+could ever find it. A committed session at `RUNNING` with its opening message
+and no event looks live to every read path and is claimed by nothing.
+
+### Why not `EventLog`
+
+`EventLog` is the wrong table, not just the wrong shape. It is written by the
+*consumer* after delivery, keyed on a broker-assigned `Upstash-Message-Id` that
+does not exist at publish time, and it carries no retry scheduling. It is a
+consumer dedup ledger. A producer outbox has to be written *before* publish and
+must know when the next attempt is due.
+
+### At-least-once, and stated as such
+
+A crash after `publishJSON` returns but before the row is marked `PUBLISHED`
+causes a redelivery. Exactly-once delivery is not achievable with an
+at-least-once broker and is **not claimed anywhere**. The guarantee is delivered
+at-least-once and consumed effectively-once, via the tool worker's `PENDING`
+claim CAS, the loop handler's step CAS, and a deterministic `deduplicationId`.
+Documenting the weaker guarantee honestly is the point; an "exactly-once" label
+on this design would be false and would hide which guard to trust.
+
+### Claiming is a lease, not a status check
+
+A dispatcher that selects `status = PENDING` and does not change `status` cannot
+exclude a concurrent dispatcher: both read `PENDING`, both publish, and the
+duplicate is manufactured *inside the application*. `attempts` does not fix this
+either — an optimistic version check only excludes writers that raced before the
+read, and a later batch reads the already-incremented value and matches again.
+
+So the claim pushes `availableAt` forward to a lease deadline and requires the
+row to still be due against one `now` captured per batch. That is a real CAS on
+the same field the predicate tests. The cost is a stranded row when a dispatcher
+dies mid-publish, which the lease expires after 30 s — the right trade, because
+a duplicate is made safe by the consumers and a lost event never is.
+
+## Decision 18: `EXPIRED` is a distinct terminal state, not `CANCELLED`
+
+**Status:** `IMPLEMENTED` (Assignment 36)
+
+**Decision.** An unanswered proposal becomes `EXPIRED` with an
+`APPROVAL_TIMEOUT` tool-result. It does not become `CANCELLED`.
+
+### Why the distinction matters
+
+`CANCELLED` is a decision. The model is told the user declined and the system
+prompt says a decline is final. Reusing it for a timeout would tell the model
+the user refused something they were never asked — a false account of a human's
+intent, produced by a machine's impatience, fed straight into the next turn. The
+`APPROVAL_TIMEOUT` result says what actually happened.
+
+The timeout tool-result also instructs the model not to retry **and not to
+achieve the same outcome by another route**. That second clause is the one that
+matters: a capable model told merely to "handle the timeout" reliably finds a
+different tool, and the approval gate is bypassed without ever being violated on
+its own terms.
+
+### Why expiry is transactional with the transcript
+
+The CAS commits `EXPIRED`, a terminal state that `findDueApprovalCandidates` will
+never select again. A crash before the transcript and re-arm commit therefore
+strands the session permanently — the proposal is closed and the query that
+would have recovered it no longer matches it. One transaction removes the state
+entirely: either all of it commits, or the proposal stays
+`PENDING_CONFIRMATION` and the next tick retries.
+
+### Why `NULL` `expiresAt` is never expired
+
+`NULL <= now` is `NULL` in SQL, not true, so pre-migration rows are left alone.
+Closing a proposal against a deadline the user was never shown is the same class
+of mistake as recording a prompt version the session never ran under.
+
+### Why 15 minutes
+
+A number the system picks rather than one the user chose, so it is a judgement
+call. 15 minutes is long enough to read a write proposal and decide, and short
+enough that an abandoned session does not hold resources overnight. It is
+configurable via `AGENT_APPROVAL_TIMEOUT_MS` because the right value is
+product-specific and the schema should not encode that opinion.
+
+## Decision 19: An environment name is not a security boundary
+
+**Status:** `IMPLEMENTED` (Assignment 36)
+
+**Decision.** Queue signature verification is skipped only when
+`ALLOW_UNSIGNED_LOCAL_WORKER === "true"`, and maintenance requires a secret. No
+code path branches on `NODE_ENV` to decide whether to authenticate.
+
+### Why the old check was wrong
+
+`NODE_ENV === "development"` was being used to skip QStash signature
+verification. The failure is not that it is loose in development — it is that
+deployed, preview, and tunnelled processes can all report that value, and the
+handlers behind it perform real writes with real tool inputs. Any deployment
+misconfiguration, proxy, or local tunnel turned a security control off by
+accident, silently and with no signal that it had happened.
+
+`if (process.env.ALLOW_UNSIGNED_LOCAL_WORKER)` would not be an improvement: the
+string `"0"` and the string `"false"` are both truthy, so the two values an
+operator is most likely to type to disable it would enable it. The check is an
+exact comparison, and a worker running unsigned logs a warning naming the
+variable.
+
+### Why maintenance is a queue event, not a cron route
+
+The maintenance pass runs real writes — expiring proposals, failing sessions,
+draining the outbox — so it needs a boundary in front of it. It was originally a
+Vercel cron route behind `AGENT_MAINTENANCE_SECRET`, and both halves of that were
+rejected:
+
+**A static secret is the wrong boundary.** Comparing a bearer value against a
+copy of itself protects against an unauthenticated caller and nothing else: it
+cannot distinguish a genuine invocation from a forged one, and the comparison is
+permanently valid until the secret is rotated. QStash signs every delivery with
+the account's signing key, so the recipient verifies a *real* attestation from
+the *real* sender. Maintenance now runs through the same `verifySignatureAppRouter`
+path as every other event and has no secret of its own. There is nothing to leave
+unset and therefore no fail-open configuration to get wrong.
+
+**A Vercel cron is the wrong trigger.** Its frequency is plan-dependent — once a
+day on Hobby — so a five-minute recovery sweep would have been silently rejected
+at build time on a free tier. It also has no per-delivery identity, so a retry is
+indistinguishable from a first attempt.
+
+What replaced it is a QStash schedule POSTing an `AGENT_MAINTENANCE_REQUESTED`
+CloudEvent to `/api/worker`. The recovery system now has one authentication scheme,
+one scheduler, and one place to look when something stops firing. A partial
+failure throws *after* all duties settle: the broker records the tick as failed and
+retries it, while a broken reaper still cannot cost the approval sweep.
+
+The one thing this does not fix is a missing destination. A schedule pointed at
+`localhost` or a dev tunnel is accepted by QStash and fails on every single tick —
+worse than no schedule, because it looks configured. `scripts/qstash-maintenance-schedule.mjs`
+refuses to create one, which is why the schedule does not exist yet.
+
+## Decision 20: The outbox deliberately has no foreign keys
+
+**Status:** `IMPLEMENTED` (Assignment 36)
+
+**Decision.** `AgentOutboxEvent.sessionId` and `.executionId` are plain strings.
+
+An outbox row is a durable statement that work is *owed*. If it cascaded away
+with its session it would be deleted at exactly the moment the system was behind
+and the event was most valuable — the same cascade that cleans up domain rows
+would erase the record that cleanup was required. Referential integrity here
+would trade a correctable backlog for an unrecoverable gap.
+
+The cost is that the table can hold ids that no longer resolve, and
+`redeliverStalledConfirmedExecutions` re-records intent rather than checking
+existence. That is the correct side to err on: a stale row is inert, a missing
+one is a hang.
