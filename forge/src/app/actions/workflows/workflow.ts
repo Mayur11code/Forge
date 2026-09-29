@@ -8,6 +8,24 @@ import { TriggerNodeDataSchema, ActionNodeDataSchema } from '@/lib/workflow-type
 
 // Import the compiler we just built!
 import { compileWorkflow } from '@/lib/workflow/graph-ui/compiler';
+import { WorkflowValidationError } from '@/lib/workflow-types/workflow';
+
+/**
+ * Turn a compile failure into something the user can act on.
+ *
+ * Without this the validation in `compileWorkflow` is still correct, but the
+ * user is told "Failed to save workflow to database" for what is a problem with
+ * the graph they drew - which reads as the app being broken and sends them to
+ * the wrong place entirely. Returns null when the failure was something else, so
+ * the caller's generic handling takes over.
+ */
+function describeCompileFailure(error: unknown): string | null {
+  if (!(error instanceof WorkflowValidationError)) {
+    return null;
+  }
+
+  return error.issues.map((issue) => issue.message).join(' ');
+}
 
 const IncomingNodeSchema = z.object({
   id: z.string(),
@@ -61,6 +79,11 @@ export async function saveWorkflowState(
     revalidatePath(`/org/${orgId}/workflows`);
     return { success: true, workflowId: workflow.id };
   } catch (error) {
+    const compileError = describeCompileFailure(error);
+    if (compileError) {
+      return { success: false, error: compileError };
+    }
+
     console.error("Failed to save workflow:", error);
     return { success: false, error: "Failed to save workflow to database." };
   }
@@ -104,6 +127,11 @@ export async function updateWorkflowState(
     revalidatePath(`/org/${access.organization.id}/workflows/${workflowId}`);
     return { success: true };
   } catch (error) {
+    const compileError = describeCompileFailure(error);
+    if (compileError) {
+      return { success: false, error: compileError };
+    }
+
     console.error("Failed to update workflow:", error);
     return { success: false, error: "Failed to update workflow." };
   }
