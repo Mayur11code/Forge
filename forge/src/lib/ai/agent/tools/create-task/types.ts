@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { ToolValidationIssue } from "../shared-output";
 import { createTaskSchema } from "./schema";
 
 export type CreateTaskInput = z.infer<typeof createTaskSchema>;
@@ -30,6 +31,13 @@ export type CreateTaskOutput = {
     | "CREATE_FAILED";
   /** Human-readable, safe to surface to the user. */
   error?: string;
+  /**
+   * Present only on INVALID_INPUT, from `buildValidationFailure`. Each entry
+   * names the field that failed so the model can correct that field on its next
+   * turn instead of guessing which argument was malformed. Never contains any
+   * part of the submitted input.
+   */
+  issues?: ToolValidationIssue[];
   /**
    * Present on PROJECT_NOT_FOUND / PROJECT_AMBIGUOUS so the model can correct
    * itself using real projects from the trusted org instead of inventing one.

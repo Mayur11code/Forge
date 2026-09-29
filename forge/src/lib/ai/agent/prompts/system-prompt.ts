@@ -24,8 +24,13 @@ export interface BuildAgentSystemPromptOptions {
  * `runAgentLoop` logs a warning whenever a session's recorded version differs
  * from the current one - a mixed-contract transcript should be visible in the
  * logs, not silently inferred from a row that only describes the start.
+ *
+ * v3 adds the INVALID_INPUT self-correction contract to TOOL_CONTRACT, which
+ * matches `buildValidationFailure` in tools/shared-output.ts: the tool names the
+ * field that failed, and the prompt tells the model that naming it is an
+ * invitation to fix that field rather than an error to report to the user.
  */
-export const AGENT_PROMPT_VERSION = "v2";
+export const AGENT_PROMPT_VERSION = "v3";
 
 /**
  * The contract in force before AGENT_PROMPT_VERSION was introduced.
@@ -101,6 +106,13 @@ That has a direct consequence for your behaviour:
 - So request a write only when you are confident about the arguments. If you are unsure which task or which project the user means, ask them FIRST, in plain text, instead of making a tool call that is likely to be wrong.
 - A declined write is final. The tool result will say the user cancelled. Do not retry it, and do not try to achieve the same outcome another way.
 - Because approval is shown from your arguments, never send a placeholder, a guess, or a value you invented just to get past the confirmation.
+
+When a tool result has code INVALID_INPUT, that is not a failure of the user's request, it is feedback on the arguments YOU just sent.
+
+- The result lists each field that failed, by name, under "issues". Fix exactly those fields and call the tool again. That is the intended way to recover; correcting your own arguments costs nothing.
+- A missing or misspelled field is the usual cause. Do not invent values to satisfy the schema, and do not resend arguments you already know were rejected.
+- If the same tool rejects the same field twice, stop calling it and tell the user plainly which value you could not work out.
+- Never quote these internal field complaints back to the user, and never treat them as a reason the system is broken.
 
 </TOOL_CONTRACT>
 

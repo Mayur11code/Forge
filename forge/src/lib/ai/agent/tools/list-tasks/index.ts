@@ -12,7 +12,7 @@ import type { ToolExecutionContext } from "../../types";
 import { listTasksInOrg } from "@/lib/tasks/read-tasks";
 import { resolveProjectNameInOrg } from "@/lib/tasks/projects";
 
-import type { TaskOutput } from "../shared-output";
+import { buildValidationFailure, type TaskOutput } from "../shared-output";
 
 type ToolOutput = ToolResultPart["output"];
 
@@ -75,12 +75,10 @@ export async function executeListTasks(
   const parsed = listTasksSchema.safeParse(input);
 
   if (!parsed.success) {
-    const value: TaskOutput = {
-      ok: false,
-      code: "INVALID_INPUT",
-      error:
-        parsed.error.issues[0]?.message ?? "Invalid listTasks input.",
-    };
+    const value: TaskOutput = buildValidationFailure(
+      parsed.error,
+      "listTasks",
+    );
 
     return { type: "json", value };
   }

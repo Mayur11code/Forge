@@ -10,6 +10,7 @@ import { createTaskInOrg } from "@/lib/tasks/create-task";
 
 import { createTaskSchema } from "./schema";
 import type { CreateTaskOutput } from "./types";
+import { buildValidationFailure } from "../shared-output";
 
 type ToolOutput = ToolResultPart["output"];
 
@@ -52,11 +53,10 @@ export async function executeCreateTask(
   const parsed = createTaskSchema.safeParse(input);
 
   if (!parsed.success) {
-    const value: CreateTaskOutput = {
-      ok: false,
-      code: "INVALID_INPUT",
-      error: parsed.error.issues[0]?.message ?? "Invalid task input.",
-    };
+    const value: CreateTaskOutput = buildValidationFailure(
+      parsed.error,
+      "createTask",
+    );
 
     return { type: "json", value };
   }

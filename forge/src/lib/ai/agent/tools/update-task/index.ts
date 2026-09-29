@@ -16,7 +16,7 @@ import type { ToolExecutionContext } from "../../types";
 import { resolveTaskInOrg } from "@/lib/tasks/read-tasks";
 import { updateTaskInOrg } from "@/lib/tasks/update-task";
 
-import type { TaskOutput } from "../shared-output";
+import { buildValidationFailure, type TaskOutput } from "../shared-output";
 
 type ToolOutput = ToolResultPart["output"];
 
@@ -91,12 +91,10 @@ export async function executeUpdateTask(
   const parsed = updateTaskSchema.safeParse(input);
 
   if (!parsed.success) {
-    const value: TaskOutput = {
-      ok: false,
-      code: "INVALID_INPUT",
-      error:
-        parsed.error.issues[0]?.message ?? "Invalid updateTask input.",
-    };
+    const value: TaskOutput = buildValidationFailure(
+      parsed.error,
+      "updateTask",
+    );
 
     return { type: "json", value };
   }
