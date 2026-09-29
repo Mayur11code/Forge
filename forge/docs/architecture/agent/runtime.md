@@ -693,11 +693,33 @@ full machine, including the two new Phase 2 states.
 | `expireStaleApprovals` | `PENDING_CONFIRMATION`, `expiresAt <= now`, session live | CAS the execution to `EXPIRED`, write the `APPROVAL_TIMEOUT` tool-result, record the `AGENT_LOOP_REQUESTED` intent — one transaction |
 | `reapOrphanedToolExecutions` | `RUNNING`, no heartbeat for 10 min, session `RUNNING` | CAS the execution to `CANCELLED`; CAS the session to `FAILED` + `terminalReason: "ERROR"`; publish `FAILED` |
 | `redeliverStalledConfirmedExecutions` | `PENDING`, stale, session `RUNNING` | re-record the `AGENT_TOOL_EXECUTION_REQUESTED` intent |
+| `redriveStalledSessions` | `RUNNING`, `updatedAt` older than `AGENT_STALLED_SESSION_AGE_MS` (10 min), no `PENDING`/`RUNNING`/`PENDING_CONFIRMATION` execution, re-confirmed under the session lock | re-record or bounded-re-arm the `AGENT_LOOP_REQUESTED` intent; after `AGENT_STALLED_SESSION_MAX_REDRIVES` (3) → `FAILED` + `terminalReason: "ERROR"` |
 
-All three are idempotent: the second run matches nothing. All are bounded by
+All four are idempotent: the second run matches nothing. All are bounded by
 `AGENT_MAINTENANCE_BATCH_SIZE` (100) and ordered, so a pass never walks an
 unbounded result set and anything beyond the cap is simply handled on the next
 tick.
+
+`redriveStalledSessions` covers a shape the other three cannot see: a session
+that claimed a step, had `AGENT_LOOP_REQUESTED` published, and then died with
+**no execution row at all** — the Gemini turn never started. There is nothing for
+the execution sweeps to select, and the session stays `RUNNING` forever.
+
+It has no execution heartbeat to read, so it substitutes the **session lock** for
+one. `updatedAt` is an indexed pre-filter only; the session is re-read under
+`withAgentSessionLock` and re-checked for `RUNNING`, staleness, and the absence of
+an in-flight execution before anything is published. The pre-filter may make us
+*look*; the lock *decides*. `PENDING_CONFIRMATION` counts as in-flight here
+because an approval-parked session is still `RUNNING` at the session level.
+
+Its delivery reuses the ordinary outbox under the key
+`AGENT_LOOP_REQUESTED:<sessionId>#redrive#<currentStep>`. The one exception is
+`rearmOutboxEvent`, a CAS on `PUBLISHED → PENDING` needed because of a race
+observed live: the sweep publishes while still holding the session's own lock,
+the loop worker treats that contention as a successful delivery, and QStash never
+retries — leaving a `PUBLISHED` row that `recordAgentEvent` will never resurrect.
+Bounded at 3 attempts, after which the session is failed terminally rather than
+left to spin.
 
 `redeliverStalledConfirmedExecutions` **re-records intent rather than
 publishing**. In normal operation this is a no-op: `confirmToolExecution`
@@ -976,7 +998,7 @@ second place to look when one of them silently stops firing.
 > a self-comparison of one static secret is a weaker boundary than QStash's
 > per-delivery request signing. `vercel.json` and the cron route are deleted.
 
-Performs all four duties in one pass, each bounded by the event payload's `limit`
+Performs all five duties in one pass, each bounded by the event payload's `limit`
 (default `AGENT_MAINTENANCE_BATCH_SIZE`, 100; schema-bounded to `1..1000`), and
 reports counts for each:
 
@@ -985,6 +1007,7 @@ reports counts for each:
 | Expire stale approvals | `expireStaleApprovals({ limit })` |
 | Reap orphaned executions | `reapOrphanedToolExecutions({ limit })` |
 | Re-record stalled dispatches | `redeliverStalledConfirmedExecutions({ limit })` |
+| Re-drive stalled sessions | `redriveStalledSessions({ limit })` |
 | Drain the outbox | `dispatchOutboxBatch(limit)` |
 
 **Authentication is the worker's, not a second scheme.** Verification comes from
@@ -999,7 +1022,7 @@ which is indistinguishable from a working sweeper. The throw is safe to retry
 because every duty is idempotent, and the retry genuinely reaches the handler:
 the dispatcher keys idempotency on the QStash message id and re-arms a `FAILED`
 `EventLog` row instead of treating it as processed. The failure is raised *after*
-all four duties settle, so a broken reaper never also costs the approval sweep.
+all five duties settle, so a broken reaper never also costs the approval sweep.
 
 ### The schedule
 
@@ -1018,6 +1041,13 @@ temporary-tunnel destination. QStash accepts such a URL without complaint and th
 fails every single tick, which is strictly worse than having no schedule: it looks
 configured, and nothing reports the failure until someone goes looking for it.
 
+Tunnel destinations are now admitted, but only behind an explicit
+`AGENT_MAINTENANCE_ALLOW_TUNNEL=yes`. That is how the current schedule
+(`scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj`) came to exist and deliver real signed ticks
+while there is still no stable public origin. The guard is opt-in rather than
+removed on purpose: the failure mode it prevents is invisible, and a developer
+should have to type the name of the compromise.
+
 The replayed body **omits** CloudEvents `id` and `time` on purpose. A schedule body
 is a static template replayed verbatim, so a timestamp written into it would be
 frozen at creation time and every tick would claim to have happened then. The
@@ -1029,8 +1059,10 @@ actual arrival. An explicit `id` still wins, so an outbox retry keeps its identi
 | Gap | Status | Scheduled |
 | --- | --- | --- |
 | ~~DB-write → publish-failure window~~ | **CLOSED** (outbox) | — |
-| ~~Reaper implemented but not scheduled~~ | **OPEN** — QStash schedule not yet created (no public destination) | — |
-| ~~No proposal/approval timeout~~ | **CLOSED** (`EXPIRED`) | — |
+| ~~Reaper implemented but not scheduled~~ | **CLOSED** — schedule `scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj` exists and delivers; the destination is still a temporary tunnel, so a stable origin is owed | QStash, every 5 min |
+| ~~Sessions frozen mid-turn with no execution in flight~~ | **CLOSED** (`redriveStalledSessions`); live re-arm path not yet proven | same tick |
+| Loop worker acknowledges deliveries it refuses on lock contention | **OPEN** — re-arm bounds it to 3 attempts for re-drive traffic, but an ordinary tool→loop handoff that loses the race is still dropped | — |
+| ~~No proposal/approval timeout~~ | **CLOSED** (`EXPIRED`) | same tick |
 | Queue signature verification bypassable via `NODE_ENV` | **CLOSED** (explicit opt-in) | — |
 | Outbox relies on at-least-once delivery; duplicates are possible by design | `ACCEPTED` | — |
 | No model-call timeout bound | `PLANNED` | Phase 4 |
@@ -1080,21 +1112,32 @@ actual arrival. An explicit `id` still wins, so an outbox retry keeps its identi
 | An outbox writer could be called outside a transaction and silently reintroduce the original bug | `recordAgentEvent` requires its `tx` argument |
 | `AgentOutboxEvent` referenced sessions and executions | Plain strings, **no** foreign keys — cascading an outbox row away would delete work that is still owed |
 | Tests could construct a real `PrismaClient` and hit the configured database | `jest.setup-db-guard.ts` fails the test run on any real construction |
+| A session whose `AGENT_LOOP_REQUESTED` was already published, and the loop worker acknowledged the delivery it refused on lock contention, was stranded **permanently** — the sweep re-selected it every tick and `recordAgentEvent` would never resurrect a `PUBLISHED` row | `redriveStalledSessions` + `rearmOutboxEvent` (CAS `PUBLISHED → PENDING`), bounded at 3 attempts then failed terminally |
+| An approval-parked session is `RUNNING` at the session level, so "no `PENDING`/`RUNNING` execution" would re-drive a turn nobody approved | `PENDING_CONFIRMATION` counts as in-flight; mutation-checked by test |
 
 ### Verified, and not yet verified
 
-`SOURCE VERIFIED` — 19 suites / 253 tests pass, including non-vacuous outbox
-concurrency and expiry coverage. `tsc --noEmit` clean; scoped ESLint clean.
+`SOURCE VERIFIED` — 19 suites / 289 tests pass, including non-vacuous outbox
+concurrency, expiry, and `PENDING_CONFIRMATION`-exclusion coverage (each
+mutation-checked by removing the guard and confirming the failure). `tsc --noEmit`
+clean; scoped ESLint clean.
 
-`RUNTIME VERIFIED` — **not claimed.** No worker, queue, or database has been
-exercised in a running process. The maintenance schedule does not exist in the
-QStash account and there is no public worker destination to create it against, so
-the four recovery duties have no caller in any running environment.
+`RUNTIME VERIFIED` — achieved against real infrastructure: QStash publish → tunnel
+→ signed delivery (and rejection of an unsigned replay), Redis lock
+acquire/renew/release including contention, Gemini tool-call/tool-result
+round-trips, approval expiry/cancel/confirm/continue, duplicate delivery, the
+maintenance sweep returning real per-duty counts, and one session recovering
+end-to-end (`cmumu6ja20006uogc4zrxpeft` → `completed`).
 
-`LIVE VERIFIED` — **not claimed.** The five migrations have never been applied,
-and the only configured `DATABASE_URL` in this environment is a live Neon primary.
-No live Gemini round-trip, QStash delivery, Redis lock/heartbeat, reaper tick, or
-Pusher authorization has been observed.
+`LIVE VERIFIED` — **not claimed.** All of the above ran against a local Next.js
+dev server behind a temporary `ngrok-free.dev` tunnel, against the real Neon
+primary and the real QStash account. That is a genuine runtime exercise, but it
+is not a deployment, and no claim is made about production behaviour.
+
+Still specifically unproven: the **re-arm** path completing a live cycle, and the
+**stale-execution reaper firing in the same tick as a session re-drive**. The live
+re-test was blocked by the Neon endpoint resetting every connection (`P1017` /
+`ECONNRESET`), not by anything in the code.
 
 Full breakdown, including the guarantees that are *not* claimed, in
 [`assignments-35-36-audit.md`](./assignments-35-36-audit.md).

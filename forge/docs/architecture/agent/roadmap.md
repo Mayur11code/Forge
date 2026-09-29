@@ -50,9 +50,10 @@ the original planning matrix have moved from `PLANNED / VERIFY` to
 | Session GET | `IMPLEMENTED` | `GET /api/agent/session/[sessionId]`, owner-scoped, includes open proposals |
 | Lock heartbeat | `IMPLEMENTED` | Token-guarded renewal at `ttl / 3` |
 | Execution liveness heartbeat | `IMPLEMENTED` | Claimed rows refreshed every 30 s; staleness re-checked inside the reaper CAS |
-| Orphan recovery | `IMPLEMENTED` (handler) / `NOT SCHEDULED` | `reapOrphanedToolExecutions` + `redeliverStalledConfirmedExecutions` via `AGENT_MAINTENANCE_REQUESTED`; the QStash schedule does not exist yet (no public destination) |
+| Orphan recovery | `IMPLEMENTED` / `SCHEDULED` | `reapOrphanedToolExecutions` + `redeliverStalledConfirmedExecutions` via `AGENT_MAINTENANCE_REQUESTED`, driven by QStash schedule `scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj`; real signed ticks observed. Destination is a temporary tunnel — a stable origin is still owed |
+| Stalled-session recovery | `IMPLEMENTED` / `SCHEDULED` (live proof partial) | `redriveStalledSessions` + bounded `rearmOutboxEvent`; 5th maintenance duty. Lock is the liveness signal, `updatedAt` only a pre-filter. See [Decision 21](./decisions.md#decision-21-a-stale-session-is-proven-dead-by-its-lock-not-its-timestamp) |
 | Prompt versioning | `PARTIAL` | `AGENT_PROMPT_VERSION` + `AgentSession.promptVersion` (session-level only; no per-message hash) |
-| Unit tests (agent) | `IMPLEMENTED` | 19 suites, 253 tests |
+| Unit tests (agent) | `IMPLEMENTED` | 19 suites, 289 tests |
 | `searchKnowledge` | `REMOVED` | Replaced by `createTask` |
 | Dedicated tool-execution route | `REMOVED` | Folded into `/api/worker` — one consumer per event |
 | Agent UI | `PLANNED` | **No client exists.** Nothing calls `/api/agent/init` or the session GET |
@@ -317,7 +318,7 @@ leaves the execution row orphaned, and a QStash redelivery cannot recover it
 because `markToolExecutionRunning` returns `count === 0` and the worker exits
 silently.
 
-`forge/src/lib/ai/agent/reaper.ts` contains all three sweeps, and
+`forge/src/lib/ai/agent/reaper.ts` contains all four sweeps, and
 `AGENT_EXECUTION_HEARTBEAT_INTERVAL_MS` gives the first one something real to
 measure:
 
@@ -326,6 +327,7 @@ measure:
 | `expireStaleApprovals` | `PENDING_CONFIRMATION`, `expiresAt <= now`, session live | CAS → `EXPIRED` + `APPROVAL_TIMEOUT` result + re-arm intent, one transaction |
 | `reapOrphanedToolExecutions` | `RUNNING`, no heartbeat for 10 min, session `RUNNING` | CAS → `CANCELLED`; session → `FAILED` + `terminalReason`; publish `FAILED` |
 | `redeliverStalledConfirmedExecutions` | `PENDING`, stale, session `RUNNING` | re-record the dispatch intent |
+| `redriveStalledSessions` | `RUNNING`, `updatedAt` older than 10 min, **no** `PENDING`/`RUNNING`/`PENDING_CONFIRMATION` execution, **re-confirmed under the session lock** | re-record or bounded-re-arm the `AGENT_LOOP_REQUESTED` intent; after 3 attempts → `FAILED` + `terminalReason` |
 
 Liveness is a **heartbeat**, not a duration. Nothing else touches a `RUNNING`
 row, so without a heartbeat a slow-but-healthy execution and a dead worker are
@@ -333,18 +335,27 @@ indistinguishable — and cancelling a slow execution kills a side effect that w
 about to succeed. The staleness predicate is repeated inside the CAS for the
 same reason: the read-then-write gap is exactly when the sweep fires.
 
-**The scheduler gap is NOT closed.** `AGENT_MAINTENANCE_REQUESTED` runs all of them
-plus the outbox drain, bounded by the payload's `limit`, through the signed
-`/api/worker` dispatcher. A failure in one duty does not stop the others, and the
-pass throws afterwards so QStash retries the tick.
+`redriveStalledSessions` has no heartbeat to read, because there is no execution
+row at all. It substitutes the **session lock** for a heartbeat: `updatedAt` is
+only a pre-filter, and the session is re-read under the lock before anything is
+published. See [Decision 21](./decisions.md#decision-21-a-stale-session-is-proven-dead-by-its-lock-not-its-timestamp).
 
-But the QStash schedule that would deliver it **does not exist** — the account's
-schedule list contains no `AGENT_MAINTENANCE_REQUESTED` entry, and there is no
-public worker URL to point one at. Until a deployment exists, this is a sweeper
-with no caller, which is the same failure it was written to fix.
+**The scheduler gap is now closed, with a caveat.** `AGENT_MAINTENANCE_REQUESTED`
+runs all of them plus the outbox drain, bounded by the payload's `limit`, through
+the signed `/api/worker` dispatcher. A failure in one duty does not stop the
+others, and the pass throws afterwards so QStash retries the tick. Schedule
+`scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj` exists and real signed ticks have executed the
+sweep.
 
-Still open: sweeping sessions whose *step* froze with no tool execution in
-flight. Nothing currently recognises that shape.
+The caveat is durability of the destination, not existence of the schedule: the
+worker is reachable only through a temporary `ngrok-free.dev` tunnel and
+`APP_URL` is still `localhost`, so a stable public origin is still owed. A
+schedule that exists but cannot be reached looks identical to one that works, from
+every document and every dashboard.
+
+Sweeping sessions whose *step* froze with no tool execution in flight is no
+longer open — that is `redriveStalledSessions`. Its live re-arm path is not yet
+proven; see the audit's *What is NOT verified*.
 
 ### Outbox
 
@@ -481,10 +492,14 @@ where it does anything. The consumers' CAS remains the primary guard.
 
 ## Phase 6 — Testing
 
-**Status:** `PARTIAL` — 19 suites, 253 tests. `npx tsc --noEmit` clean. No
+**Status:** `PARTIAL` — 19 suites, 289 tests. `npx tsc --noEmit` clean. No
 coverage thresholds are configured. `npx jest` was not run against a live
 database, and a `jest.setup-db-guard.ts` guard now fails any test that
 constructs a real `PrismaClient`.
+
+Two assertions were mutation-checked rather than trusted: removing the `PENDING_CONFIRMATION`
+exclusion from `redriveStalledSessions` fails its test, as does removing the
+outbox claim lease. A test that has never been seen to fail is not evidence.
 
 ### Unit tests — `PLANNED` (highest value)
 
