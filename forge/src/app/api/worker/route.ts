@@ -42,6 +42,31 @@ const handleAgentMaintenanceEvent = createWorker(
 
 const knownEventTypes = new Set<string>(EventTypes);
 
+/**
+ * Is this a QStash signature rejection?
+ *
+ * `verifySignatureAppRouter` throws a `SignatureError` when the delivery cannot be
+ * authenticated. The outer catch used to turn that into a 500, which is wrong in a
+ * way that costs real money: QStash retries every 5xx, so a forged or
+ * misconfigured delivery would be retried against its full budget against a
+ * request that can never succeed. Worse, it reported an infrastructure fault
+ * ("Router failed") for what is an authentication decision, so the real cause was
+ * invisible in the response and only appeared in logs.
+ *
+ * 401 is the honest answer and the non-retryable one. Genuine transient
+ * infrastructure failures still return 500 and still get retried, which is what
+ * the retry budget is actually for.
+ */
+function isSignatureError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  return (
+    error.name === "SignatureError" ||
+    error.constructor?.name === "SignatureError" ||
+    /signature|jwt|jws|compact/i.test(error.message)
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const clonedReq = req.clone();
@@ -102,6 +127,13 @@ export async function POST(req: NextRequest) {
       }
     }
   } catch (error) {
+    if (isSignatureError(error)) {
+      // Deliberately terse. The reason a signature failed is exactly the
+      // information an attacker probing this endpoint wants back.
+      console.error("[WORKER] Rejected an unauthenticated delivery.");
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     console.error("❌ ROUTER FATAL ERROR:", error);
     return NextResponse.json({ error: "Router failed" }, { status: 500 });
   }

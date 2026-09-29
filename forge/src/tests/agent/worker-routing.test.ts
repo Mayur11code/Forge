@@ -45,6 +45,12 @@ jest.mock("@/app/api/worker/agent-maintenance/am", () => ({
 // eslint-disable-next-line no-var
 var workerBindings: Map<string, unknown>;
 
+// Lets a test make the wrapped handler throw, which is how the route's catch
+// block is reached. verifySignatureAppRouter is mocked out here, so without this
+// the signature-rejection path cannot be exercised at all.
+// eslint-disable-next-line no-var
+var dispatchOverride: (() => void) | null = null;
+
 jest.mock("@/lib/events/worker", () => ({
   createWorker: (eventType: string, handler: unknown) => {
     if (!workerBindings) {
@@ -54,6 +60,10 @@ jest.mock("@/lib/events/worker", () => ({
     workerBindings.set(eventType, handler);
 
     return async function invoke() {
+      if (dispatchOverride) {
+        dispatchOverride();
+      }
+
       void handler;
       return new Response(JSON.stringify({ ok: true, eventType }), {
         status: 200,
@@ -193,5 +203,57 @@ describe("unhandled and unknown events", () => {
     const res = await post(undefined);
 
     expect(res.status).toBe(400);
+  });
+});
+
+describe("signature failures", () => {
+  // Regression target: verifySignatureAppRouter throws SignatureError, and the
+  // outer catch turned every one of them into 500 "Router failed". QStash retries
+  // 5xx, so a forged or misconfigured delivery was retried against its whole
+  // budget for a request that can never succeed, and an authentication decision
+  // was reported as an infrastructure fault.
+  function throwSignatureError() {
+    const err = new Error("Invalid Compact JWS");
+    err.name = "SignatureError";
+    throw err;
+  }
+
+  afterEach(() => {
+    dispatchOverride = null;
+  });
+
+  it.each([
+    ["AGENT_LOOP_REQUESTED"],
+    ["AGENT_TOOL_EXECUTION_REQUESTED"],
+    ["AGENT_MAINTENANCE_REQUESTED"],
+  ])("answers 401, not a retryable 500, for %s", async (type) => {
+    dispatchOverride = throwSignatureError;
+
+    const res = await post(type);
+
+    // Non-retryable on purpose: retrying cannot fix a bad signature.
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({ error: "Unauthorized" });
+  });
+
+  it("does not leak why verification failed", async () => {
+    dispatchOverride = throwSignatureError;
+
+    const res = await post("AGENT_LOOP_REQUESTED");
+    const body = JSON.stringify(await res.json());
+
+    // The precise cause is what an attacker probing this endpoint wants back.
+    expect(body).not.toMatch(/jws|jwt|signature|compact/i);
+  });
+
+  it("still returns 500 for a genuine infrastructure failure", async () => {
+    // The retry budget exists for this, so the 401 path must not swallow it.
+    dispatchOverride = () => {
+      throw new Error("ECONNRESET talking to Postgres");
+    };
+
+    const res = await post("AGENT_LOOP_REQUESTED");
+
+    expect(res.status).toBe(500);
   });
 });
