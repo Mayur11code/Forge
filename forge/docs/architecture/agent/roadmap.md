@@ -29,7 +29,7 @@ the original planning matrix have moved from `PLANNED / VERIFY` to
 | --- | --- | --- |
 | `AgentSession` | `IMPLEMENTED` | Durable persistence layer; 4 indexes incl. `terminalReason` |
 | `AgentMessage` | `IMPLEMENTED` | Raw AI SDK `ModelMessage` JSON, ordered by `createdAt` only |
-| `AgentToolExecution` | `IMPLEMENTED` | `toolCallId` unique; proposal/dispatch/terminal states incl. `PENDING_CONFIRMATION` and `CANCELLED` |
+| `AgentToolExecution` | `IMPLEMENTED` | `toolCallId` unique; proposal/dispatch/terminal states incl. `PENDING_CONFIRMATION`, `CANCELLED` and `EXPIRED` |
 | Event-driven loop | `IMPLEMENTED` | QStash re-arms the loop; no long-running request |
 | Redis lock | `IMPLEMENTED` | `SET NX PX` + token-guarded Lua renewal at `ttl / 3` |
 | CAS step claim | `IMPLEMENTED` | `updateMany` on `currentStep: expectedStep` |
@@ -50,9 +50,9 @@ the original planning matrix have moved from `PLANNED / VERIFY` to
 | Session GET | `IMPLEMENTED` | `GET /api/agent/session/[sessionId]`, owner-scoped, includes open proposals |
 | Lock heartbeat | `IMPLEMENTED` | Token-guarded renewal at `ttl / 3` |
 | Execution liveness heartbeat | `IMPLEMENTED` | Claimed rows refreshed every 30 s; staleness re-checked inside the reaper CAS |
-| Orphan recovery | `PARTIAL` | `reapOrphanedToolExecutions` + `redeliverStalledConfirmedExecutions` exist but are **not scheduled** |
+| Orphan recovery | `IMPLEMENTED` (handler) / `NOT SCHEDULED` | `reapOrphanedToolExecutions` + `redeliverStalledConfirmedExecutions` via `AGENT_MAINTENANCE_REQUESTED`; the QStash schedule does not exist yet (no public destination) |
 | Prompt versioning | `PARTIAL` | `AGENT_PROMPT_VERSION` + `AgentSession.promptVersion` (session-level only; no per-message hash) |
-| Unit tests (agent) | `IMPLEMENTED` | 13 suites, 141 tests |
+| Unit tests (agent) | `IMPLEMENTED` | 19 suites, 253 tests |
 | `searchKnowledge` | `REMOVED` | Replaced by `createTask` |
 | Dedicated tool-execution route | `REMOVED` | Folded into `/api/worker` — one consumer per event |
 | Agent UI | `PLANNED` | **No client exists.** Nothing calls `/api/agent/init` or the session GET |
@@ -61,8 +61,10 @@ the original planning matrix have moved from `PLANNED / VERIFY` to
 | Task status transitions | `PARTIAL` | `IN_PROGRESS` / `DONE` now writable via `updateTask`, with no domain transition rules |
 | Task deletion | `DEFERRED` | No safe domain semantics; `DESTRUCTIVE` policy is ready but unused |
 | Project list in prompt | `PLANNED` | Disambiguation costs a round trip |
-| Outbox | `PLANNED` | DB-write → publish-failure window is open |
-| Approval timeout | `PLANNED` | A `PENDING_CONFIRMATION` row persists until the user acts |
+| Transactional outbox | `IMPLEMENTED` | `AgentOutboxEvent` written in the caller's transaction; lease-claimed dispatcher, backoff, deterministic ids |
+| Approval timeout | `IMPLEMENTED` | `EXPIRED` after `expiresAt` (15 min default); expiry + transcript + re-arm are one transaction |
+| Maintenance auth | `IMPLEMENTED` | None needed — inherits the worker's QStash per-delivery signature verification |
+| Queue signature bypass | `IMPLEMENTED` | `ALLOW_UNSIGNED_LOCAL_WORKER === "true"`; no `NODE_ENV` gate |
 | Tool result pairing | `PLANNED` | Guaranteed structurally today, not by validation |
 | Message ordering | `PLANNED` | `createdAt` alone; no deterministic secondary key |
 | Persisted message validation | `PLANNED` | `message-mapper.ts` casts JSON without validating |
@@ -302,11 +304,12 @@ event.
 
 ## Phase 4 — Durability / Crash Recovery
 
-**Status:** `PARTIAL` — the primitives exist, nothing drives them yet
+**Status:** `IMPLEMENTED` (Assignment 36) except sessions whose step froze with no
+execution in flight
 
 ### Event recovery
 
-**Status:** `IMPLEMENTED, NOT SCHEDULED`
+**Status:** `IMPLEMENTED, NOW SCHEDULED`
 
 A worker crash mid-loop leaves a session in `RUNNING` with a frozen
 `currentStep`. A crash inside the tool worker after the `PENDING → RUNNING` CAS
@@ -314,14 +317,15 @@ leaves the execution row orphaned, and a QStash redelivery cannot recover it
 because `markToolExecutionRunning` returns `count === 0` and the worker exits
 silently.
 
-`forge/src/lib/ai/agent/reaper.ts` now contains both sweeps, and
+`forge/src/lib/ai/agent/reaper.ts` contains all three sweeps, and
 `AGENT_EXECUTION_HEARTBEAT_INTERVAL_MS` gives the first one something real to
 measure:
 
 | Function | Selects | Acts |
 | --- | --- | --- |
+| `expireStaleApprovals` | `PENDING_CONFIRMATION`, `expiresAt <= now`, session live | CAS → `EXPIRED` + `APPROVAL_TIMEOUT` result + re-arm intent, one transaction |
 | `reapOrphanedToolExecutions` | `RUNNING`, no heartbeat for 10 min, session `RUNNING` | CAS → `CANCELLED`; session → `FAILED` + `terminalReason`; publish `FAILED` |
-| `redeliverStalledConfirmedExecutions` | `PENDING`, stale, session `RUNNING` | re-publish the dispatch |
+| `redeliverStalledConfirmedExecutions` | `PENDING`, stale, session `RUNNING` | re-record the dispatch intent |
 
 Liveness is a **heartbeat**, not a duration. Nothing else touches a `RUNNING`
 row, so without a heartbeat a slow-but-healthy execution and a dead worker are
@@ -329,48 +333,62 @@ indistinguishable — and cancelling a slow execution kills a side effect that w
 about to succeed. The staleness predicate is repeated inside the CAS for the
 same reason: the read-then-write gap is exactly when the sweep fires.
 
-**What is still missing: the scheduler.** No cron, no timer, no route invokes
-these. Until one does, a stranded execution still hangs its session. Also open:
-sweeping sessions whose *step* froze with no tool execution in flight, and any
-approval timeout.
+**The scheduler gap is NOT closed.** `AGENT_MAINTENANCE_REQUESTED` runs all of them
+plus the outbox drain, bounded by the payload's `limit`, through the signed
+`/api/worker` dispatcher. A failure in one duty does not stop the others, and the
+pass throws afterwards so QStash retries the tick.
+
+But the QStash schedule that would deliver it **does not exist** — the account's
+schedule list contains no `AGENT_MAINTENANCE_REQUESTED` entry, and there is no
+public worker URL to point one at. Until a deployment exists, this is a sweeper
+with no caller, which is the same failure it was written to fix.
+
+Still open: sweeping sessions whose *step* froze with no tool execution in
+flight. Nothing currently recognises that shape.
 
 ### Outbox
 
-**Status:** `PLANNED — open`
+**Status:** `IMPLEMENTED` (Assignment 36)
 
-The open failure window:
+The failure window that motivated this:
 
 ```mermaid
 flowchart TD
-    A[DB write succeeds] --> B[pusherServer.trigger fails]
-    B --> C[UI never learns<br/>session is stuck in UI state]
+    A[DB write succeeds] --> B[publishEvent to QStash fails]
+    B --> C[no event will ever exist<br/>session is stuck]
 ```
 
-Every terminal publish is an inline `await pusherServer.trigger(...)` after
-`updateMany`, with no transactional coupling. A crash in that gap leaves the
-database correct and the UI permanently stale until a manual refresh.
+Every domain transition published inline after its own `updateMany`, with no
+transactional coupling. A crash in that gap left the database correct and the
+event permanently gone, with no recovery path — because the recovery paths that
+did exist all read state that said the work was already done.
 
-Intended model:
+The implemented model:
 
 ```mermaid
 flowchart TD
     T[transaction] --> D[domain state]
-    T --> O[outbox row]
-    O --> P[relay / publisher]
-    P --> X[Pusher + events]
+    T --> O[AgentOutboxEvent PENDING]
+    O --> L[lease-claimed dispatcher]
+    L --> P[QStash publish, deterministic id]
+    P --> S[mark PUBLISHED, or backoff]
 ```
 
-The domain write and an outbox row commit together; a separate relay drains the
-table. The UI stops depending on an RPC that happened to succeed.
+The domain write and the outbox row commit together; the dispatcher drains
+separately. Delivery is **at-least-once and only at-least-once** — exactly-once
+is not claimed. Duplicates are made safe by the consumers' own CAS (tool worker
+claims only `PENDING`, loop handler only advances a step it holds) plus the
+deterministic `deduplicationId`. Failed publishes stay `PENDING` with an
+incremented attempt count and a backoff along
+`AGENT_OUTBOX_BACKOFF_MS`; they are never dropped.
 
-This also makes Pusher replayable, which matters because Pusher is explicitly
-*transport only* — `AgentSession` is the source of truth, and today there is
-nothing to replay from.
+Claiming is a **lease on `availableAt`**, not a `status = PENDING` read. The
+claim mutates the very field the predicate tests, so an overlapping maintenance
+tick reads a row that is no longer due and matches nothing. A status-only check
+would let both ticks "win" and publish the same event twice from inside the app.
 
-The same window exists on the confirmation endpoints: the CAS commits, then the
-publish is a separate call. A publish failure there leaves a `PENDING`
-execution with no dispatch — recoverable by `redeliverStalledConfirmedExecutions`
-once it is scheduled, which is another reason the scheduler matters.
+Pusher remains transport-only. The outbox makes the *event* stream replayable;
+the UI's own live-update gap is a separate concern and is not closed by this.
 
 ### Lock lease / heartbeat
 
@@ -396,11 +414,24 @@ worker owns the claim and no other path would ever transition the row.
 
 ### Approval timeout
 
-**Status:** `PLANNED — open**
+**Status:** `IMPLEMENTED` (Assignment 36)
 
-A `PENDING_CONFIRMATION` proposal persists until the user acts. There is no
-`expiresAt` column and no sweeper. A proposal abandoned by a user who navigates
-away is indistinguishable from one they are still reading.
+`AgentToolExecution.expiresAt` is stamped at proposal time from
+`getAgentApprovalTimeoutMs()` (15 min default, `AGENT_APPROVAL_TIMEOUT_MS`
+overridable), indexed with `status` so the sweep stays bounded. A `NULL`
+`expiresAt` — a pre-migration row — is never expired, since `NULL <= x` is not
+true.
+
+`expireStaleApprovals` calls `expireToolExecutionAndContinue`, which commits the
+`EXPIRED` CAS, the `APPROVAL_TIMEOUT` tool-result, and the re-arm intent in one
+transaction. That atomicity is load-bearing: with the old three-step shape a
+crash after the CAS left a **terminal** execution that no sweep would ever
+select again, stranding the session permanently.
+
+A terminal session is still closed but not continued — there is no turn left to
+continue. The model is told the action did not happen, must not be retried, and
+must not be reached by another route, which is the part that stops it from
+finding a workaround around the gate.
 
 ## Phase 5 — Reliability / Correctness Hardening
 
@@ -442,16 +473,18 @@ against the real `where` clause, including that a `CANCELLED` and a
 `FAILED → PENDING` re-arm CAS loses, execution is skipped and the worker still
 returns `200`. That is the same class of bug Phase 1 removed from the dispatcher.
 
-Note also that the QStash `deduplicationId` is a hash of the whole CloudEvent
-including `time` and a `Date.now()`-derived id, so it is unique per publish and
-can never collapse a genuine re-publish. It is not a dedup mechanism.
+Note also that the QStash `deduplicationId` was a hash of the whole CloudEvent
+including `time` and a `Date.now()`-derived id, so it was unique per publish and
+could never collapse a genuine re-publish. The outbox dispatcher now overrides it
+with a deterministic value derived from the outbox row, which is the first case
+where it does anything. The consumers' CAS remains the primary guard.
 
 ## Phase 6 — Testing
 
-**Status:** `PARTIAL — agent suites exist, domain layer untested`
-Existing: 5 agent suites, 52 tests, plus 3 pre-existing vector suites. Total
-`npx jest` — **8 suites, 63 tests**. `npx tsc --noEmit` — clean. No coverage
-thresholds are configured.
+**Status:** `PARTIAL` — 19 suites, 253 tests. `npx tsc --noEmit` clean. No
+coverage thresholds are configured. `npx jest` was not run against a live
+database, and a `jest.setup-db-guard.ts` guard now fails any test that
+constructs a real `PrismaClient`.
 
 ### Unit tests — `PLANNED` (highest value)
 
