@@ -247,7 +247,7 @@ exercised end to end. It has not.
 
 ## Testing status
 
-`npx jest` — **19 suites, 289 tests, passing**. `npx tsc --noEmit` — clean.
+`npx jest` — **20 suites, 304 tests, passing**. `npx tsc --noEmit` — clean.
 Scoped ESLint over the changed agent code — clean. No test constructs a real
 `PrismaClient`; `jest.setup-db-guard.ts` fails the run if one is instantiated.
 
@@ -270,6 +270,7 @@ Scoped ESLint over the changed agent code — clean. No test constructs a real
 | `agent/` `task-operations.test.ts` | Org scoping, assignee membership, ambiguous-title refusal, model-supplied `orgId` rejection. |
 | `agent/` `tool-confirmation-flow.test.ts` | Proposal persistence, read-only dispatch, unknown-tool fail-closed, worker execution gating. |
 | `agent/` `tool-confirmation.test.ts` | Policy derivation and proposal rendering. |
+| `agent/` `validation-contract.test.ts` | A schema rejection names the field that failed, reports every issue without echoing any value, is shared by all three tools, survives the worker round trip under the exact `toolCallId`, and cannot be duplicated by a redelivery. |
 | `agent/` `worker-routing.test.ts` | Event dispatch to the correct worker. |
 
 **Still untested:** `createTaskInOrg` and `updateTaskInOrg` against a real

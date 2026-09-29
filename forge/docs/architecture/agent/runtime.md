@@ -865,7 +865,7 @@ sequenceDiagram
     participant D as DB
 
     C->>I: POST { orgSlug, message }
-    I->>D: ONE TX: AgentSession(RUNNING, step 0, promptVersion=v2) + AgentMessage + outbox row
+    I->>D: ONE TX: AgentSession(RUNNING, step 0, promptVersion=v3) + AgentMessage + outbox row
     I-->>C: 202 { sessionId }
     O->>Q: AGENT_LOOP_REQUESTED { expectedStep: 0 }
     Q->>L: deliver
@@ -1117,7 +1117,7 @@ actual arrival. An explicit `id` still wins, so an outbox retry keeps its identi
 
 ### Verified, and not yet verified
 
-`SOURCE VERIFIED` — 19 suites / 289 tests pass, including non-vacuous outbox
+`SOURCE VERIFIED` — 20 suites / 304 tests pass, including non-vacuous outbox
 concurrency, expiry, and `PENDING_CONFIRMATION`-exclusion coverage (each
 mutation-checked by removing the guard and confirming the failure). `tsc --noEmit`
 clean; scoped ESLint clean.

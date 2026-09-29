@@ -289,7 +289,7 @@ constant and a reader over existing `AgentSession` / `AgentToolExecution` rows.
 | Check | Command | Result |
 | --- | --- | --- |
 | Types | `npx tsc --noEmit` | clean |
-| Tests | `npx jest` | 19 suites, **289 tests**, passing |
+| Tests | `npx jest` | 20 suites, **304 tests**, passing |
 | Lint (scoped) | `npx eslint` over changed agent code | clean |
 | Lint (repository) | `npx eslint .` | **not clean** — pre-existing `no-explicit-any` in `src/lib/events/event-bus.ts:5,7` and unrelated worker files, left alone as out of scope |
 | Client generation | `npx prisma generate` | pass |
@@ -320,6 +320,76 @@ Each of these was exercised against real infrastructure, not a mock:
   cancellation, confirmation, and continuation.
 - **Duplicate delivery** staying harmless under a real at-least-once broker.
 
+## Quality-audit closure pass
+
+A final pass walked the seven audit topics against the source rather than against
+the prose above. One genuine defect was found and fixed; the other six held up.
+Nothing else was changed.
+
+### The defect: a validation failure the model cannot act on
+
+Every tool reported a schema rejection as `parsed.error.issues[0]?.message` —
+the first issue, with no field name. The loop is a *self*-healing one, so this
+is a correctness problem, not cosmetics. A model that sent `limit: "many"` to
+`listTasks`, which has four optional fields, was told:
+
+```
+Invalid input: expected number, received string
+```
+
+It cannot tell which field is wrong, so the only ways forward are to guess or to
+resend the same call. The prompt, meanwhile, said only *"report the returned
+error honestly and do not retry blindly"* — which points at surfacing the
+complaint to the user rather than fixing it, and collides with the prompt's own
+rule against revealing internal implementation detail.
+
+Both halves were wrong in the same direction, so neither alone was a finding.
+The observation was not machine-readable, and the prompt had no rule that made
+it actionable.
+
+**Fix.** One shared builder, `buildValidationFailure` in
+`forge/src/lib/ai/agent/tools/shared-output.ts`, used by all three tools. It
+returns every issue with a dotted `path` and the schema's own `code`, caps the
+list at 8 and says how many were dropped, and includes the field name in the
+human-readable line. `AGENT_PROMPT_VERSION` is now `v3`, whose
+`<TOOL_CONTRACT>` states that `INVALID_INPUT` is feedback on the model's own
+arguments, that the named field is what to fix, and that two identical
+rejections mean stopping and asking the user.
+
+No value from the submitted input is ever echoed. Zod's `unrecognized_keys`
+message names offending *keys* — which the model itself just wrote — and never
+their values, so an injected `orgId` or a hallucinated credential cannot be
+reflected back into the transcript. This is asserted directly.
+
+### Topic verdicts
+
+| Topic | Status | Evidence | Change made? |
+| --- | --- | --- | --- |
+| A. Input validation and authority | `COMPLETE` | All three schemas are `.strict()` and `safeParse` before any domain call. `orgId`/`userId` come from the persisted `AgentSession` via `getToolExecutionForWorker`, never from the payload. No write is reachable on rejection. | No |
+| B. Self-healing loop | `FIXED` | Real path: model tool call → execution → `safeParse` reject → structured `INVALID_INPUT` → tool result **and** `AGENT_LOOP_REQUESTED` in one transaction → next model turn. The failure observation was unusable; now every issue names its field. | **Yes** |
+| C. Tool-result correctness | `COMPLETE` | AI SDK v6 shape (`role: "tool"` → `tool-result`) is valid. The `toolCallId` is the persisted one, unchanged. `markToolExecutionRunning` CAS makes the result write happen at most once under redelivery. | No |
+| D. State rehydration | `COMPLETE` | The worker rehydrates from `getAgentSessionForWorker` + `getMessages`; no in-memory request state. `getMessages` sorts on `createdAt` alone with no tie-breaker, which was examined and left alone — see below. | No |
+| E. Success/failure synthesis | `COMPLETE` | Prompt carries honesty rules, "never claim success without `ok: true`", and a decline is final. `CANCELLED` and `APPROVAL_TIMEOUT` results are self-describing, so they need no prompt rule. `INVALID_INPUT` was the gap, and is now covered. | No (covered by B) |
+| F. Typed continuation | `COMPLETE BY DESIGN` | Grep finds no `isSystemWakeup`, keyword selector, `streamText`, `parallelToolCalls`, or `RegExp` in the agent paths. A user turn is orchestrated at step 0; a tool result re-drives via the typed outbox. One path. | No |
+| G. Error safety | `COMPLETE` | `MAX_AGENT_STEPS = 5` and every continuation claims a new step, so a model that retries bad arguments is bounded at five model calls. A separate circuit breaker would be a second layer over a cap that already exists. | No |
+
+### On `getMessages` ordering
+
+`orderBy: { createdAt: "asc" }` with no secondary key is not a total order in
+SQL, so it was worth checking rather than assuming.
+
+It is not a defect here. All three `createMessage(..., tx)` call sites write
+exactly one message per transaction, so no two messages that must stay in
+relative order can share a timestamp. The pair that matters — an assistant
+tool-call and the tool result answering it — is always separated by a queue
+delivery and therefore by a transaction boundary. The only remaining tie window
+is several assistant messages from one model turn, which are the same role and
+the same `step`, so reordering among them breaks nothing.
+
+A secondary `id` tie-breaker would make the query formally deterministic, but it
+would guard against a case with no demonstrated failure. Leaving it out is
+consistent with the rest of this pass.
+
 ## What is NOT verified
 
 - **The re-drive of a session whose `AGENT_LOOP_REQUESTED` was already
@@ -349,7 +419,8 @@ Each of these was exercised against real infrastructure, not a mock:
 - **Destructive tools.** `DESTRUCTIVE` policy exists and is unused; the domain has
   no safe deletion semantics.
 - **Message ordering, persisted-message validation, per-message prompt hash.**
-  Phase 5.
+  Phase 5. `getMessages` ordering was re-examined in the closure pass and is not
+  a defect; the other two stand.
 - **Assignment 37.** Not started.
 
 ## Operational preconditions
