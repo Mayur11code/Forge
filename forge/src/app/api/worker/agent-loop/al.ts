@@ -15,7 +15,6 @@ import {
   getToolPolicy,
   requiresToolConfirmation,
 } from "@/lib/ai/agent/tools/registry";
-import { publishEvent } from "@/lib/events/queue";
 import { publishAgentStatus } from "@/lib/ai/agent/status";
 
 type AgentLoopWorkerEvent = {
@@ -134,12 +133,24 @@ export async function handleAgentLoop({
             // The proposal arguments are persisted here and are the ONLY thing
             // that will ever be executed. The confirm path replays this row; it
             // never accepts or reconstructs arguments of its own.
+            //
+            // A READ_ONLY execution hands its dispatch intent to the same call,
+            // so the row and the intent to run it commit together. A
+            // confirmation-required proposal passes no dispatchEvent: it must
+            // not reach the worker until a human decides, and the confirm
+            // endpoint records that intent instead.
             const execution = await createToolExecution({
               sessionId: session.id,
               toolCallId: result.toolCallId,
               toolName: result.toolName,
               input: result.input,
               requiresConfirmation: needsConfirmation,
+              dispatchEvent: needsConfirmation
+                ? undefined
+                : {
+                    orgId: session.orgId,
+                    expectedStep: expectedStep + 1,
+                  },
             });
 
             if (needsConfirmation) {
@@ -168,17 +179,10 @@ export async function handleAgentLoop({
               break;
             }
 
-            // READ_ONLY: no user gate, dispatch immediately.
-            await publishEvent(
-              "AGENT_TOOL_EXECUTION_REQUESTED",
-              {
-                orgId: session.orgId,
-                sessionId: session.id,
-                executionId: execution.id,
-                expectedStep: expectedStep + 1,
-              },
-            );
-
+            // READ_ONLY: no user gate. The dispatch intent is already durable
+            // (committed with the row above); the outbox dispatcher will deliver
+            // it. Publishing here as well would double-dispatch, so the direct
+            // publish is intentionally gone.
             break;
           }
 

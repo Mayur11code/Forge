@@ -1,5 +1,3 @@
-import { publishEvent } from "@/lib/events/queue";
-
 import { withToolExecutionLock } from "./locks";
 import { AGENT_EXECUTION_HEARTBEAT_INTERVAL_MS } from "./constants";
 import {
@@ -12,6 +10,11 @@ import {
 } from "./services/tool-execution-service";
 import { getToolExecutor } from "./tools/registry";
 import type { ToolExecutionWorkerEvent } from "./worker-types";
+import { recordAgentEvent } from "./outbox";
+// The RAW client, for the transactional tool-result + outbox path below. The
+// extended client only intercepts the `task` model; agent tables are not
+// intercepted, and the outbox is infrastructure rather than a domain event.
+import { db } from "@/lib/prisma/db";
 import { createMessage } from "./services/message-service";
 import { failAgentSession } from "./session-service";
 import { publishAgentStatus } from "./status";
@@ -137,19 +140,42 @@ export async function handleToolExecution({
           );
 
 
-        await createMessage({
-          sessionId: execution.sessionId,
-          step: execution.session.currentStep,
-          toolCallId: execution.toolCallId,
-          message: {
-            role: "tool",
-            content: [{
-              type: "tool-result",
-              toolCallId: execution.toolCallId,
-              toolName: execution.toolName,
-              output: result,
-            }],
-          },
+        // The tool result and the intent to continue the conversation are
+        // written in ONE transaction.
+        //
+        // These used to be four separate writes ending in a publish. A crash
+        // after the result was persisted but before the continuation was
+        // requested left a complete tool result with nothing to consume it, and
+        // the session sat silent until the reaper eventually killed it. The
+        // result is now durable together with the reason to re-drive the loop.
+        await db.$transaction(async (tx) => {
+          await createMessage({
+            sessionId: execution.sessionId,
+            step: execution.session.currentStep,
+            toolCallId: execution.toolCallId,
+            message: {
+              role: "tool",
+              content: [{
+                type: "tool-result",
+                toolCallId: execution.toolCallId,
+                toolName: execution.toolName,
+                output: result,
+              }],
+            },
+            tx,
+          });
+
+          await recordAgentEvent({
+            tx,
+            eventType: "AGENT_LOOP_REQUESTED",
+            sessionId: execution.sessionId,
+            aggregateId: `${execution.sessionId}:${expectedStep}`,
+            payload: {
+              sessionId: execution.sessionId,
+              expectedStep,
+              orgId: execution.session.orgId,
+            },
+          });
         });
 
         // CAS-guarded: a duplicate delivery that lost the race cannot stamp
@@ -161,17 +187,6 @@ export async function handleToolExecution({
           executionId: execution.id,
           toolName: execution.toolName,
         });
-
-        await publishEvent(
-          "AGENT_LOOP_REQUESTED",
-          {
-            sessionId:
-              execution.sessionId,
-            expectedStep,
-            orgId:
-              execution.session.orgId,
-          },
-        );
       } catch (error) {
         const message =
           error instanceof Error
