@@ -29,6 +29,42 @@ export const AGENT_LOCK_HEARTBEAT_INTERVAL_MS = 10_000;
 export const AGENT_ORPHANED_EXECUTION_AGE_MS = 10 * 60_000;
 
 /**
+ * How long a session may sit RUNNING without advancing before recovery considers
+ * re-driving it.
+ *
+ * Deliberately NOT a liveness signal on its own. `AgentSession.updatedAt` moves
+ * only when a step is claimed, so a healthy worker in the middle of a long Gemini
+ * turn looks exactly as old as a dead one. The value is therefore only a cheap
+ * pre-filter that bounds how much of the table a pass inspects; the session lock
+ * is the authoritative "nobody is working on this right now" check, and the
+ * re-read under that lock is the authoritative staleness check. See
+ * `redriveStalledSessions`.
+ *
+ * Set to the same order as AGENT_ORPHANED_EXECUTION_AGE_MS so the two recovery
+ * duties agree on how long "long" is, and comfortably above AGENT_SESSION_LOCK_TTL_MS
+ * so a worker that died holding a lock is not mistaken for one that is mid-turn.
+ */
+export const AGENT_STALLED_SESSION_AGE_MS = 10 * 60_000;
+
+/**
+ * How many delivery attempts a single stalled-session re-drive gets before the
+ * session is given up on.
+ *
+ * Counts total deliveries of the re-drive event, so one initial publish plus two
+ * re-arms. Bounded on purpose: an event that is published but never acted on -
+ * a delivery the consumer refused because it lost a race for the session lock,
+ * say - would otherwise be retried every maintenance tick forever, which is an
+ * unbounded loop dressed up as a recovery mechanism.
+ *
+ * Exhausting it is a terminal outcome rather than another retry. A session that
+ * cannot make progress after three attempts is broken in a way re-driving cannot
+ * fix, and leaving it RUNNING means the user watches a spinner that never
+ * resolves. It is failed with an explicit reason instead, matching how the
+ * execution reaper terminates rather than spins.
+ */
+export const AGENT_STALLED_SESSION_MAX_REDRIVES = 3;
+
+/**
  * How often a claimed execution refreshes its DB row while it runs.
  *
  * This is the durable liveness signal the reaper reads. The Redis lock
