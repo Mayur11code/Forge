@@ -17,8 +17,8 @@
 // forever. Writing the sweep and never scheduling it is the same as not having
 // written it.
 //
-// One handler, four duties, deliberately. Four separate schedules would mean four
-// schedules to keep alive and four places to look when one of them silently
+// One handler, five duties, deliberately. Five separate schedules would mean five
+// schedules to keep alive and five places to look when one of them silently
 // stops - and the failure mode of a missing sweeper is a session that hangs
 // forever, which is exactly the kind of thing that goes unnoticed.
 //
@@ -31,6 +31,7 @@ import {
   expireStaleApprovals,
   reapOrphanedToolExecutions,
   redeliverStalledConfirmedExecutions,
+  redriveStalledSessions,
 } from "@/lib/ai/agent/reaper";
 import { dispatchOutboxBatch } from "@/lib/ai/agent/outbox";
 import { AGENT_MAINTENANCE_BATCH_SIZE } from "@/lib/ai/agent/constants";
@@ -52,6 +53,7 @@ export type MaintenanceSummary = {
   expired: unknown | null;
   orphaned: unknown | null;
   redelivered: unknown | null;
+  stalled: unknown | null;
   outbox: unknown | null;
   errors: string[];
 };
@@ -119,7 +121,7 @@ export async function runAgentMaintenance({
 } = {}): Promise<MaintenanceSummary> {
   const startedAt = Date.now();
 
-  const [expired, orphaned, redelivered, outbox] = await Promise.all([
+  const [expired, orphaned, redelivered, stalled, outbox] = await Promise.all([
     settle("expireStaleApprovals", () => expireStaleApprovals({ limit })),
     settle("reapOrphanedToolExecutions", () =>
       reapOrphanedToolExecutions({ limit }),
@@ -127,6 +129,12 @@ export async function runAgentMaintenance({
     settle("redeliverStalledConfirmedExecutions", () =>
       redeliverStalledConfirmedExecutions({ limit }),
     ),
+    // Runs concurrently with the reaper on purpose. The two duties are
+    // disjoint by predicate - a session with an in-flight execution belongs to
+    // the reaper and is excluded here - so serialising them would only make the
+    // pass slower, and the outbox drain below picks up whatever both recorded
+    // in the same tick.
+    settle("redriveStalledSessions", () => redriveStalledSessions({ limit })),
     // The outbox is drained here too, and it is not optional.
     //
     // Every critical agent event is written to AgentOutboxEvent instead of being
@@ -138,7 +146,7 @@ export async function runAgentMaintenance({
     settle("dispatchOutboxBatch", () => dispatchOutboxBatch(limit)),
   ]);
 
-  const errors = [expired, orphaned, redelivered, outbox]
+  const errors = [expired, orphaned, redelivered, stalled, outbox]
     .filter((r): r is { ok: false; error: string } => !r.ok)
     .map((r) => r.error);
 
@@ -148,6 +156,7 @@ export async function runAgentMaintenance({
     expired: expired.ok ? expired.value : null,
     orphaned: orphaned.ok ? orphaned.value : null,
     redelivered: redelivered.ok ? redelivered.value : null,
+    stalled: stalled.ok ? stalled.value : null,
     outbox: outbox.ok ? outbox.value : null,
     errors,
   };
@@ -190,6 +199,15 @@ function toLoggableSummary(summary: MaintenanceSummary) {
       count: Array.isArray(summary.redelivered)
         ? summary.redelivered.length
         : null,
+    },
+    stalled: {
+      redriven: count(summary.stalled, "redriven"),
+      queued: count(summary.stalled, "queued"),
+      rearmed: count(summary.stalled, "rearmed"),
+      exhausted: count(summary.stalled, "exhausted"),
+      skippedLocked: count(summary.stalled, "skippedLocked"),
+      skippedStale: count(summary.stalled, "skippedStale"),
+      scanned: count(summary.stalled, "scanned"),
     },
     outbox: {
       claimed: count(summary.outbox, "claimed"),

@@ -3,10 +3,10 @@
 // The maintenance pass: that it actually performs the sweeps it claims to, that
 // every sweep is bounded, and that a broken one does not take the rest down.
 //
-// The pass exists because all three recovery duties had zero callers. A handler
-// that silently swallows a failing sweep would leave an orphaned execution
-// hanging forever while looking healthy - the failure mode this whole pass exists
-// to close.
+// The pass exists because the recovery duties would otherwise have zero callers.
+// A handler that silently swallows a failing sweep would leave an orphaned
+// execution - or a session with no in-flight turn at all - hanging forever while
+// looking healthy. The failure mode this whole pass exists to close.
 //
 // Authentication is deliberately NOT tested here. Maintenance is delivered as a
 // QStash message to the shared /api/worker dispatcher, so it is authenticated by
@@ -23,6 +23,7 @@ jest.mock("@/lib/ai/agent/reaper", () => ({
   expireStaleApprovals: jest.fn(),
   reapOrphanedToolExecutions: jest.fn(),
   redeliverStalledConfirmedExecutions: jest.fn(),
+  redriveStalledSessions: jest.fn(),
 }));
 
 jest.mock("@/lib/ai/agent/outbox", () => ({
@@ -33,6 +34,7 @@ import {
   expireStaleApprovals,
   reapOrphanedToolExecutions,
   redeliverStalledConfirmedExecutions,
+  redriveStalledSessions,
 } from "@/lib/ai/agent/reaper";
 import { dispatchOutboxBatch } from "@/lib/ai/agent/outbox";
 import { AGENT_MAINTENANCE_BATCH_SIZE } from "@/lib/ai/agent/constants";
@@ -52,6 +54,9 @@ const redeliverMock =
   redeliverStalledConfirmedExecutions as jest.MockedFunction<
     typeof redeliverStalledConfirmedExecutions
   >;
+const stalledMock = redriveStalledSessions as jest.MockedFunction<
+  typeof redriveStalledSessions
+>;
 const dispatchMock = dispatchOutboxBatch as jest.MockedFunction<
   typeof dispatchOutboxBatch
 >;
@@ -85,6 +90,18 @@ beforeEach(() => {
 
   reapMock.mockResolvedValue({ swept: 0, sessionIds: [] });
   redeliverMock.mockResolvedValue([]);
+  stalledMock.mockResolvedValue({
+    redriven: 0,
+    queued: 0,
+    rearmed: 0,
+    exhausted: 0,
+    skippedLocked: 0,
+    skippedStale: 0,
+    scanned: 0,
+    durationMs: 1,
+    sessionIds: [],
+    failedSessionIds: [],
+  });
   dispatchMock.mockResolvedValue({
     claimed: 0,
     published: 0,
@@ -98,12 +115,13 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("work performed", () => {
-  it("runs all four duties", async () => {
+  it("runs all five duties", async () => {
     await handleAgentMaintenance(event());
 
     expect(expireMock).toHaveBeenCalledTimes(1);
     expect(reapMock).toHaveBeenCalledTimes(1);
     expect(redeliverMock).toHaveBeenCalledTimes(1);
+    expect(stalledMock).toHaveBeenCalledTimes(1);
     expect(dispatchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -128,6 +146,18 @@ describe("work performed", () => {
     });
     reapMock.mockResolvedValue({ swept: 1, sessionIds: ["sess_1"] });
     redeliverMock.mockResolvedValue(["exec_1"]);
+    stalledMock.mockResolvedValue({
+      redriven: 1,
+      queued: 0,
+      rearmed: 1,
+      exhausted: 0,
+      skippedLocked: 1,
+      skippedStale: 1,
+      scanned: 3,
+      durationMs: 4,
+      sessionIds: ["sess_2"],
+      failedSessionIds: [],
+    });
     dispatchMock.mockResolvedValue({
       claimed: 4,
       published: 3,
@@ -141,6 +171,13 @@ describe("work performed", () => {
     expect(summary.expired).toMatchObject({ expired: 3, continued: 2 });
     expect(summary.orphaned).toMatchObject({ swept: 1 });
     expect(summary.redelivered).toEqual(["exec_1"]);
+    expect(summary.stalled).toMatchObject({
+      redriven: 1,
+      rearmed: 1,
+      skippedLocked: 1,
+      skippedStale: 1,
+      scanned: 3,
+    });
     expect(summary.outbox).toMatchObject({ claimed: 4, failed: 1 });
     expect(summary.errors).toEqual([]);
   });
@@ -155,7 +192,7 @@ describe("work performed", () => {
     await handleAgentMaintenance(event());
 
     // The sweeps take a named `limit`; the dispatcher takes it positionally.
-    for (const mock of [expireMock, reapMock, redeliverMock]) {
+    for (const mock of [expireMock, reapMock, redeliverMock, stalledMock]) {
       expect(mock).toHaveBeenCalledWith(
         expect.objectContaining({ limit: expect.any(Number) }),
       );
@@ -167,7 +204,7 @@ describe("work performed", () => {
   it("passes the scheduled limit through to every duty", async () => {
     await handleAgentMaintenance(event(7));
 
-    for (const mock of [expireMock, reapMock, redeliverMock]) {
+    for (const mock of [expireMock, reapMock, redeliverMock, stalledMock]) {
       expect(mock).toHaveBeenCalledWith(expect.objectContaining({ limit: 7 }));
     }
 
@@ -177,7 +214,7 @@ describe("work performed", () => {
   it("falls back to the batch constant when called without a limit", async () => {
     await runAgentMaintenance();
 
-    for (const mock of [expireMock, reapMock, redeliverMock]) {
+    for (const mock of [expireMock, reapMock, redeliverMock, stalledMock]) {
       expect(mock).toHaveBeenCalledWith(
         expect.objectContaining({ limit: AGENT_MAINTENANCE_BATCH_SIZE }),
       );
@@ -241,7 +278,13 @@ describe("work performed", () => {
 
     await expect(handleAgentMaintenance(event())).rejects.toThrow();
 
-    for (const mock of [expireMock, reapMock, redeliverMock, dispatchMock]) {
+    for (const mock of [
+      expireMock,
+      reapMock,
+      redeliverMock,
+      stalledMock,
+      dispatchMock,
+    ]) {
       expect(mock).toHaveBeenCalledTimes(1);
     }
   });

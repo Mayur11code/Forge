@@ -230,6 +230,58 @@ const findUniqueSession = async ({ where }: { where: Row }) =>
   store.sessions.find((row) => row.id === where.id) ?? null;
 
 /**
+ * Session scan for the stalled-session recovery duty.
+ *
+ * Modelled rather than delegated to `matches` because this is the first query
+ * in the suite that filters on a RELATION, and it filters on the one that
+ * decides whether the reaper will fire. A double that ignored
+ * `toolExecutions: { none: ... }` would return every RUNNING session, which
+ * would make "a session with a live execution is skipped" pass for the wrong
+ * reason - it would pass because the session was returned, not because the
+ * predicate excluded it. The same goes for `orderBy`/`take`: a pass that does not
+ * drain oldest-first is a different pass.
+ */
+const findManySessions = async ({
+  where = {},
+  orderBy,
+  take,
+}: {
+  where?: Row;
+  orderBy?: Row;
+  take?: number;
+} = {}) => {
+  const relation = where.toolExecutions as
+    | { none?: { status?: { in?: string[] } } }
+    | undefined;
+
+  const excluded = relation?.none?.status?.in ?? [];
+
+  let rows = store.sessions.filter((row) => {
+    if (!matches(row, where)) return false;
+    if (excluded.length === 0) return true;
+    return !store.executions.some(
+      (execution) =>
+        execution.sessionId === row.id && excluded.includes(execution.status as string),
+    );
+  });
+
+  if (orderBy?.updatedAt) {
+    const direction = orderBy.updatedAt === "desc" ? -1 : 1;
+    rows = [...rows].sort(
+      (a, b) =>
+        direction * ((a.updatedAt as Date).getTime() - (b.updatedAt as Date).getTime()),
+    );
+  }
+
+  if (typeof take === "number") rows = rows.slice(0, take);
+
+  return rows;
+};
+
+const countExecutions = async ({ where = {} }: { where?: Row } = {}) =>
+  store.executions.filter((row) => matches(row, where)).length;
+
+/**
  * updateMany honours the compare-and-set `where` clause rather than blindly
  * applying `data`, so tests exercise the real CAS semantics of the service
  * layer instead of a permissive stub.
@@ -391,6 +443,7 @@ export const prismaDouble = {
   agentSession: {
     findFirst: jest.fn(findFirstSession),
     findUnique: jest.fn(findUniqueSession),
+    findMany: jest.fn(findManySessions),
     create: jest.fn(createSession),
     updateMany: jest.fn(updateManySessions),
   },
@@ -401,6 +454,7 @@ export const prismaDouble = {
     findUnique: jest.fn(findUniqueExecutionWithSession),
     create: jest.fn(createExecution),
     updateMany: jest.fn(updateManyExecutions),
+    count: jest.fn(countExecutions),
   },
 
   agentMessage: {
@@ -447,6 +501,7 @@ export const prismaDouble = {
 export function restorePrismaDouble(): void {
   prismaDouble.agentSession.findFirst.mockImplementation(findFirstSession);
   prismaDouble.agentSession.findUnique.mockImplementation(findUniqueSession);
+  prismaDouble.agentSession.findMany.mockImplementation(findManySessions);
   prismaDouble.agentSession.create.mockImplementation(createSession);
   prismaDouble.agentSession.updateMany.mockImplementation(
     updateManySessions,
@@ -464,6 +519,7 @@ export function restorePrismaDouble(): void {
   prismaDouble.agentToolExecution.updateMany.mockImplementation(
     updateManyExecutions,
   );
+  prismaDouble.agentToolExecution.count.mockImplementation(countExecutions);
   prismaDouble.agentMessage.create.mockImplementation(createMessageRow);
   prismaDouble.task.findMany.mockImplementation(findManyExecutions);
   prismaDouble.task.findFirst.mockImplementation(findFirstTask);

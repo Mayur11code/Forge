@@ -54,6 +54,29 @@ export function buildOutboxIdempotencyKey(
   return `${eventType}:${aggregateId}`;
 }
 
+/**
+ * QStash `deduplicationId` for one logical outbox event.
+ *
+ * This cannot be the raw idempotency key. The key is deliberately readable
+ * (`AGENT_LOOP_REQUESTED:cmumu...`) because it is a database column people
+ * actually query, and QStash rejects ':' in a deduplicationId with a 400. Every
+ * publish of every outbox event therefore failed permanently while the
+ * idempotency key format stayed readable, which is the exact combination a
+ * unit test cannot catch because the constraint lives in the broker.
+ *
+ * Hashing keeps the two requirements that actually conflict apart: the column
+ * stays human-readable, and the broker gets the fixed `agent-outbox-<hex>`
+ * charset it requires. Stable for a given key, which is the whole point - it
+ * must not vary per attempt or dedup would never fire.
+ */
+export function buildOutboxDeduplicationId(idempotencyKey: string): string {
+  return `agent-outbox-${crypto
+    .createHash("sha256")
+    .update(idempotencyKey)
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
 function buildDeterministicMessageId(
   idempotencyKey: string,
   attempt: number,
@@ -282,7 +305,8 @@ export async function dispatchOutboxBatch(
           messageId: row.messageId,
           // Deterministic per logical event: QStash drops a genuine repeat
           // publish inside its dedup window, before it ever reaches a consumer.
-          deduplicationId: row.idempotencyKey,
+          // Hashed, because the raw key contains ':' and QStash rejects that.
+          deduplicationId: buildOutboxDeduplicationId(row.idempotencyKey),
         },
       );
 
@@ -327,4 +351,111 @@ export async function countPendingOutboxEvents(): Promise<number> {
   return prisma.agentOutboxEvent.count({
     where: { status: AgentOutboxStatus.PENDING },
   });
+}
+
+export type RearmState =
+  /** No row for this key. The caller has to record the intent first. */
+  | "missing"
+  /** A delivery is already owed and pending. Nothing to do. */
+  | "queued"
+  /** It was delivered, and has been put back in the queue for another attempt. */
+  | "rearmed"
+  /** Already tried the maximum number of times. Do not re-queue it again. */
+  | "exhausted";
+
+export interface RearmResult {
+  state: RearmState;
+  /** Delivery attempts so far, including this re-arm. */
+  attempts: number;
+}
+
+/**
+ * Asks for one specific event to be delivered again, up to a bounded number of
+ * times.
+ *
+ * Why this exists, and why it is not just "reset the row to PENDING":
+ *
+ * `recordAgentEvent` deliberately never resurrects a row the dispatcher already
+ * published, which is right for the normal path - re-recording a delivered event
+ * must not duplicate it. But that same rule means a recovery sweep that needs a
+ * second delivery has no way to ask for one: the intent is durably recorded, the
+ * key is taken, and every later call collapses onto a row nobody will publish
+ * again. A re-drive that is delivered once and then refused by the consumer is
+ * therefore lost forever, and no amount of re-sweeping will notice.
+ *
+ * The predicate is the safety argument. Only a row that is PUBLISHED may be
+ * re-armed, and the check is repeated inside the compare-and-set, so this can
+ * never:
+ *   - duplicate a row that is already PENDING, because that one is already owed
+ *     a delivery and is queued for it;
+ *   - re-arm a row a dispatcher is publishing right now, because a claimed row is
+ *     PENDING with a lease deadline, not PUBLISHED.
+ * So the worst outcome of a race is a no-op, and a re-arm always costs at most
+ * one extra delivery - which the consumer's own compare-and-set absorbs.
+ *
+ * Bounded on purpose. `maxAttempts` counts total delivery attempts for the row,
+ * so a logical event that is never acted on is given up on rather than retried
+ * forever; the caller decides what "given up" means, which for a stalled session
+ * is failing it with a legible reason instead of leaving it open indefinitely.
+ */
+export async function rearmOutboxEvent({
+  idempotencyKey,
+  maxAttempts,
+  now = new Date(),
+}: {
+  idempotencyKey: string;
+  maxAttempts: number;
+  now?: Date;
+}): Promise<RearmResult> {
+  const existing = await prisma.agentOutboxEvent.findUnique({
+    where: { idempotencyKey },
+    select: { id: true, status: true, attempts: true },
+  });
+
+  if (!existing) {
+    return { state: "missing", attempts: 0 };
+  }
+
+  if (existing.status !== AgentOutboxStatus.PUBLISHED) {
+    return { state: "queued", attempts: existing.attempts };
+  }
+
+  if (existing.attempts >= maxAttempts) {
+    return { state: "exhausted", attempts: existing.attempts };
+  }
+
+  // Captured before the write rather than read back from `existing` afterwards.
+  // The returned object is not guaranteed to be a snapshot, and re-reading it to
+  // compute the post-increment value is a second source of truth for something
+  // the write already knows.
+  const attemptsBefore = existing.attempts;
+
+  const { count } = await prisma.agentOutboxEvent.updateMany({
+    where: {
+      id: existing.id,
+      // The CAS predicate, not just the read above. Without it a dispatcher
+      // could publish the row between the two calls and this would queue a
+      // second delivery of an event that was in fact delivered.
+      status: AgentOutboxStatus.PUBLISHED,
+    },
+    data: {
+      status: AgentOutboxStatus.PENDING,
+      attempts: { increment: 1 },
+      // Re-assert the lease rather than leaving the old one in place: the row
+      // was published minutes ago, so its `availableAt` is in the past and a
+      // dispatcher would claim it immediately. That is correct - a re-armed event
+      // is due now - but the backoff between repeated attempts is what stops a
+      // permanently stuck event from spinning, and it is applied by the caller's
+      // own backoff when this is exhausted.
+      availableAt: now,
+      publishedAt: null,
+      lastError: null,
+    },
+  });
+
+  if (count !== 1) {
+    return { state: "queued", attempts: attemptsBefore };
+  }
+
+  return { state: "rearmed", attempts: attemptsBefore + 1 };
 }

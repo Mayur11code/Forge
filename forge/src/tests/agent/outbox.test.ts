@@ -26,7 +26,9 @@ jest.mock("@/lib/prisma/db", () => {
 import { publishEvent } from "@/lib/events/queue";
 import {
   buildOutboxIdempotencyKey,
+  buildOutboxDeduplicationId,
   recordAgentEvent,
+  rearmOutboxEvent,
   dispatchOutboxBatch,
   countPendingOutboxEvents,
 } from "@/lib/ai/agent/outbox";
@@ -92,6 +94,49 @@ describe("buildOutboxIdempotencyKey", () => {
     const loop = buildOutboxIdempotencyKey("AGENT_LOOP_REQUESTED", SESSION_ID);
 
     expect(tool).not.toBe(loop);
+  });
+});
+
+describe("buildOutboxDeduplicationId", () => {
+  it("is deterministic for the same logical event", () => {
+    const key = buildOutboxIdempotencyKey(
+      "AGENT_TOOL_EXECUTION_REQUESTED",
+      EXECUTION_ID,
+    );
+
+    expect(buildOutboxDeduplicationId(key)).toBe(
+      buildOutboxDeduplicationId(key),
+    );
+  });
+
+  it("contains no character QStash rejects in a deduplicationId", () => {
+    // QStash answers 400 "DeduplicationId cannot contain ':'" for the raw key.
+    // The key is intentionally readable and the broker's charset is not, so the
+    // dedup id is hashed rather than the key being reformatted. This asserts the
+    // property that keeps publishes from failing permanently.
+    for (const key of [
+      buildOutboxIdempotencyKey("AGENT_LOOP_REQUESTED", SESSION_ID),
+      buildOutboxIdempotencyKey("AGENT_TOOL_EXECUTION_REQUESTED", EXECUTION_ID),
+      buildOutboxIdempotencyKey("AGENT_MAINTENANCE_REQUESTED", "maintenance"),
+    ]) {
+      const dedup = buildOutboxDeduplicationId(key);
+
+      expect(dedup).toMatch(/^agent-outbox-[0-9a-f]{32}$/);
+      expect(dedup).not.toContain(":");
+      expect(dedup).not.toContain("#");
+    }
+  });
+
+  it("keeps distinct logical events distinct", () => {
+    const tool = buildOutboxIdempotencyKey(
+      "AGENT_TOOL_EXECUTION_REQUESTED",
+      EXECUTION_ID,
+    );
+    const loop = buildOutboxIdempotencyKey("AGENT_LOOP_REQUESTED", SESSION_ID);
+
+    expect(buildOutboxDeduplicationId(tool)).not.toBe(
+      buildOutboxDeduplicationId(loop),
+    );
   });
 });
 
@@ -197,6 +242,124 @@ describe("recordAgentEvent", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Re-arm
+// ---------------------------------------------------------------------------
+//
+// The deliberate exception to the rule above. `recordAgentEvent` must never
+// resurrect a delivered row, or the dispatcher republishes the same work forever.
+// But that leaves a recovery sweep with no way to ask for a second delivery, and a
+// re-drive that is published once and then refused by its consumer is lost for
+// good. Re-arm is the narrow, bounded exception.
+
+describe("rearmOutboxEvent", () => {
+  async function stage(status: string, attempts: number) {
+    await recordAgentEvent({
+      tx: prismaDouble as never,
+      eventType: "AGENT_LOOP_REQUESTED",
+      sessionId: SESSION_ID,
+      aggregateId: `${SESSION_ID}#redrive#0`,
+      payload,
+    });
+
+    store.outbox[0].status = status;
+    store.outbox[0].attempts = attempts;
+    store.outbox[0].publishedAt = status === "PUBLISHED" ? new Date() : null;
+    store.outbox[0].lastError = "previous failure";
+  }
+
+  const KEY = buildOutboxIdempotencyKey(
+    "AGENT_LOOP_REQUESTED",
+    `${SESSION_ID}#redrive#0`,
+  );
+
+  it("reports a missing row rather than inventing one", async () => {
+    // The caller owns creating the intent; re-arm only ever re-queues a row that
+    // already exists, so it must not be able to conjure an event for an id it
+    // was handed.
+    await expect(
+      rearmOutboxEvent({ idempotencyKey: KEY, maxAttempts: 3 }),
+    ).resolves.toEqual({ state: "missing", attempts: 0 });
+
+    expect(store.outbox).toHaveLength(0);
+  });
+
+  it("puts a delivered row back in the queue and counts the attempt", async () => {
+    await stage("PUBLISHED", 1);
+
+    const result = await rearmOutboxEvent({ idempotencyKey: KEY, maxAttempts: 3 });
+
+    expect(result).toEqual({ state: "rearmed", attempts: 2 });
+    expect(store.outbox[0].status).toBe("PENDING");
+    expect(store.outbox[0].attempts).toBe(2);
+    // Cleared so the row does not look like a fresh first delivery, and so the
+    // dispatcher can claim it: the old lease deadline is in the past.
+    expect(store.outbox[0].publishedAt).toBeNull();
+    expect(store.outbox[0].lastError).toBeNull();
+  });
+
+  it("leaves a row that is already pending alone", async () => {
+    // Re-arming this would publish the same event twice. A row that is still
+    // owed a delivery has not had one yet.
+    await stage("PENDING", 1);
+
+    const result = await rearmOutboxEvent({ idempotencyKey: KEY, maxAttempts: 3 });
+
+    expect(result.state).toBe("queued");
+    expect(store.outbox[0].status).toBe("PENDING");
+    expect(store.outbox[0].attempts).toBe(1);
+  });
+
+  it("refuses to re-arm once the attempt cap is reached", async () => {
+    // The bound is what stops an event nobody acts on from being retried on
+    // every tick forever.
+    await stage("PUBLISHED", 3);
+
+    const result = await rearmOutboxEvent({ idempotencyKey: KEY, maxAttempts: 3 });
+
+    expect(result).toEqual({ state: "exhausted", attempts: 3 });
+    expect(store.outbox[0].status).toBe("PUBLISHED");
+  });
+
+  it("re-asserts the lease so the dispatcher can claim it again", async () => {
+    await stage("PUBLISHED", 1);
+    const now = new Date("2026-09-29T00:00:00.000Z");
+
+    await rearmOutboxEvent({ idempotencyKey: KEY, maxAttempts: 3, now });
+
+    expect(asDate(store.outbox[0].availableAt)).toEqual(now);
+  });
+
+  it("does not re-arm a row a dispatcher published in between", async () => {
+    // The read and the compare-and-set are separate calls, and a dispatcher can
+    // claim and publish the row in that gap. Re-arming then would queue a second
+    // delivery of an event that was in fact delivered. The CAS predicate is the
+    // guard, and losing it is a no-op rather than a duplicate.
+    await stage("PUBLISHED", 1);
+    prismaDouble.agentOutboxEvent.updateMany.mockResolvedValueOnce({
+      count: 0,
+    });
+
+    const result = await rearmOutboxEvent({ idempotencyKey: KEY, maxAttempts: 3 });
+
+    expect(result.state).toBe("queued");
+    expect(store.outbox[0].status).toBe("PUBLISHED");
+  });
+
+  it("only re-arms a row that is actually published", async () => {
+    await stage("PUBLISHED", 1);
+
+    await rearmOutboxEvent({ idempotencyKey: KEY, maxAttempts: 3 });
+
+    // Not just a read-time check: the predicate is repeated in the write.
+    expect(prismaDouble.agentOutboxEvent.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: "PUBLISHED" }),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -242,14 +405,17 @@ describe("dispatchOutboxBatch", () => {
     expect(result).toMatchObject({ claimed: 1, published: 1, failed: 0 });
 
     // The messageId is the row's, and the deduplicationId is the logical event
-    // key, so a republish is recognisable to the broker as the same event.
+    // key hashed into QStash's required charset, so a republish is recognisable
+    // to the broker as the same event.
     expect(publishEventMock).toHaveBeenCalledWith(
       "AGENT_TOOL_EXECUTION_REQUESTED",
       payload,
       undefined,
       {
         messageId: "agent-outbox-abc",
-        deduplicationId: `AGENT_TOOL_EXECUTION_REQUESTED:${EXECUTION_ID}`,
+        deduplicationId: buildOutboxDeduplicationId(
+          `AGENT_TOOL_EXECUTION_REQUESTED:${EXECUTION_ID}`,
+        ),
       },
     );
 
