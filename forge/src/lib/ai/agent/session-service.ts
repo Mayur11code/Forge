@@ -21,7 +21,7 @@ type AgentSessionForOwnerInput = {
   userId: string;
 };
 
-const sessionSelect = {
+export const sessionSelect = {
   id: true,
   orgId: true,
   userId: true,

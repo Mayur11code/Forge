@@ -48,6 +48,7 @@ export type ConfirmationTarget =
         toolCallId: string;
         toolName: string;
         status: AgentToolExecutionStatus;
+        expiresAt: Date | null;
       };
     }
   | {
@@ -116,6 +117,7 @@ export async function loadConfirmationTarget({
       toolCallId: execution.toolCallId,
       toolName: execution.toolName,
       status: execution.status,
+      expiresAt: execution.expiresAt,
     },
   };
 }
@@ -174,6 +176,15 @@ export function decideConfirmation({
     }
 
     return { kind: "TRANSITION" };
+  }
+
+  // Expired by the approval timeout. This is a settled outcome in exactly the
+  // way CANCELLED or COMPLETED is, so both actions are no-ops: a late-arriving
+  // user cannot confirm their way out of a deadline, and cannot cancel something
+  // the system already closed either. Cancelling reports IDEMPOTENT rather than
+  // a conflict because there is nothing left to cancel.
+  if (executionStatus === AgentToolExecutionStatus.EXPIRED) {
+    return { kind: "IDEMPOTENT" };
   }
 
   if (action === "cancel") {

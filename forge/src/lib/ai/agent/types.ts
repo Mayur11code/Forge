@@ -105,15 +105,29 @@ export type AgentStatusEvent =
     }
   | {
       type: "TOOL_CANCELLED";
-      executionId: string;
-      toolName: string;
-    }
-  | {
-      /** A tool finished. The authoritative result is in session history. */
-      type: "TOOL_COMPLETED";
-      executionId: string;
-      toolName: string;
-    }
+        executionId: string;
+        toolName: string;
+      }
+    | {
+        /**
+         * The approval window closed before the user decided.
+         *
+         * Distinct from TOOL_CANCELLED because the user did not decline
+         * anything - the system stopped waiting. A client that renders this as a
+         * cancellation would tell the user they refused an action they were
+         * simply never asked about in time, and would likely offer no way to
+         * try again.
+         */
+        type: "TOOL_EXPIRED";
+        executionId: string;
+        toolName: string;
+      }
+    | {
+        /** A tool finished. The authoritative result is in session history. */
+        type: "TOOL_COMPLETED";
+        executionId: string;
+        toolName: string;
+      }
   | {
       type: "COMPLETED";
       content: string;
