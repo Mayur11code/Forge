@@ -152,6 +152,11 @@ the same place, not introduce its own weaker logic.
    It re-validates rather than trusting the caller's types. On failure returns
    `{ success: false, code: "INVALID_INPUT" }`. Zod issues are discarded, so
    callers do not leak schema internals to the model.
+   *This is the HTTP-facing path and stays deliberately terse.* The **agent tool**
+   executor (`tools/create-task/execute.ts`) reports the same rejection with the
+   failing field named, because its caller is a model that has to correct itself,
+   not an API client. The two shapes differ deliberately and both re-validate;
+   see [`tools.md`](./tools.md#what-a-rejection-looks-like-to-the-model).
 2. **Project ownership** —
    `project.findFirst({ where: { id: data.projectId, orgId: actor.orgId } })`.
    A cross-org `projectId` resolves to `null` and never reaches the write.

@@ -204,6 +204,42 @@ failure rather than something silently dropped. A model that tries to smuggle
 `orgId` into `listTasks` gets `INVALID_INPUT` and the request never reaches the
 database — covered by a test.
 
+### What a rejection looks like to the model
+
+All three tools build the rejection with the same helper,
+`buildValidationFailure` in `forge/src/lib/ai/agent/tools/shared-output.ts`, so
+one prompt rule covers all of them:
+
+```json
+{
+  "ok": false,
+  "code": "INVALID_INPUT",
+  "error": "listTasks received invalid arguments: limit: Invalid input: expected number, received string.",
+  "issues": [
+    { "path": "limit", "code": "invalid_type", "message": "Invalid input: expected number, received string" }
+  ]
+}
+```
+
+`issues` is what makes the loop self-healing: the field that failed is named, so
+the model fixes that argument instead of guessing. Every issue is reported, not
+just the first, so three wrong fields are fixed in one turn rather than three. The
+list is capped at 8 and the count of anything dropped is stated, so a truncated
+list is never mistaken for a complete one.
+
+No part of the submitted input is echoed back. Only the schema's own issue
+`code`, `path`, and `message` are returned. Zod's `unrecognized_keys` message
+names the offending *keys* — which the model itself just wrote — and never their
+values.
+
+> This is deliberately **not** what the canonical domain operations return.
+> `createTaskInOrg` and `updateTaskInOrg` answer a rejected payload with a bare
+> `{ success: false, code: "INVALID_INPUT", error: "Invalid task input." }`,
+> because their caller is the HTTP API rather than a model, and schema internals
+> are not something to hand to an arbitrary client. See
+> [`security.md`](./security.md). The tool layer is not the security boundary;
+> the domain operation is, and it re-validates regardless of what the tool did.
+
 ## Proposal rendering
 
 `describeProposal` renders the **persisted** `input` into a

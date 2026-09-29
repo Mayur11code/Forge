@@ -1,13 +1,13 @@
 # Prompt Architecture
 
-> Verified against the repository on 2026-09-29 (Phase 2 pass).
+> Verified against the repository on 2026-09-30 (quality-audit closure pass).
 
 ## One runtime prompt, not many
 
 `forge/src/lib/ai/agent/prompts/system-prompt.ts`
 
 ```ts
-export const AGENT_PROMPT_VERSION = "v2";
+export const AGENT_PROMPT_VERSION = "v3";
 export const LEGACY_AGENT_PROMPT_VERSION = "v1";
 
 export function buildAgentSystemPrompt({
@@ -32,7 +32,7 @@ The prompt is one template literal containing nine XML-tagged sections.
 | 1 | `<IDENTITY>` | The agent is "Forge AI", an autonomous assistant that "operates only within the current organization". Interpolates `organizationName`. |
 | 2 | `<CORE_RULES>` | Anti-fabrication. Never invent ids, records, users or workflow results. Never claim success without explicit tool confirmation. State unavailability rather than guessing. Use the minimum number of tool calls. |
 | 3 | `<TOOL_POLICY>` | **"Call AT MOST ONE tool per turn."** States that the runtime rejects a turn containing more than one and treats it as a failure. Do not repeat identical calls, do not batch, never fabricate tool outputs, and wait for the returned tool result before continuing. |
-| 4 | `<TOOL_CONTRACT>` | **Added in Phase 2.** Names the three tools, states that only writes pause for approval, tells the model to ask in plain text rather than guess, and makes a decline final. |
+| 4 | `<TOOL_CONTRACT>` | **Added in Phase 2.** Names the three tools, states that only writes pause for approval, tells the model to ask in plain text rather than guess, and makes a decline final. **Extended in `v3`** with the `INVALID_INPUT` self-correction rule: a schema rejection is feedback on the model's own arguments, the failing field is named under `issues`, and correcting it is the intended recovery. |
 | 5 | `<TASK_CREATION>` | `createTask` is a write. Only on explicit user request. Never choose the organization. Identify the project by **name**, not id. On `PROJECT_NOT_FOUND` / `PROJECT_AMBIGUOUS`, use the returned `suggestions` and ask the user. Do not report creation until `ok: true`. |
 | 6 | `<TASK_UPDATES>` | **Added in Phase 2.** `updateTask` changes one task. Read before writing. Identify by exact title, never an invented id. Omitted fields are untouched; `assigneeId: null` unassigns. On `TASK_NOT_FOUND` / `TASK_AMBIGUOUS`, ask. |
 | 7 | `<WRITE_POLICY>` | Verify intent. Prefer reading before modifying. No destructive operations unless requested. Never assume a write completed. Never retry a declined write by another route. |
@@ -108,16 +108,18 @@ limitation. Two consequences were accepted rather than hidden:
 2. `promptVersion` is **not** claimed as per-message provenance anywhere. See
    the gap table below.
 
-### Why the default is `v1`, not `v2`
+### Why the default is the legacy version, not the current one
 
 The column is `NOT NULL`, so existing rows backfill from the default. Defaulting
-it to the *current* version would stamp `"v2"` onto sessions that predate the
-`TOOL_CONTRACT` — asserting provenance for history that never had it, and doing
-so invisibly, because the result looks correct.
+it to the *current* version would stamp the then-current string onto sessions
+that predate `TOOL_CONTRACT` — asserting provenance for history that never had
+it, and doing so invisibly, because the result looks correct.
 
 The default is therefore the legacy version those rows actually ran under, and
 `createAgentSession` overrides it for every new session. The default is only ever
-reached by rows that existed before the migration.
+reached by rows that existed before the migration. Note that the legacy constant
+is `LEGACY_AGENT_PROMPT_VERSION = "v1"` and does not move; it names one specific
+past contract, not "whatever was previous".
 
 ### Why Git history is still not sufficient
 

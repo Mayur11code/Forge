@@ -53,7 +53,7 @@ the original planning matrix have moved from `PLANNED / VERIFY` to
 | Orphan recovery | `IMPLEMENTED` / `SCHEDULED` | `reapOrphanedToolExecutions` + `redeliverStalledConfirmedExecutions` via `AGENT_MAINTENANCE_REQUESTED`, driven by QStash schedule `scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj`; real signed ticks observed. Destination is a temporary tunnel — a stable origin is still owed |
 | Stalled-session recovery | `IMPLEMENTED` / `SCHEDULED` (live proof partial) | `redriveStalledSessions` + bounded `rearmOutboxEvent`; 5th maintenance duty. Lock is the liveness signal, `updatedAt` only a pre-filter. See [Decision 21](./decisions.md#decision-21-a-stale-session-is-proven-dead-by-its-lock-not-its-timestamp) |
 | Prompt versioning | `PARTIAL` | `AGENT_PROMPT_VERSION` + `AgentSession.promptVersion` (session-level only; no per-message hash) |
-| Unit tests (agent) | `IMPLEMENTED` | 19 suites, 289 tests |
+| Unit tests (agent) | `IMPLEMENTED` | 20 suites, 304 tests |
 | `searchKnowledge` | `REMOVED` | Replaced by `createTask` |
 | Dedicated tool-execution route | `REMOVED` | Folded into `/api/worker` — one consumer per event |
 | Agent UI | `PLANNED` | **No client exists.** Nothing calls `/api/agent/init` or the session GET |
@@ -492,7 +492,7 @@ where it does anything. The consumers' CAS remains the primary guard.
 
 ## Phase 6 — Testing
 
-**Status:** `PARTIAL` — 19 suites, 289 tests. `npx tsc --noEmit` clean. No
+**Status:** `PARTIAL` — 20 suites, 304 tests. `npx tsc --noEmit` clean. No
 coverage thresholds are configured. `npx jest` was not run against a live
 database, and a `jest.setup-db-guard.ts` guard now fails any test that
 constructs a real `PrismaClient`.
@@ -568,7 +568,7 @@ database, a queue, and a model stub.
 
 **Status:** `PARTIAL — session-level only`
 ```ts
-export const AGENT_PROMPT_VERSION = "v2";
+export const AGENT_PROMPT_VERSION = "v3";
 // prisma/schema.prisma
 promptVersion String @default("v1")
 ```
