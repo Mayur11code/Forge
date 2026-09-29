@@ -38,6 +38,10 @@ jest.mock("@/app/api/worker/agent-maintenance/am", () => ({
   handleAgentMaintenance: jest.fn(),
 }));
 
+jest.mock("@/app/api/worker/workflow-maintenance/wm", () => ({
+  handleWorkflowMaintenance: jest.fn(),
+}));
+
 // `var` is deliberate: jest hoists the jest.mock call above module
 // declarations, and a const would be in the temporal dead zone when the
 // factory runs. The factory executes in this file's scope, so this binding is
@@ -77,6 +81,7 @@ import { NextRequest } from "next/server";
 
 import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentLoop } from "@/app/api/worker/agent-loop/al";
+import { handleWorkflowMaintenance } from "@/app/api/worker/workflow-maintenance/wm";
 import { handleAgentMaintenance } from "@/app/api/worker/agent-maintenance/am";
 import { POST } from "@/app/api/worker/route";
 
@@ -86,6 +91,10 @@ const toolHandlerMock = handleToolExecution as jest.MockedFunction<
 const loopHandlerMock = handleAgentLoop as jest.MockedFunction<
   typeof handleAgentLoop
 >;
+const workflowMaintenanceHandlerMock =
+  handleWorkflowMaintenance as jest.MockedFunction<
+    typeof handleWorkflowMaintenance
+  >;
 const maintenanceHandlerMock = handleAgentMaintenance as jest.MockedFunction<
   typeof handleAgentMaintenance
 >;
@@ -124,6 +133,14 @@ describe("event to handler bindings", () => {
     // fail on every single tick.
     expect(bindings().get("AGENT_MAINTENANCE_REQUESTED")).toBe(
       maintenanceHandlerMock,
+    );
+  });
+
+  it("binds WORKFLOW_MAINTENANCE_REQUESTED to the workflow maintenance worker", () => {
+    // Same reasoning as the agent sweep: a missing binding turns every
+    // scheduled tick into the "known event with no handler" 500.
+    expect(bindings().get("WORKFLOW_MAINTENANCE_REQUESTED")).toBe(
+      workflowMaintenanceHandlerMock,
     );
   });
 
@@ -167,6 +184,16 @@ describe("dispatch", () => {
     await expect(res.json()).resolves.toEqual({
       ok: true,
       eventType: "AGENT_MAINTENANCE_REQUESTED",
+    });
+  });
+
+  it("routes WORKFLOW_MAINTENANCE_REQUESTED", async () => {
+    const res = await post("WORKFLOW_MAINTENANCE_REQUESTED");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      eventType: "WORKFLOW_MAINTENANCE_REQUESTED",
     });
   });
 
