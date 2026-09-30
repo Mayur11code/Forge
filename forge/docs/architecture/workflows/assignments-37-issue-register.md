@@ -13,10 +13,18 @@ Explicit statements of scope:
 - **All findings in this document originated from Phase 0 reconnaissance**, as
   recorded in `docs/architecture/workflows/assignments-37-phase-0-audit.md`. This
   document does not introduce new investigation.
+  - **Amendment, I6 only.** One exception exists. **I6 — Cross-tenant workflow
+    execution** was recorded after Phase 0 closed, from a separate inspection of the
+    execution entrypoint (`triggerWorkflowRun` / `startWorkflow`). It is filed here
+    because it is a P0 tenant-isolation finding on a path Assignment 37 consumes,
+    and leaving it outside the register would mean the P0 set was incomplete. The
+    Phase 0 audit is **not** amended and still describes exactly what Phase 0
+    observed; I6 is additional, not a correction. Every other finding, including
+    I1–I5 and F1–F6, remains exactly as Phase 0 recorded it.
 - **This document does not change runtime behavior.** It is documentation. No
   finding here has been fixed by its existence.
 - The findings are not homogeneous. They include:
-  - **Bugs** — behavior that is already wrong (I1, I2, I3, I4).
+  - **Bugs** — behavior that is already wrong (I1, I2, I3, I4, I6).
   - **Architectural gaps** — capability that Assignment 37 requires and does not
     yet exist (F3, F4, F6).
   - **Design decisions** — forks that are legitimate choices rather than defects,
@@ -34,7 +42,7 @@ Explicit statements of scope:
 
 | Priority | Meaning |
 |---|---|
-| **P0** | Must be resolved before the agent can safely become a workflow writer |
+| **P0** | Must be resolved before Assignment 37 relies on the affected path — before the agent can safely become a workflow writer (I1), or before a generated workflow is handed to the execution engine (I6) |
 | **P1** | Direct prerequisite for Assignment 37 implementation |
 | **P1-CHECK** | Must be verified; becomes a blocker only if verification confirms the condition |
 | **P2** | Required later in Assignment 37 but should not block the current contract phases |
@@ -182,6 +190,146 @@ binding the moment the value crosses into `uiNodes`.
 then treated as a canonical `WorkflowDefinition` source.
 
 **Do not implement the fix in this document.**
+
+---
+
+### I6 — Cross-tenant workflow execution
+
+**Classification:** P0 · security / tenant-isolation · separate issue / separate
+ticket · **must be closed before 37.12**, i.e. before Assignment 37 hands any
+generated workflow to the existing execution engine.
+
+**Status:** OPEN. Recorded after Phase 0 closed, from a separate inspection of the
+execution entrypoint. Phase 0 findings are not amended by this entry; I6 is an
+additional finding in its own right.
+
+**Affected files / functions.**
+
+| File | Function | Role in the gap |
+|---|---|---|
+| `src/app/actions/workflows/workflow-run.ts` | `triggerWorkflowRun` (`:5-25`) | Server action. Performs no authentication and no organization check. |
+| `src/lib/workflow/execution/trigger.ts` | `startWorkflow` (`:7-43`) | Loads the workflow and creates the run. Loads by id with no `orgId` filter. |
+
+**Observed authorization gap.** `triggerWorkflowRun` accepts `workflowId`,
+`orgId` and `triggerPayload` and calls `startWorkflow` directly. There is no
+`getOrgAccess` call, no `auth()` call, and no membership check anywhere on the
+path:
+
+```ts
+export async function triggerWorkflowRun(
+  workflowId: string,
+  orgId: string,
+  triggerPayload: Record<string, any> = {}
+) {
+  try {
+    const run = await startWorkflow(workflowId, triggerPayload);
+    return {
+      success: true,
+      runId: run.id,
+      redirectTo: `/org/${orgId}/runs/${run.id}`,   // :17 — orgId is used only to build a link
+    };
+```
+
+The `orgId` argument is used exclusively to construct a redirect string. It never
+participates in an authorization decision, so the value is caller-supplied and
+unverified; supplying any string produces a successful return.
+
+**Observed database predicate.** The lookup inside `startWorkflow` is keyed on
+primary key alone:
+
+```ts
+export async function startWorkflow(workflowId: string, triggerData: Record<string, any> = {}) {
+  const workflow = await db.workflow.findUnique({
+    where: { id: workflowId },                    // :8-9 — no orgId component
+  });
+
+  if (!workflow) {
+    throw new Error(`Cannot start workflow: ${workflowId} not found.`);
+  }
+```
+
+There is no `orgId` in the predicate, so the row is located regardless of owning
+organization. The only check present is existence.
+
+**Observed trigger / run behavior, established by repository inspection.**
+
+1. `triggerPayload` becomes the run's global context. `startWorkflow` builds
+   `initialContext = { trigger: { outputs: triggerData } }` (`:20-24`) and writes it
+   to the new `WorkflowRun` row as `context` (`:27-33`).
+2. That payload is referenceable from step inputs through the existing pointer
+   grammar. `resolveInputs` → `resolveValue` → `getValueByPath(globalContext, path)`
+   in `src/lib/workflow/execution/resolver.ts:7-14, 20-32, 50-59` walks
+   `context.trigger.outputs.<field>` for a pointer such as
+   `{{trigger.outputs.userId}}`. The source comment at `trigger.ts:19` states this
+   intent directly. No new syntax is required for the payload to be consumed.
+3. The run is created with `status: "RUNNING"` (`:30`) and immediately advanced by
+   `advanceWorkflow(run.id)` (`:40`), which dispatches real actions through the
+   existing engine.
+4. `startWorkflow` returns the run, so the caller receives a run id and a redirect
+   into a run viewer.
+
+**Security / tenant-isolation impact.** An authenticated member of any
+organization can start a workflow belonging to a different tenant if they know its
+id, supplying an arbitrary `triggerPayload` that is seeded into that workflow's
+run context. The attacker does not need the workflow to appear in any list they can
+load, and does not need write access to it. The consequences are read of execution
+behavior, invocation of another tenant's real actions, and attacker-controlled
+values flowing into those actions through the `{{trigger.outputs.*}}` namespace.
+
+**Distinction from I1 — the two must not be merged.**
+
+| | **I1** | **I6** |
+|---|---|---|
+| Operation | cross-tenant **UPDATE** | cross-tenant **EXECUTION** |
+| Target | an existing workflow's stored content | an existing workflow's runtime behavior |
+| Entry point | `updateWorkflowState` (`workflow.ts:95`) | `triggerWorkflowRun` (`workflow-run.ts:5`) |
+| Predicate | `update({ where: { id } })` | `findUnique({ where: { id } })` |
+| Attacker needs | a workflow id | a workflow id |
+| Consequence | overwrites blueprint, `eventId`, `isActive` | starts a real run with attacker-chosen trigger data |
+| Gate | before **37.5** (agent becomes a writer) | before **37.12** (execution handoff) |
+
+I1 lets an attacker change what a workflow *is*. I6 lets an attacker cause a
+workflow to *run*. Closing I1 does not reduce I6: the read-side gate at
+`workflows/[workflowId]/page.tsx:18-23` and the write-side gate at `workflow.ts:115`
+are the same `workflow` row, and neither is on the execution path. They are
+separate defects with separate owners, separate regression tests, and separate
+definitions of done, and they are gated at different phases. Merging them would let
+one closed ticket stand in for the other.
+
+**Why this becomes especially relevant at 37.12.** 37.12 is the phase that hands a
+generated workflow to the existing execution engine — the point at which
+Assignment 37 stops producing proposals and starts producing effects. The
+`startWorkflow` entrypoint is exactly what 37.12 makes reachable from
+machine-generated material. Before that, the exposure is a human clicking "Test
+Workflow" on a workflow in their own editor. After it, a proposal that has passed
+every validation gate in 37.2–37.9 can reach the same unscoped entrypoint, and the
+authorization surface becomes a proposal rather than a UI. The correct reading is
+that I6 is a latent bug today and a serious one at 37.12.
+
+**Why P0.** It crosses a tenant boundary on an execution path, it is reachable by
+any authenticated user with no membership check at all, and it is consumed directly
+by a phase of this assignment. Per axis 4 of the priority model, agent-reachable
+exposure raises severity; here the assignment does not even have to make the agent
+a caller for the boundary to be crossed, because the existing client button is
+already sufficient.
+
+**Required regression test.** A test asserting that a caller authenticated for
+organization A cannot start a workflow whose `orgId` is B, and that the
+`WorkflowRun` is not created. The positive case — a caller starting a workflow in
+their own organization — must be asserted alongside it, so the fix cannot
+degenerate into a blanket denial.
+
+**Do not implement the fix in this document.** I6 is documentation and gating only
+at this point. No fix is proposed here, and the execution path is not modified by
+this entry.
+
+**Additional observed caller, recorded for the ticket and not expanded here.**
+`src/app/api/workflow/test/[workflowId]/test-run/route.ts:10-29` is a `POST` route
+that calls the same `startWorkflow` with the `workflowId` taken from the URL, and
+carries no authentication of its own. It is a second reachable path to the same
+unscoped primitive. It is noted because the fix must not stop at
+`triggerWorkflowRun` — a ticket that fixes only the server action would leave this
+route open. No behavior at this route is analyzed or changed here.
 
 ---
 
@@ -615,6 +763,7 @@ three are distinguishable and one has no representation at any level.
 | Finding | Priority | Assignment phase | Blocks what? | Separate ticket? |
 |---|---|---|---|---|
 | **I1** cross-tenant workflow update | **P0** | Pre-37.5 prerequisite | All agent-originated workflow writes / materialization | **Yes** |
+| **I6** cross-tenant workflow execution | **P0** | Pre-37.12 prerequisite | Handing any generated workflow to the existing execution engine | **Yes** |
 | **I2** node validation bypass | **P0** | Pre-37.11 prerequisite | Trusting generated `uiNodes` at the persistence boundary | **Yes** |
 | **F3** no authoritative capability contract | **P1** | **37.1** | Planner-facing action knowledge; the whole generation path | No |
 | **I4** runtime/UI registry mismatch | **P1** | **37.1** | Reliable output contracts; absence of phantom actions | No — resolve with 37.1 |
@@ -655,7 +804,7 @@ convenience.
 37.9    Existing confirmation integration
 37.10   UI graph projection / deterministic layout       (F1)
 37.11   Workflow materialization                        (canvas-first, F2)
-37.12   Execution handoff
+37.12   Execution handoff                               (GATED ON I6)
 37.13   Prompt / DAG planning instructions
 37.14   Self-healing observations
 37.15   Full test matrix
@@ -663,13 +812,16 @@ convenience.
 37.17   Documentation / closure
 ```
 
-The three structural changes from the original ordering:
+The four structural changes from the original ordering:
 
 1. **37.0A / 37.0B inserted before 37.1**, so the P0 work is not bundled into a
    feature phase.
 2. **37.10 and 37.11 swap places** — UI projection before materialization — as a
    direct consequence of F1.
 3. **I5 verification is attached to 37.16** rather than left implicit.
+4. **37.12 is gated on I6.** Execution handoff cannot become `VERIFIED` until
+   cross-tenant workflow execution is closed. I6 is a separate ticket from I1 and
+   is not satisfied by closing I1.
 
 ---
 
@@ -681,6 +833,12 @@ phase and invalidate the design it was meant to inform.
 **DO NOT** preemptively fix **F1**, **F2**, **F4**, or **F5** before their
 designated phase. Each is a fork with a consumer that does not exist yet, and
 resolving it early means guessing at a requirement rather than responding to it.
+
+**DO NOT** fold **I6** into the I1 ticket. They are separate defects on separate
+paths, gated at different phases, and one closed ticket must not be allowed to
+stand in for the other. I6 is also **not** to be fixed as a side effect of 37.0A,
+and 37.0A must not touch the execution path. I6 is fixed by its own ticket, before
+37.12, covering every reachable caller of the unscoped entrypoint.
 
 **DO NOT** create a `WorkflowProposal` migration merely because
 `AgentToolExecution` may eventually be insufficient. F4 is a design decision at
@@ -749,6 +907,15 @@ regression test proves cross-tenant writes are rejected.
 F1's decision is resolved — synthesized layout versus a definition-first write
 path — and I2's persistence-boundary integrity is closed, so that generated
 `uiNodes` crossing the canvas boundary is genuinely validated.
+
+**Gate G — before 37.12, Execution handoff.**
+I6 is closed. The execution entrypoint enforces tenant scope, and a regression
+test proves a caller authenticated for one organization cannot start another
+organization's workflow, and that no `WorkflowRun` row is created when they try.
+Gate E does **not** satisfy Gate G: I1 and I6 are different defects on different
+paths, gated at different phases, and a closed I1 leaves the execution entrypoint
+unscoped. Every reachable caller of the unscoped primitive must be covered by the
+I6 ticket, not only the server action.
 
 ---
 
@@ -820,8 +987,11 @@ the original placed UI derivation as a side concern after materialization.
 **Phase 0:** COMPLETE
 
 **Current blockers:**
-- I1
-- I2
+- I6
+
+**P0 set:** I1, I2, I6 — three separate tickets, of which **I1 and I2 are CLOSED
+(2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0** and still
+gates 37.12. None of the three was ever satisfied by closing either of the others.
 
 **Current implementation target:** 37.1 — Action capability registry
 
@@ -841,7 +1011,9 @@ verification confirms no workflow-maintenance schedule exists.
 
 ---
 
-*Provenance: all findings traced to
-`docs/architecture/workflows/assignments-37-phase-0-audit.md`. Where Phase 0
-recorded `UNKNOWN`, this register preserves the uncertainty rather than
-resolving it by assumption.*
+*Provenance: findings F1–F6 and I1–I5 traced to
+`docs/architecture/workflows/assignments-37-phase-0-audit.md`. **I6 was recorded
+separately, after Phase 0 closed**, from inspection of `triggerWorkflowRun` and
+`startWorkflow`; the Phase 0 audit is unmodified. Where Phase 0 recorded
+`UNKNOWN`, this register preserves the uncertainty rather than resolving it by
+assumption.*

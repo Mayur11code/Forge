@@ -516,6 +516,52 @@ utilities rather than creating another UI compiler.
 
 # Phase 12 — Start the existing execution engine
 
+## Precondition — I6, cross-tenant workflow execution
+
+**I6 must be VERIFIED before execution handoff begins.**
+
+The entrypoint this phase hands work to is currently unscoped:
+
+- `triggerWorkflowRun` (`src/app/actions/workflows/workflow-run.ts:5`) performs no
+  authentication and no organization check. Its `orgId` argument is used only to
+  build a redirect string at `:17`.
+- `startWorkflow` (`src/lib/workflow/execution/trigger.ts:8`) loads the workflow
+  with `findUnique({ where: { id: workflowId } })` — primary key only, no `orgId`.
+- `triggerPayload` becomes the run context at `trigger.ts:20-31` and is referenceable
+  from step inputs as `{{trigger.outputs.*}}` via
+  `src/lib/workflow/execution/resolver.ts:7-14, 50-59`.
+
+Until that entrypoint enforces tenant scope, any authenticated user can start any
+tenant's workflow with an attacker-chosen trigger payload.
+
+**I1 does not satisfy this precondition.** I1 is the write path
+(`updateWorkflowState`); I6 is the execution path (`startWorkflow`). They are
+separate P0 tickets, fixed separately, with separate regression tests. Closing I1
+leaves `startWorkflow` exactly as it is today.
+
+**Gate G.** This phase cannot be `VERIFIED` unless I6 is `VERIFIED`, regardless of
+how well the handoff itself works.
+
+## What this precondition does and does not permit
+
+Proposal generation may exist before this gate. Phases 37.1–37.9 — schema,
+reference validation, semantic compilation, the `generateWorkflow` tool,
+missing-input state, human criticality, durable persistence and confirmation — are
+unaffected and proceed on their own terms.
+
+What the gate forbids is treating **generated workflow execution** as trusted. A
+proposal that has passed every validation gate in those phases is still not an
+authorized run. Contract validation establishes that a graph is *well-formed*; it
+never establishes that the caller is *entitled to execute it*. Those are different
+questions, and only the second one is a tenant-isolation property.
+
+So the constraint is deliberately narrow: it does not defer proposal generation,
+and it does not require any change to how proposals are validated. It requires that
+before Assignment 37 hands machine-generated material to the execution engine, the
+existing entrypoint refuses to start a workflow the caller does not own.
+
+## Scope of this phase is otherwise unchanged
+
 ```text
 Workflow → WorkflowRun → existing evaluator
 ```
@@ -524,6 +570,14 @@ No new DAG executor. No separate QStash node runner. No new Redis lock. No new
 fork/join engine. The hardened engine is the executor. Action dispatch remains
 `step.action → getAction(actionId) → action.execute(...)`, already how the wrapper
 operates.
+
+**The execution engine is not redesigned here.** I6 is fixed by its own ticket,
+before this phase, and that ticket must cover every reachable caller of the
+unscoped entrypoint — including
+`src/app/api/workflow/test/[workflowId]/test-run/route.ts:10`, which calls
+`startWorkflow` with a `workflowId` taken from the URL and no authentication of its
+own. This phase consumes a tenant-scoped entrypoint; it does not build one, and it
+does not modify the evaluator, wrapper, mutex or resolver.
 
 ---
 
@@ -716,7 +770,7 @@ conflict. It is the authoritative sequence.
 37.9    Existing confirmation integration
 37.10   UI graph projection / deterministic layout       (F1)
 37.11   Workflow materialization                        (canvas-first, F2)
-37.12   Execution handoff
+37.12   Execution handoff                               (GATED ON I6)
 37.13   Prompt / DAG planning instructions
 37.14   Self-healing observations
 37.15   Full test matrix
@@ -724,7 +778,7 @@ conflict. It is the authoritative sequence.
 37.17   Documentation / closure
 ```
 
-Three structural changes from the original ordering:
+Four structural changes from the original ordering:
 
 1. **37.0A and 37.0B inserted before 37.1**, so P0 work is not bundled into a
    feature phase.
@@ -732,6 +786,9 @@ Three structural changes from the original ordering:
    direct consequence of F1.
 3. **I5 verification attaches explicitly to 37.16** rather than being left
    implicit.
+4. **37.12 is gated on I6** (cross-tenant workflow execution). I6 was recorded
+   after Phase 0 closed, is a separate P0 ticket from I1, and is not satisfied by
+   closing I1.
 
 37.1–37.17 are still **not** implemented in one shot. The first implementation
 prompt covers 37.0–37.3: understand the existing action registry, define the
@@ -748,6 +805,12 @@ and invalidate the design it was meant to inform.
 **DO NOT** preemptively fix **F1**, **F2**, **F4**, or **F5** before their
 designated phase. Each is a fork whose consumer does not exist yet; resolving it
 early means guessing at a requirement rather than responding to it.
+
+**DO NOT** fold **I6** into the I1 ticket, and **DO NOT** fix I6 as a side effect
+of another phase. Cross-tenant UPDATE (I1) and cross-tenant EXECUTION (I6) are
+separate defects on separate paths, gated at 37.5 and 37.12 respectively, and one
+closed ticket must not stand in for the other. I6 is fixed by its own ticket before
+37.12, and the execution engine is not redesigned in the process.
 
 **DO NOT** create a `WorkflowProposal` migration merely because
 `AgentToolExecution` may eventually be insufficient.
@@ -781,7 +844,8 @@ carry authority.
 **Gate A — before 37.1.** P0 prerequisites (I1, I2) are closed, or explicitly
 isolated from the contract work with a named owner and a date. Isolation is
 acceptable for 37.1–37.4, which write no workflows. It is not acceptable for 37.5
-onward (Gate E) or for materialization (Gate F).
+onward (Gate E) or for materialization (Gate F). I6 is also a P0 but gates a later
+boundary (Gate G); it is not required for 37.1.
 
 **Gate B — after 37.1.** Exactly one authoritative planner-facing action
 capability source, derived from the runtime registry rather than hand-maintained
@@ -805,6 +869,14 @@ writes are rejected.
 layout versus a definition-first write path — and I2's persistence-boundary
 integrity is closed, so generated `uiNodes` crossing the canvas boundary is
 genuinely validated.
+
+**Gate G — before 37.12, execution handoff.** I6 is closed. The existing execution
+entrypoint enforces tenant scope, and a regression test proves a caller
+authenticated for one organization cannot start another organization's workflow and
+that no `WorkflowRun` is created when they try. Gate E does **not** satisfy Gate G:
+I1 is the write path and I6 is the execution path, and a closed I1 leaves
+`startWorkflow` unscoped. Every reachable caller of the unscoped entrypoint must be
+covered by the I6 ticket, not only the server action. See *Phase 12 — Precondition*.
 
 ---
 
@@ -853,10 +925,10 @@ is a *precondition* of persistence rather than a consequence of it.
                             WorkflowDefinition
                                       │
                                       ▼
-                               WorkflowRun
-                                      │
-                                      ▼
-                          EXISTING ENGINE              37.12
+                              WorkflowRun
+                                       │
+                                       ▼
+                           EXISTING ENGINE              37.12   ← GATE G: I6
 ```
 
 Everything from `WorkflowProposal` through `CONFIRMATION` is unchanged from the
@@ -864,13 +936,26 @@ original diagram. The tail is not: `UI GRAPH / LAYOUT` and
 `CANVAS-FIRST PERSISTENCE` sit **before** `WorkflowDefinition`, whereas the
 original placed UI derivation as a side concern after materialization.
 
+The `WorkflowRun` → `EXISTING ENGINE` edge is additionally gated on **I6**. The
+arrow into the engine is the boundary I6 protects: proposal generation is
+unaffected, but no generated workflow may be executed until the entrypoint
+enforces tenant scope.
+
 ---
 
 ## Status
 
 Phase 0: **COMPLETE** — see `assignments-37-phase-0-audit.md`.
-Current blockers: **I1**, **I2**.
+Phase 37.0A: **VERIFIED 2026-09-30** — I1 closed; the update predicate in
+`updateWorkflowState` is tenant-scoped and its 5-case regression suite is green.
+Phase 37.0B: **VERIFIED 2026-09-30** — I2 closed; node `data` is validated against
+`TriggerNodeDataSchema` / `ActionNodeDataSchema` on both save paths and its
+23-case suite is green. Gate F satisfied.
+Current blockers: **I6** — the one remaining P0.
 Current implementation target: **37.1 — Action capability registry**.
 Later architectural decisions: **F1**, **F2**, **F4**, **F5**.
 
-No issue in the register has been fixed by this planning revision.
+This planning revision fixed no issue; the I6 work was documentation and gating
+only, and the execution path is not modified. I1 and I2 were subsequently closed
+under 37.0A and 37.0B, neither of which changed architecture here. **I6 remains
+open** and still gates 37.12.
