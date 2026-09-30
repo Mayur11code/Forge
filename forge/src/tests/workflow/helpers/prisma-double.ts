@@ -7,8 +7,8 @@
 // factory `require`s this module instead, which resolves to the same instance
 // the test imports.
 //
-// Two things are modelled deliberately rather than stubbed permissively,
-// because both are the properties the workflow regression tests exist to prove:
+// Three things are modelled deliberately rather than stubbed permissively,
+// because all three are the properties the workflow regression tests exist to prove:
 //
 //   1. `StepRun`'s `@@unique([runId, stepId])`. The evaluator relies on P2002 to
 //      neutralise a duplicate step creation, and the wrapper relies on the same
@@ -18,6 +18,11 @@
 //      `where: { id, status }`; if the double ignored the status predicate the
 //      idempotency test would pass because the update happened, not because the
 //      claim was exclusive.
+//   3. The `orgId` filter on a workflow write. The whole point of the update-scope
+//      test is that the tenant constraint rides in the write predicate, so a
+//      double that dropped it would return `count: 1` for a foreign row and fail
+//      loudly - which is the correct outcome. A double that ignored the predicate
+//      while the test forced `count: 0` would prove nothing at all.
 
 type Row = Record<string, unknown>;
 
@@ -58,10 +63,12 @@ export function resetStore() {
   store.auditLogs = [];
   stepRunSeq = 0;
   auditSeq = 0;
+  workflowSeq = 0;
 }
 
 let stepRunSeq = 0;
 let auditSeq = 0;
+let workflowSeq = 0;
 
 function uniqueStepRunViolation(): never {
   const error = new Error(
@@ -332,6 +339,80 @@ const findManyRuns = async ({
   });
 };
 
+/**
+ * Tenant-scoped `updateMany` on workflows.
+ *
+ * `orgId` is filtered exactly as it is written, so the update-scope test can only
+ * pass because the query itself excludes another organization's row. Filtering
+ * it out here is what makes the negative cases meaningful: a double that
+ * ignored the predicate would return `count: 1` and fail the test, and a test
+ * that forced `count: 0` regardless of the predicate would prove nothing about
+ * the write it is supposed to be protecting.
+ */
+const updateManyWorkflows = async ({ where, data }: { where: Row; data: Row }) => {
+  const hits = store.workflows.filter((row) => matchesWorkflowWhere(row, where));
+
+  for (const row of hits) {
+    Object.assign(row, data);
+  }
+
+  return { count: hits.length };
+};
+
+/**
+ * `where` shared by both workflow lookups, so the read that authorizes the write
+ * and the write itself cannot drift apart. The save action is only tenant-safe
+ * while `orgId` is filtered here; dropping it from either half silently restores
+ * cross-tenant access and every negative test would pass on the other half alone.
+ */
+function matchesWorkflowWhere(row: Row, where: Row): boolean {
+  if (where.id !== undefined && row.id !== where.id) return false;
+  if (where.orgId !== undefined && row.orgId !== where.orgId) return false;
+  return true;
+}
+
+const findFirstWorkflow = async ({
+  where,
+  select,
+}: {
+  where: Row;
+  select?: Row;
+}) => {
+  const row = store.workflows.find((candidate) =>
+    matchesWorkflowWhere(candidate, where),
+  );
+  if (!row) return null;
+
+  if (!select) return { ...row };
+
+  const picked: Row = {};
+  for (const field of Object.keys(select)) {
+    if (select[field]) picked[field] = row[field];
+  }
+  return picked;
+};
+
+/**
+ * `create` on workflows, so a create-path test can observe what actually landed.
+ *
+ * Returns a copy for the same reason `updateMany` does: the node-validation
+ * tests assert on the row that was persisted, and handing back a live reference
+ * would let a test's later mutation read as something the action wrote.
+ */
+const createWorkflow = async ({ data }: { data: Row }) => {
+  workflowSeq += 1;
+
+  const row: Row = {
+    id: `wf_${workflowSeq}`,
+    eventId: null,
+    isActive: false,
+    ...data,
+  };
+
+  store.workflows.push(row);
+  return { ...row };
+};
+
 const createStepRun = async ({ data }: { data: Row }) => {
   if (
     store.stepRuns.some(
@@ -574,6 +655,11 @@ type PrismaDouble = {
   $connect: () => Promise<void>;
   $disconnect: () => Promise<void>;
   $extends: jest.Mock;
+  workflow: {
+    findFirst: jest.Mock;
+    updateMany: jest.Mock;
+    create: jest.Mock;
+  };
   workflowRun: {
     findUnique: jest.Mock;
     findMany: jest.Mock;
@@ -615,6 +701,12 @@ export const prismaDouble: PrismaDouble = {
   $disconnect: lifecycleNoop,
   $extends: extend,
 
+  workflow: {
+    findFirst: jest.fn(findFirstWorkflow),
+    updateMany: jest.fn(updateManyWorkflows),
+    create: jest.fn(createWorkflow),
+  },
+
   workflowRun: {
     findUnique: jest.fn(findUniqueRun),
     findMany: jest.fn(findManyRuns),
@@ -642,6 +734,9 @@ const realImplementations = {
   findManyRuns,
   updateRun,
   updateManyRuns,
+  updateManyWorkflows,
+  findFirstWorkflow,
+  createWorkflow,
   createStepRun,
   createManyStepRuns,
   findManyStepRuns,
@@ -665,6 +760,9 @@ const realImplementations = {
  * permissive stub and makes CAS tests pass without exercising a CAS.
  */
 export function restoreWorkflowDouble(): void {
+  prismaDouble.workflow.findFirst.mockImplementation(realImplementations.findFirstWorkflow);
+  prismaDouble.workflow.updateMany.mockImplementation(realImplementations.updateManyWorkflows);
+  prismaDouble.workflow.create.mockImplementation(realImplementations.createWorkflow);
   prismaDouble.workflowRun.findUnique.mockImplementation(realImplementations.findUniqueRun);
   prismaDouble.workflowRun.findMany.mockImplementation(realImplementations.findManyRuns);
   prismaDouble.workflowRun.update.mockImplementation(realImplementations.updateRun);

@@ -2,10 +2,20 @@
 
 ```text
 Last Updated:     2026-09-30
-Current Phase:    37.0A  (37.0 is VERIFIED)
+Current Phase:    37.1  (37.0A and 37.0B are VERIFIED)
 Overall Status:   BLOCKED
-Next Action:      Close P0 prerequisites (37.0A I1, 37.0B I2), then begin 37.1
+Next Action:      Begin 37.1 — action capability registry
 ```
+
+> **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
+> against `TriggerNodeDataSchema` / `ActionNodeDataSchema` on **both** save paths,
+> and the validated value is what gets compiled and persisted. Gate F is
+> satisfied. **One P0 remains open: I6**, still a separate gate on 37.12.
+
+> **Third P0 recorded 2026-09-30.** **I6 — cross-tenant workflow execution** was
+> added after Phase 0 closed. The P0 set is now **three** issues: I1 (gated 37.5),
+> I2 (gated 37.11), I6 (gated 37.12). I6 is a separate ticket and is **not**
+> satisfied by closing I1. See *Issue Register Dashboard → I6*.
 
 > **Deviation from the requested header text, stated explicitly:** the supplied
 > sample header reads `Current Phase: 37.0`. Phase 37.0 is VERIFIED, so the
@@ -61,25 +71,34 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ASSIGNMENT 37 STATUS
 
 Overall:                     BLOCKED
-Current Phase:               37.0A  (Security prerequisite — I1)
-Previous Completed Phase:    37.0   (Contract reconnaissance — VERIFIED)
-Next Phase:                  37.0B  (Persistence-boundary prerequisite — I2)
-Blocking Issue:              I1, I2  (both P0)
-Security Prerequisites:      I1 NOT_STARTED, I2 NOT_STARTED
+Current Phase:               37.1   (Action capability registry)
+Previous Completed Phase:    37.0B  (Persistence-boundary prerequisite — I2 — VERIFIED)
+Next Phase:                  37.2   (WorkflowProposal schema)
+Blocking Issue:              I6     (the only open P0)
+Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 NOT_STARTED
 Architecture Decision Pending: F1, F2, F4, F5
-Last Verification:           NONE — no test or live verification has been performed
+Last Verification:           2026-09-30 — 37.0B I2 node-validation suite green
+                             (23 cases); full run 28 suites / 440 tests passed
 Last Updated:                2026-09-30
 
 Progress:
-[█░░░░░░░░░░░░░░░░░░░] 5%   (1 of 20 tracked phases VERIFIED)
+[███░░░░░░░░░░░░░░░░] 15%   (3 of 20 tracked phases VERIFIED)
 ```
 
 ### Why `BLOCKED` and not `IN_PROGRESS`
 
-Two P0 findings gate any workflow-writing capability. Phases 37.1–37.4 write no
+Two P0 findings gated any workflow-writing capability. Phases 37.1–37.4 write no
 workflows and can proceed once Gate A is satisfied by isolation. Phase 37.5 and
-beyond cannot: the agent must not become a workflow writer while
+beyond could not: the agent must not become a workflow writer while
 `updateWorkflowState` updates by primary key alone.
+
+**Both of those are closed as of 2026-09-30** — I1 under 37.0A, I2 under 37.0B — so
+the paragraph above describes defects that no longer exist. Gate E's predicate
+requirement is met. The separate persistence-layer requirement in Gate A is
+covered by I2.
+
+One P0, **I6**, remains and gates a later boundary. It does not stop 37.1, but the
+assignment cannot reach 37.12 until a tenant-scoped execution entrypoint exists.
 
 ### Progress calculation
 
@@ -139,8 +158,8 @@ Always use the smallest applicable status.
 | Phase | Name | Status | Priority | Depends On | Blocks | Main Deliverable | Verification | Evidence | Notes |
 |---|---|---|---|---|---|---|---|---|---|
 | 37.0 | Contract reconnaissance | **VERIFIED** | P0-enabling | — | everything | Contract map + 6 findings + 5 issues | Phase 0 gate answered | `assignments-37-phase-0-audit.md` | No source modified. `git status` shows only untracked documentation. |
-| 37.0A | Security prerequisite — I1 tenant-scoped workflow update | **NOT_STARTED** | **P0** | 37.0 | 37.5, 37.8, 37.11, all agent writes | Tenant-scoped update predicate + regression test | Cross-org write rejected; same-org write succeeds | — | Separate ticket. Not to be bundled into a feature phase. |
-| 37.0B | Persistence-boundary prerequisite — I2 node validation | **NOT_STARTED** | **P0** | 37.0 | 37.10, 37.11 | Real node-data validation on create **and** update paths | Valid node accepted; malformed node rejected | — | Separate ticket. |
+| 37.0A | Security prerequisite — I1 tenant-scoped workflow update | **VERIFIED** | **P0** | 37.0 | 37.5, 37.8, 37.11, all agent writes | Tenant-scoped update predicate + regression test | Cross-org write rejected; same-org write succeeds | 2026-09-30 | Closed as its own ticket, ahead of Gate E. Not bundled into a feature phase. |
+| 37.0B | Persistence-boundary prerequisite — I2 node validation | **VERIFIED** | **P0** | 37.0 | 37.10, 37.11 | Real node-data validation on create **and** update paths | Valid node accepted; malformed node rejected | 2026-09-30 | Closed as its own ticket. Satisfies Gate F. |
 | 37.1 | Action capability registry | **NOT_STARTED** | **P1** | 37.0A, 37.0B (isolation sufficient) | 37.2, 37.3, 37.4 | One authoritative planner-facing capability source | Planner obtains authoritative metadata for every generatable action | — | Resolves F3, absorbs I4. |
 | 37.2 | WorkflowProposal schema | **NOT_STARTED** | P1 | 37.1 | 37.3, 37.4 | `WorkflowProposal` Zod schema | Static A / B→A / C→A,B parses; malformed fails structurally | — | localRef IDs; no DB IDs, no coordinates, no criticality. |
 | 37.3 | Reference grammar + validator | **NOT_STARTED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | — | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`. **No new syntax.** |
@@ -152,7 +171,7 @@ Always use the smallest applicable status.
 | 37.9 | Existing confirmation integration | **NOT_STARTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | — | Mechanism already exists. Surface is the work. |
 | 37.10 | UI graph projection / deterministic layout | **NOT_STARTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout | Projection is deterministic and Gemini-free | — | **F1.** Moved ahead of materialization. |
 | 37.11 | Workflow materialization | **NOT_STARTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | — | F1 + F2. Canvas-first path. |
-| 37.12 | Execution handoff | **NOT_STARTED** | P1 | 37.11 | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | — | No new executor, lock, or queue runner. |
+| 37.12 | Execution handoff | **NOT_STARTED** | P1 | 37.11, **I6 VERIFIED (Gate G)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | — | No new executor, lock, or queue runner. **Cannot be VERIFIED unless I6 is.** |
 | 37.13 | Prompt / DAG planning instructions | **NOT_STARTED** | P1 | 37.12 | 37.16 | Prompt update + version bump | Prompt references real contracts only | — | Only after 37.1. Version explicitly tracked. |
 | 37.14 | Self-healing observations | **NOT_STARTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | — | No second retry controller. |
 | 37.15 | Full test matrix | **NOT_STARTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | — | Includes I1 regression test. |
@@ -283,7 +302,7 @@ Pending: F1, F2, F4, F5.
 
 ### Status
 
-**NOT_STARTED** · Classification: **P0** · separate prerequisite ticket
+**VERIFIED** · Classification: **P0** · separate prerequisite ticket · Closed 2026-09-30
 
 ### Objective
 
@@ -353,24 +372,97 @@ The update predicate is tenant-scoped in code.
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/app/actions/workflows/workflow.ts — updateWorkflowState
+                now resolves ownership with
+                  db.workflow.findFirst({ where: { id, orgId }, select: { id: true } })
+                and writes with
+                  db.workflow.updateMany({ where: { id, orgId }, data: {...} })
+                orgId is access.organization.id in both statements. Neither
+                half is scoped on its own: the read refuses, and the write
+                predicate is independently tenant-constrained, so the
+                authorization answer and the mutation cannot disagree.
+
+                updateMany rather than update because this action uses the raw
+                client (src/lib/prisma/db), where the unique input is `id` only
+                — orgId is indexed but not unique, so update({ where: { id,
+                orgId } }) does not typecheck. Carrying orgId in the write
+                predicate is the invariant; the query shape follows from it.
+
+Tests:          src/tests/workflow/workflow-update-scope.test.ts (new, 5 cases)
+                  1. foreign-org workflow refused, no write issued, row unchanged
+                  2. nonexistent workflow byte-identical response to case 1
+                  3. orgId present in the updateMany predicate itself
+                  4. same-org write persists compiled definition/eventId/isActive
+                  5. unauthorized access: no lookup, no write
+                Harness: src/tests/workflow/helpers/prisma-double.ts gained a
+                `workflow` delegate whose findFirst/updateMany both filter on
+                orgId via a shared matchesWorkflowWhere helper. A double that
+                ignored the tenant predicate would return count: 1 and fail the
+                suite, so the negative cases cannot pass for the wrong reason.
+
+Verification:   npx jest src/tests/workflow/workflow-update-scope.test.ts  -> 5/5
+                npx jest src/tests/workflow                            -> 7 suites, 109 tests
+                npm test                                               -> 27 suites, 417 tests
+                npx tsc --noEmit                                       -> exit 0
+                npx eslint on the 3 touched files -> 4 errors, all pre-existing
+                @typescript-eslint/no-explicit-any on the uiNodes: any[] /
+                uiEdges: any[] parameters at workflow.ts:46,47,98,99, which
+                this change does not touch (confirmed present at HEAD).
+                New test file and the double are lint-clean.
+
+                Observed cross-org rejection: a caller in org_a updating
+                org_b's wf_1 receives
+                  { success: false, error: "Workflow not found in this organization." }
+                with the stored row unmodified and updateMany never called.
+                Observed same-org success: the same call for org_a's own wf_1
+                returns { success: true } and writes the compiled definition.
+
+                Mutation check — the suite was re-run against a deliberately
+                reverted, unscoped `where: { id: workflowId }` and FAILED 3 of 5
+                (the cross-org case returned { success: true } and overwrote the
+                foreign row). The tests therefore detect the original defect
+                rather than merely passing against the fix.
+
+Commit/PR:      uncommitted — working tree only
+Relevant files: src/app/actions/workflows/workflow.ts (updateWorkflowState)
+                src/tests/workflow/workflow-update-scope.test.ts (new)
+                src/tests/workflow/helpers/prisma-double.ts (workflow delegate)
 ```
 
 ### Known Risks / Findings
 
-**I1.** Affected path: `updateWorkflowState`
+**I1 — RESOLVED.** Affected path was `updateWorkflowState`
 (`src/app/actions/workflows/workflow.ts:95-137`). The authorization check and the
-database predicate disagree in scope. Impact is read-write on execution
+database predicate disagreed in scope; impact was read-write on execution
 blueprints for every tenant, by primary key, with no requirement that the target
-belong to the caller's organization.
+belong to the caller's organization. Both statements are now scoped to
+`access.organization.id`.
+
+Deliberately unchanged, and still true: the `[orgId]` route segment carries an
+organization **slug**, not an id (`src/app/router/page.tsx:38`). `getOrgAccess`
+is therefore live on this path and the defect was reachable, not masked by a
+broken route.
+
+**Residual, not part of I1:** the create path (`saveWorkflowState`) was already
+scoped and was not touched. I6, cross-tenant *execution*, is untouched and open.
 
 ### Decisions
 
-Made: none. The fix form is the ticket's decision.
+Made:
+
+- **Tenant constraint in both the authorizing read and the write predicate.**
+  The tracker required that the actual database operation enforce ownership, and
+  separately that a cross-org attempt issue no write at all. A scoped read plus a
+  scoped `updateMany` is the only shape that satisfies both on the raw client.
+- **Foreign and nonexistent share one response.** `"Workflow not found in this
+  organization."` matches the existing `updateTaskInOrg` precedent
+  (`src/lib/tasks/update-task.ts:71-77`) and keeps the endpoint from becoming an
+  existence oracle for other tenants' workflow ids.
+- **Compile still precedes the write.** A `WorkflowValidationError` therefore
+  still leaves the row untouched, and a same-org malformed save still returns the
+  same per-issue message. Ordering was not changed to make room for the new check.
+- **I2 untouched.** The update path's node check is still `z.array(z.any())`;
+  tightening it is 37.0B and was explicitly out of scope.
 
 Pending: none specific to I1.
 
@@ -378,6 +470,8 @@ Pending: none specific to I1.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-09-30 | NOT_STARTED | Phase 37.0A recorded as the I1 ticket, split from 37.0 so the security fix is not bundled into a feature phase. | `assignments-37-phase-0-audit.md` |
+| 2026-09-30 | VERIFIED | Update predicate made tenant-scoped; 5-case regression suite added; full suite and type-check green; suite proven to fail against the unscoped predicate. | `src/tests/workflow/workflow-update-scope.test.ts`; 27 suites / 417 tests |
 
 ---
 
@@ -385,7 +479,7 @@ Pending: none specific to I1.
 
 ### Status
 
-**NOT_STARTED** · Classification: **P0** · separate prerequisite ticket
+**VERIFIED** · Classification: **P0** · separate prerequisite ticket · Closed 2026-09-30
 
 ### Objective
 
@@ -452,22 +546,127 @@ and 37.11 able to write unvalidated node data.
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/app/actions/workflows/workflow.ts
+                IncomingNodeSchema is now a z.discriminatedUnion('type', [...])
+                over two node shapes whose `data` is TriggerNodeDataSchema or
+                ActionNodeDataSchema directly. The `.optional().or(z.any())` tail
+                is gone, and a shared IncomingNodesSchema validates both paths.
+
+                THE DISCRIMINATOR MOVED, deliberately. The original union was
+                keyed on `data.type`, but React Flow carries the discriminator on
+                the node and WorkflowCanvas.tsx:150-162 never sets `data.type`:
+                  { id, type: 'trigger', position, data: { label, eventId: null } }
+                `AppNode`'s inferred data type has no `type` field either. Simply
+                deleting `.or(z.any())` would therefore have made the union
+                reachable and rejected every node this application creates. The
+                union is keyed on `node.type` instead, which also makes `type`
+                and `data` structurally incapable of disagreeing.
+
+                Both save paths now compile and persist `areNodesValid.data`,
+                not the raw argument, so the value validated is the value
+                compiled and stored. Validating a copy while persisting the input
+                would leave unvalidated keys in the row and keep the check
+                advisory, which is the same criticism I2 makes of 37.2.
+
+                Error contract unchanged: "Malformed workflow data." on both paths,
+                and validation still runs before compileWorkflow, so a rejected
+                node never reaches a write and a compile failure still returns
+                describeCompileFailure's per-issue message.
+
+Tests:          src/tests/workflow/workflow-node-validation.test.ts (new, 23 cases)
+                  UI_TRIGGER / UI_ACTION are copied verbatim from
+                  WorkflowCanvas.tsx so the real canvas payload is what is
+                  accepted, not a tidied-up approximation.
+                  create path: real payload accepted; ActionNodeData defaults
+                  applied to the persisted row; 8 malformed variants rejected
+                  with create never called; a graph whose *second* node is
+                  malformed rejected; unknown keys stripped; stray trigger field
+                  on an action node stripped.
+                  update path: real payload accepted; the same 8 malformed
+                  variants rejected with findFirst and updateMany never called;
+                  unknown keys stripped.
+
+Verification:   npx jest src/tests/workflow/workflow-node-validation.test.ts    -> 23/23
+                npx jest src/tests/workflow (both suites)                        -> 28/28
+                npm test                                                          -> 28 suites, 440 tests
+                npx tsc --noEmit                                                  -> exit 0
+                npx eslint on the 4 touched files -> the same 4 pre-existing
+                no-explicit-any errors on the untouched uiNodes/uiEdges any[]
+                parameters (now lines 69,70,126,127 after the schema block).
+                Both new test files and the double are lint-clean.
+
+                Observed valid-node acceptance: the verbatim canvas payload saves
+                on both paths, and the action node's config/isConfigured/
+                isCritical defaults appear in the stored row.
+                Observed malformed-node rejection: all 8 variants return
+                  { success: false, error: "Malformed workflow data." }
+                with no create/updateMany call, on both paths.
+
+                Mutation check — the suite was re-run against the original inert
+                schema (`.optional().or(z.any())` restored, create back to
+                z.array(IncomingNodeSchema), update back to z.array(z.any())) and
+                FAILED 19 of 23. The tests detect the defect on both paths
+                rather than merely passing against the fix.
+
+                Interaction with 37.0A: that suite's fixture node omitted
+                `label`, so it became malformed the moment validation was real
+                and its tenant-scope cases began returning "Malformed workflow
+                data." before reaching the tenant check. The fixture was made a
+                valid node so it exercises tenant scope, and node-shape rejection
+                is asserted in the new file instead.
+
+Commit/PR:      uncommitted — working tree only
+Relevant files: src/app/actions/workflows/workflow.ts (both save actions)
+                src/tests/workflow/workflow-node-validation.test.ts (new)
+                src/tests/workflow/helpers/prisma-double.ts (workflow.create)
+                src/tests/workflow/workflow-update-scope.test.ts (fixture corrected)
 ```
 
 ### Known Risks / Findings
 
-**I2.** `IncomingNodeSchema.data` is `.optional().or(z.any())`;
-`updateWorkflowState` validates `z.array(z.any())`. Also **F1** — the reason
-generated content passes through the canvas at all.
+**I2 — RESOLVED.** `IncomingNodeSchema.data` was `.optional().or(z.any())` and
+`updateWorkflowState` validated `z.array(z.any())`; both now validate for real on
+both paths. F1 — the reason generated content passes through the canvas at all —
+is untouched and remains 37.10/37.11 work.
+
+**Known limits, deliberately not closed here:**
+
+- **`uiEdges` is still unvalidated.** The tracker's I2 scope named the node schema
+  and the update path only. Edges carry no data payload, and the compiler reads
+  only `edge.source` / `edge.target` from them, so an unvalidated edge cannot
+  introduce node data. Reference and data-dependency validation is F6 and belongs
+  to 37.3.
+- **A stray key on a node whose *type* and *data* disagree is stripped, not
+  rejected.** `ActionNodeDataSchema` is an ordinary Zod object, so an action node
+  carrying `eventId` is accepted and the key is dropped before persistence. The
+  reverse direction is a rejection, because a node typed `trigger` must carry
+  `eventId`. Pinned by a named test so the asymmetry reads as deliberate.
+- **Existing rows were written under the permissive schema.** They are re-validated
+  on the next save, so a pre-existing row with malformed `data` will now fail to
+  save rather than silently persisting again. No migration is proposed: 37.0B is a
+  Zod fix, and rewriting stored `uiNodes` is F1's 37.10/37.11 concern.
 
 ### Decisions
 
-Made: none.
+Made:
+
+- **The union discriminates on `node.type`, not `data.type`.** Forced by the
+  actual canvas payload; the alternative is a schema no node can satisfy. Verified
+  against `WorkflowCanvas.tsx:150-162` and the inferred `AppNode` type before
+  choosing, and re-verified with a standalone Zod script before the fix landed.
+- **Both actions share one `IncomingNodesSchema`.** The register's point is that
+  fixing one path leaves the other writable; a single exported constant makes the
+  two impossible to drift.
+- **The parsed value is what is compiled and persisted.** Otherwise the check is
+  advisory, which is the failure mode this phase exists to remove.
+- **Schemas left non-strict.** Adding `.strict()` would refuse unknown keys, but
+  it also converts any field added to the canvas later into a hard save failure.
+  Stripping keeps the database and the compiled definition limited to
+  schema-approved fields, which is the property that matters here.
+- **I2 left `compileWorkflow` alone**, per 37.0A's precedent: the compiler is the
+  subject of 37.4, and validation ordering is unchanged.
+- **The "Malformed workflow data." string is unchanged**, so the create path's
+  existing failure contract and the UI's `alert("Failed to save.")` still match.
 
 Pending: none specific to I2.
 
@@ -475,6 +674,8 @@ Pending: none specific to I2.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-09-30 | NOT_STARTED | Phase 37.0B recorded as the I2 ticket, split from 37.0 so the validation fix is not bundled into a feature phase. | `assignments-37-phase-0-audit.md` |
+| 2026-09-30 | VERIFIED | Node `data` validated against the intended schemas on create and update; validated value persisted; 23-case suite added; suite proven to fail 19/23 against the inert schema. Gate F satisfied. | `src/tests/workflow/workflow-node-validation.test.ts`; 28 suites / 440 tests |
 
 ---
 
@@ -1731,6 +1932,35 @@ Proves the core boundary: the existing runtime is the execution authority.
 ### Inputs / Dependencies
 
 - 37.11 (materialized workflow)
+- **I6 VERIFIED — Gate G. Cross-tenant workflow execution must be closed before
+  this phase.** See *Current Blockers → I6*.
+
+### Precondition — I6, cross-tenant workflow execution
+
+> **This phase cannot become `VERIFIED` unless I6 is `VERIFIED`.**
+
+`triggerWorkflowRun` (`src/app/actions/workflows/workflow-run.ts:5`) performs no
+authentication and no organization check, and `startWorkflow`
+(`src/lib/workflow/execution/trigger.ts:8`) loads the workflow with
+`findUnique({ where: { id: workflowId } })` — no `orgId`. That is the entrypoint
+this phase hands work to.
+
+**Gate E does not satisfy Gate G.** I1 is the write path; I6 is the execution
+path. They are separate defects with separate regression tests, and closing I1
+leaves `startWorkflow` unscoped.
+
+Proposal generation may exist before this gate. A proposal that has passed every
+validation gate in 37.2–37.9 is still not a trusted workflow, because validation
+establishes that a graph is *well-formed*, never that the caller is *entitled to
+run it*. Assignment 37 must not treat generated workflow execution as trusted
+until the existing execution entrypoint enforces tenant scope.
+
+**Gate G is a precondition, not a deliverable of 37.12.** I6 is fixed by its own
+ticket, before 37.12, and that ticket must cover every reachable caller of the
+unscoped primitive — including
+`src/app/api/workflow/test/[workflowId]/test-run/route.ts`, which reaches
+`startWorkflow` with no authentication of its own. A ticket that fixes only the
+server action does not satisfy this gate.
 
 ### Scope
 
@@ -1751,6 +1981,8 @@ Workflow → WorkflowRun → existing evaluator
 - Second Redis lock protocol
 - Fork/join subsystem
 - Any change to the evaluator, wrapper, mutex or resolver
+- Fixing I6 here. This phase consumes a tenant-scoped entrypoint; it does not
+  build one.
 
 ### Expected Implementation
 
@@ -1764,7 +1996,8 @@ No new machinery. The existing path is the path.
 ### Acceptance Gate
 
 A generated workflow successfully enters and runs in the existing execution
-engine.
+engine, **and I6 is `VERIFIED`**. Without the second condition this phase is
+`BLOCKED`, not `VERIFIED`, no matter how well the handoff works.
 
 ### Test Gate
 
@@ -1773,10 +2006,13 @@ engine.
 - Actions dispatch through `getAction`
 - No new executor, lock, or queue runner added to the codebase
 - Existing workflow tests still pass unchanged
+- I6's own regression test passes: cross-tenant run refused, no `WorkflowRun`
+  created, same-tenant run succeeds
 
 ### Verification Gate
 
-Integration test proving end-to-step dispatch through the existing engine only.
+Integration test proving end-to-step dispatch through the existing engine only,
+**plus recorded evidence that I6 is `VERIFIED`.** Either alone is insufficient.
 
 ### Evidence
 
@@ -1790,12 +2026,16 @@ Relevant files: —
 
 ### Known Risks / Findings
 
-None outstanding. The engine is the hardened surface 37 depends on and must not be
-rebuilt.
+**I6 — P0, separate ticket, gate for this phase.** The engine itself is the
+hardened surface 37 depends on and must not be rebuilt. The defect is not in the
+engine: it is the missing tenant check at the entrypoint that reaches it, which
+this phase is the first to depend on from generated material.
 
 ### Decisions
 
 Made: the existing engine is the executor. No second runtime.
+
+Made: I6 is a precondition for this phase, and is not satisfied by Gate E (I1).
 
 ### Status History
 
@@ -2418,19 +2658,46 @@ Pending: none.
 | **F4** | `AgentToolExecution` cannot represent the proposal lifecycle | P1 | Open — recorded, fork undecided | No | 37.6 / 37.7 / 37.8 | **No** | — |
 | **F5** | `WorkflowDefinitionSchema` never called in production | P1 | Open — recorded | No | 37.4 | **No** | — |
 | **F6** | No reference / data-dependency validation; silent failure | P1 | Open — recorded | No (gates 37.4+) | 37.3 | **No** | — |
-| **I1** | Cross-tenant workflow update | **P0** | Open | **YES** | 37.0A | **No** | — |
-| **I2** | Node validation bypass at persistence boundary | **P0** | Open | **YES** | 37.0B | **No** | — |
+| **I1** | Cross-tenant workflow update | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0A | **YES** | `src/tests/workflow/workflow-update-scope.test.ts` — 5/5; suite fails 3/5 against the unscoped predicate |
+| **I6** | Cross-tenant workflow execution | **P0** | Open — recorded after Phase 0 | **YES** | separate ticket, before 37.12 | **No** | — |
+| **I2** | Node validation bypass at persistence boundary | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0B | **YES** | `src/tests/workflow/workflow-node-validation.test.ts` — 23/23; suite fails 19/23 against the inert schema |
 | **I3** | `WAITING_CONFIRMATION` session state unreachable | P2/P3 | Open | No | later cleanup / 37.14 | **No** | — |
 | **I4** | Runtime / UI action registry mismatch | P1 | Open | No | 37.1 | **No** | — |
 | **I5** | Workflow maintenance schedule unknown | **P1-CHECK** | **Unverified** | No — not an active blocker | 37.16 | **No** | — |
 
 ### Count
 
-- Resolved: **0 of 11**
-- P0 open: **2** (I1, I2)
+- Resolved: **2 of 12** (I1, I2)
+- P0 open: **1** (I6)
 - P1 open: **5** (F3, F4, F5, F6, I4)
 - P1-CHECK unverified: **1** (I5)
 - P2/P3 open: **3** (F1, F2, I3)
+
+### I6 — recorded after Phase 0
+
+**I6 is not a Phase 0 finding.** Phase 0 reconnaissance closed without observing
+it; it was recorded afterwards from a separate inspection of the execution
+entrypoint. `assignments-37-phase-0-audit.md` is unmodified and still describes only
+what Phase 0 saw. I6 is filed in the register because it is a P0 tenant-isolation
+defect on a path Assignment 37 consumes, and the register is where a P0 belongs.
+
+It is **not** merged with I1 and must not be closed by it:
+
+| | **I1** | **I6** |
+|---|---|---|
+| Operation | cross-tenant **UPDATE** | cross-tenant **EXECUTION** |
+| Entry point | `updateWorkflowState` (`workflow.ts:95`) | `triggerWorkflowRun` (`workflow-run.ts:5`) |
+| Predicate (as found) | `update({ where: { id } })` | `findUnique({ where: { id } })` in `startWorkflow` |
+| Consequence | overwrites blueprint, `eventId`, `isActive` | starts a real run with attacker-chosen trigger data |
+| Gate | **37.0A**, before 37.5 — **VERIFIED 2026-09-30** | separate ticket, before **37.12** — still open |
+
+**Gate G — 37.12 Execution handoff cannot become `VERIFIED` unless I6 is
+`VERIFIED`.** Closing I1 does not satisfy this, and did not. I1 and I6 are
+different defects on different paths with different regression tests; the closed
+I1 left the execution entrypoint unscoped. The I6 ticket must cover every
+reachable caller of the unscoped primitive, not only the server action.
+
+I6 is not fixed in this task. The execution path is not modified.
 
 ---
 
@@ -2454,6 +2721,7 @@ decision is fabricated.**
 | AD-11 | 37.10 / 37.11 ordering | Materialize then project / Project then materialize | **Project then materialize.** Persistence is canvas-first; projection is a precondition of it. | 2026-09-30 | 37.0 revision | Register F1 |
 | AD-12 | P0 findings bundled into feature phases? | Bundle / Separate tickets | **Separate prerequisite tickets (37.0A, 37.0B).** | 2026-09-30 | 37.0 revision | Register §2 |
 | AD-13 | I5 classification | P1 / P1-CHECK | **P1-CHECK.** Deployed QStash schedules are not observable from the repository; it is not a confirmed defect. | 2026-09-30 | 37.0 | Register I5 |
+| AD-14 | Is I6 merged into the I1 ticket? | Merge / Separate tickets | **Separate tickets.** I1 is cross-tenant UPDATE gated at 37.5; I6 is cross-tenant EXECUTION gated at 37.12. Different paths, different regression tests. | 2026-09-30 | I6 documentation | Register I6 |
 
 ### Pending decisions — PENDING DECISION
 
@@ -2478,12 +2746,23 @@ decision is fabricated.**
 | 2026-09-30 | 37.0 | Contract reconnaissance across workflow, persistence, agent and confirmation surfaces | Local — read-only source inspection | **PASS** | `assignments-37-phase-0-audit.md` (535 lines, `file:line` cited) | Phase 0 |
 | 2026-09-30 | 37.0 | Phase 0 gate answered | Local — inspection | **PASS** | Audit, *Phase 0 gate* section | Phase 0 |
 | 2026-09-30 | 37.0 | No source modified by Phase 0 work | Local — `git status --short` | **PASS** | Single untracked path: `forge/docs/architecture/workflows/` | Phase 0 |
+| 2026-09-30 | 37.0A | I1 regression suite — foreign org, nonexistent, write-predicate, same-org success, unauthorized | Local — `npx jest src/tests/workflow/workflow-update-scope.test.ts` | **PASS** | 5/5 tests | 37.0A |
+| 2026-09-30 | 37.0A | Suite fails against a deliberately reverted unscoped predicate | Local — mutation check | **PASS** (correctly detected) | 3 of 5 failed; cross-org case returned `{ success: true }` and overwrote the foreign row | 37.0A |
+| 2026-09-30 | 37.0A | Full workflow suite after adding the `workflow` delegate to the double | Local — `npx jest src/tests/workflow` | **PASS** | 7 suites, 109 tests | 37.0A |
+| 2026-09-30 | 37.0A | Full repository suite | Local — `npm test` | **PASS** | 27 suites, 417 tests (was 26 / 412) | 37.0A |
+| 2026-09-30 | 37.0A | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.0A |
+| 2026-09-30 | 37.0A | Lint of the 3 touched files | Local — `npx eslint` | **PASS** (no new errors) | 4 errors, all pre-existing `no-explicit-any` on untouched `any[]` params; new test and double clean | 37.0A |
+| 2026-09-30 | 37.0B | I2 node-validation suite — real canvas payload, 8 malformed variants per path, defaults, unknown-key stripping | Local — `npx jest src/tests/workflow/workflow-node-validation.test.ts` | **PASS** | 23/23 tests | 37.0B |
+| 2026-09-30 | 37.0B | Suite fails against the original inert schema on both paths | Local — mutation check | **PASS** (correctly detected) | 19 of 23 failed | 37.0B |
+| 2026-09-30 | 37.0B | Full repository suite | Local — `npm test` | **PASS** | 28 suites, 440 tests (was 27 / 417) | 37.0B |
+| 2026-09-30 | 37.0B | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.0B |
+| 2026-09-30 | 37.0B | Lint of the 4 touched files | Local — `npx eslint` | **PASS** (no new errors) | same 4 pre-existing `no-explicit-any`; both new test files clean | 37.0B |
 
 ### Coverage summary
 
 | Category | Events recorded |
 |---|---|
-| unit | 0 |
+| unit | 2 |
 | integration | 0 |
 | database | 0 |
 | Redis | 0 |
@@ -2491,11 +2770,15 @@ decision is fabricated.**
 | live Gemini | 0 |
 | live workflow execution | 0 |
 | security | 0 |
-| tenant isolation | 0 |
+| tenant isolation | 2 |
+| validation / persistence boundary | 2 |
 | documentation / inspection | 3 |
 
-**No test, database, queue, or live verification has been performed.** Every
-implementation phase below 37.0 is untested and unverified.
+**Live verification remains outstanding.** The 37.0A tenant-isolation and 37.0B
+node-validation evidence is Jest-level against the in-memory prisma double in
+`src/tests/workflow/helpers/prisma-double.ts`; neither is a live database check,
+and Phase 37.16 remains the phase that owes one. No database, queue, Gemini, or
+real workflow execution has been exercised in this assignment.
 
 ---
 
@@ -2540,8 +2823,17 @@ implementation has been performed. Phase 0 was documentation only.
 | 2026-09-30 | 37.0 | `docs/architecture/workflows/assignments-37-issue-register.md` | Created | Preserve Phase 0 findings | N/A | Reviewed |
 | 2026-09-30 | 37.0 | `docs/architecture/workflows/assignments-37-plan.md` | Created | Revised plan post-Phase 0 | N/A | Reviewed |
 | 2026-09-30 | 37.0 | `docs/architecture/workflows/assignments-37-tracker.md` | Created | Master operational tracker | N/A | This document |
+| 2026-09-30 | 37.0A | `src/app/actions/workflows/workflow.ts` | `updateWorkflowState`: unscoped `update({ where: { id } })` replaced with a tenant-scoped `findFirst` refusal plus a tenant-scoped `updateMany` write | I1 — close cross-tenant workflow update | `workflow-update-scope.test.ts` 5/5 | VERIFIED 2026-09-30 |
+| 2026-09-30 | 37.0A | `src/tests/workflow/workflow-update-scope.test.ts` | Created | I1 regression coverage | — | 5/5 |
+| 2026-09-30 | 37.0A | `src/tests/workflow/helpers/prisma-double.ts` | Added a `workflow` delegate (`findFirst`, `updateMany`) sharing one `matchesWorkflowWhere` tenant filter | I1 — the double must enforce `orgId` or the negative tests prove nothing | workflow suite 109/109 | VERIFIED 2026-09-30 |
+| 2026-09-30 | 37.0B | `src/app/actions/workflows/workflow.ts` | `IncomingNodeSchema` became a real `z.discriminatedUnion` over node shapes keyed on `node.type`, with `data` validated directly; the `.or(z.any())` tail removed; both save actions share one `IncomingNodesSchema` and persist the parsed nodes | I2 — make node validation at the persistence boundary actually validate | `workflow-node-validation.test.ts` 23/23 | VERIFIED 2026-09-30 |
+| 2026-09-30 | 37.0B | `src/tests/workflow/workflow-node-validation.test.ts` | Created | I2 regression coverage, both save paths | — | 23/23 |
+| 2026-09-30 | 37.0B | `src/tests/workflow/helpers/prisma-double.ts` | Added `workflow.create` so a create-path test can observe the persisted row | I2 — rejection tests assert nothing reached the database | workflow suite green | VERIFIED 2026-09-30 |
+| 2026-09-30 | 37.0B | `src/tests/workflow/workflow-update-scope.test.ts` | Fixture node given a `label` so it is a valid node | I1 suite must exercise tenant scope, not node shape — real validation would otherwise reject it before the tenant check | 5/5 | VERIFIED 2026-09-30 |
 
-**No source file, Prisma schema, migration, or prompt has been changed.**
+**No Prisma schema, migration, prompt, or agent tool has been changed.** The
+execution path (`workflow-run.ts`, `execution/trigger.ts`, `execution/resolver.ts`)
+is untouched — that is I6 and it remains open.
 
 ---
 
@@ -2549,8 +2841,9 @@ implementation has been performed. Phase 0 was documentation only.
 
 | Blocker | Severity | Reason | Blocks Phase | Owner/Action | Status |
 |---|---|---|---|---|---|
-| **I1** — cross-tenant workflow update | **P0** | `db.workflow.update` predicate is `{ id: workflowId }` with no `orgId`, while `getOrgAccess` establishes membership in an org the update then ignores. Any authenticated member of any org can overwrite any workflow. | 37.5 and all agent workflow writes; 37.8, 37.11 | Separate security ticket: tenant-scoped predicate + regression test (cross-org rejected, same-org succeeds) | **OPEN — NOT_STARTED** |
-| **I2** — node validation boundary | **P0** | `IncomingNodeSchema.data` is `.optional().or(z.any())`, making the discriminated union unreachable; `updateWorkflowState` validates `z.array(z.any())`. Generated `uiNodes` would cross the persistence boundary unvalidated. | 37.10, 37.11 | Separate ticket: real node-data validation on **both** create and update paths + regression tests | **OPEN — NOT_STARTED** |
+| **I1** — cross-tenant workflow update | **P0** | `db.workflow.update` predicate was `{ id: workflowId }` with no `orgId`, while `getOrgAccess` established membership in an org the update then ignored. Any authenticated member of any org could overwrite any workflow. | 37.5 and all agent workflow writes; 37.8, 37.11 | Tenant-scoped predicate + regression test | **CLOSED 2026-09-30 — VERIFIED** |
+| **I2** — node validation boundary | **P0** | `IncomingNodeSchema.data` was `.optional().or(z.any())`, making the discriminated union unreachable; `updateWorkflowState` validated `z.array(z.any())`. Generated `uiNodes` would cross the persistence boundary unvalidated. | 37.10, 37.11 | Tenant-scoped node-data validation on **both** paths | **CLOSED 2026-09-30 — VERIFIED** |
+| **I6** — cross-tenant workflow execution | **P0** | `triggerWorkflowRun` (`workflow-run.ts:5`) performs no authentication and no organization check; `startWorkflow` (`trigger.ts:8`) loads the workflow with `findUnique({ where: { id: workflowId } })` and no `orgId`. Any authenticated user can start any tenant's workflow, seeding an attacker-chosen `triggerPayload` into the run context under `{{trigger.outputs.*}}`. | **37.12** (Gate G) and every phase that hands a generated workflow to the engine | Separate security ticket: tenant-scoped execution entrypoint + regression test (cross-org run refused and no `WorkflowRun` created, same-org run succeeds). Must cover all reachable callers, incl. `api/workflow/test/[workflowId]/test-run`. **Not** satisfied by closing I1. | **OPEN — NOT_STARTED** |
 
 ### Not active blockers
 
@@ -2582,6 +2875,12 @@ regardless of intent.
 - [ ] **No UI coordinates generated by Gemini.**
 - [ ] **No new rollback controller.** Existing saga pivot and compensation stand.
 - [ ] **No second retry system.** Self-correction re-enters the agent loop, not a step retry.
+- [ ] **No I6 fix folded into I1.** Cross-tenant UPDATE and cross-tenant EXECUTION
+      are separate defects on separate paths, gated at 37.5 and 37.12. Neither
+      closed ticket may stand in for the other.
+- [ ] **No execution-path change under 37.0A.** `triggerWorkflowRun`,
+      `startWorkflow` and the maintenance/test-run routes are untouched by the
+      I1 fix. I6 is a separate ticket.
 
 ---
 
@@ -2590,8 +2889,9 @@ regardless of intent.
 ### Phase completion
 
 - [x] Phase 37.0 complete — **VERIFIED 2026-09-30** — evidence: `assignments-37-phase-0-audit.md`
-- [ ] I1 closed and verified (37.0A)
-- [ ] I2 closed and verified (37.0B)
+- [x] I1 closed and verified (37.0A) — **VERIFIED 2026-09-30** — evidence: `src/tests/workflow/workflow-update-scope.test.ts`
+- [x] I2 closed and verified (37.0B) — **VERIFIED 2026-09-30** — evidence: `src/tests/workflow/workflow-node-validation.test.ts`
+- [ ] **I6 closed and verified (separate ticket, before 37.12)**
 - [ ] 37.1 complete
 - [ ] 37.2 complete
 - [ ] 37.3 complete
@@ -2612,7 +2912,8 @@ regardless of intent.
 
 ### Issue closure
 
-- [ ] All P0 issues verified (I1, I2)
+- [ ] All P0 issues verified (I1 ✓, I2 ✓, **I6**) — three separate tickets; none
+      substitutes for another. Only I6 remains.
 - [ ] All P1 issues resolved or explicitly deferred (F3, F4, F5, F6, I4)
 - [ ] I5 verified or documented as unverifiable
 - [ ] All P2/P3 issues resolved or explicitly deferred (F1, F2, I3)
