@@ -1,8 +1,11 @@
 
 import { publishEvent } from "@/lib/events/queue";
 import { db } from "@/lib/prisma/db";
+import type { WorkerHandler } from "@/lib/events/worker";
 
-export async function fileWorkerHandler({ event }: { event: any }) {
+export const fileWorkerHandler: WorkerHandler<"FILE_UPLOADED"> = async ({
+  event,
+}) => {
   const { fileId } = event.data;
 
   const file = await db.attachment.findUnique({

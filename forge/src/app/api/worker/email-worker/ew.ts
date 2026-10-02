@@ -1,10 +1,11 @@
 import { pusherServer } from "@/lib/pusher/pusher-server";
 import { executeSendEmail } from "@/lib/emails/core-service";
+import type { WorkerHandler } from "@/lib/events/worker";
 
-export async function emailWorkerHandler({ event }: { event: any }) {
-  if (event.type !== "SEND_EMAIL") return;
-  
-  const { subject, body, orgId } = event.data;
+export const emailWorkerHandler: WorkerHandler<"SEND_EMAIL"> = async ({
+  event,
+}) => {
+  const { subject, body, userId } = event.data;
   console.log("📧 Sending background email...");
 
   try {
@@ -16,14 +17,24 @@ export async function emailWorkerHandler({ event }: { event: any }) {
     `;
 
     // CALL THE SHARED CORE
+    //
+    // KNOWN DEFECT, deliberately not changed here: the recipient is hardcoded and
+    // the SEND_EMAIL payload carries only userId, so every organisation's email
+    // is delivered to one developer's personal inbox. Fixing it means resolving
+    // userId to an address and deciding whether an org's mail should go to a
+    // person at all - a product call, not a lint fix. The typed payload below is
+    // what surfaced it: `orgId` is not a field of this event, so the previous
+    // destructuring of it silently produced `undefined` and every completion was
+    // broadcast to a channel literally named `org-undefined`.
     await executeSendEmail({
-      to: "mayurnanda45@gmail.com", // Or dynamic from event
+      to: "mayurnanda45@gmail.com",
       subject,
       html: htmlTemplate,
     });
 
-    // Custom background job side-effect
-    await pusherServer.trigger(`org-${orgId}`, "job-completed", {
+    // Custom background job side-effect. No orgId on this event, so there is no
+    // org channel to address; see the note above.
+    await pusherServer.trigger(`org-${userId}`, "job-completed", {
       message: "Email sent successfully 🚀",
     });
 
@@ -31,4 +42,4 @@ export async function emailWorkerHandler({ event }: { event: any }) {
     console.error("❌ Email failed:", error);
     throw error; // Triggers QStash retry
   }
-}
+};

@@ -102,7 +102,7 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
         await Promise.all(upsertPromises);
         console.log(`✅ [EMBEDDING] Successfully synchronized ${chunks.length} chunks to Pinecone via Gemini.`);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("❌ [EMBEDDING] Worker Execution Error:", error);
         throw error;
     }
