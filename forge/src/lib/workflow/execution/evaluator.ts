@@ -31,6 +31,43 @@ import crypto from "crypto";
 import { db } from "@/lib/prisma/db";
 import { publishEvent, type PublishDelay } from "@/lib/events/queue";
 import { acquireLock, releaseLock, startRunLockHeartbeat } from "./mutex";
+import { WorkflowDefinitionSchema } from "@/lib/workflow-types/workflow";
+
+/**
+ * Whether a thrown value is Prisma's unique-constraint violation.
+ *
+ * The evaluator only cares about one specific code. Narrowing on `unknown` rather
+ * than annotating the catch as `any` keeps the check honest: a Prisma error
+ * arrives as an object carrying `code`, and anything else reaching here is a real
+ * fault that must propagate.
+ */
+function isUniqueConstraintViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
+}
+
+/**
+ * Reads the branch label a conditional step published.
+ *
+ * `StepRun.outputs` is a JSONB column holding whatever the action returned, so
+ * the read has to be a check rather than a property access. Returning undefined
+ * for a non-object or a missing key is deliberate: a parent that produced no
+ * branch satisfies no condition, which sends its dependants down the skip path
+ * instead of running them on undefined.
+ */
+function readBranch(outputs: unknown): string | undefined {
+  if (outputs === null || typeof outputs !== "object" || Array.isArray(outputs)) {
+    return undefined;
+  }
+
+  const branch = (outputs as Record<string, unknown>).branch;
+
+  return typeof branch === "string" ? branch : undefined;
+}
 
 /**
  * How many times one `advanceWorkflow` call will re-read the run and act again
@@ -177,8 +214,23 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
     return { progressed: false, changed: false, terminal: true, fingerprint };
   }
 
-  const definition = run.workflow.definition as any;
-  const steps = definition.steps;
+  // The definition is the one input every decision below depends on, so it is
+  // validated at the read boundary rather than cast. A malformed definition used
+  // to yield a run that simply never advanced - no dispatch, no error, no
+  // terminal state, and nothing in the logs to explain it. Phase 7 rejects bad
+  // graphs at write time, so this mostly catches rows that predate it; for those,
+  // a named failure is strictly better than a silent hang.
+  const parsedDefinition = WorkflowDefinitionSchema.safeParse(run.workflow.definition);
+
+  if (!parsedDefinition.success) {
+    throw new Error(
+      `Workflow ${run.workflow.id} has an invalid definition: ${parsedDefinition.error.issues
+        .map((issue) => `${issue.path.join(".") || "definition"}: ${issue.message}`)
+        .join("; ")}`,
+    );
+  }
+
+  const steps = parsedDefinition.data.steps;
   const existingStepRuns = run.stepRuns;
 
   // ====================================================================
@@ -213,9 +265,8 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
     // Parent step id -> child step ids.
     const childMap = new Map<string, string[]>();
 
-    for (const [stepId, nodeConfig] of Object.entries(steps)) {
-      const node = nodeConfig as any;
-      const dependencies = (node.dependsOn || []) as string[];
+    for (const [stepId, node] of Object.entries(steps)) {
+      const dependencies = node.dependsOn;
 
       for (const parentId of dependencies) {
         if (!childMap.has(parentId)) {
@@ -340,15 +391,14 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
   const cancelledStepIds: string[] = [];
   const skippedStepIds: string[] = [];
 
-  for (const [stepId, nodeConfig] of Object.entries(steps)) {
+  for (const [stepId, node] of Object.entries(steps)) {
     // A step that already has a row has been decided. This is the single check
     // that makes the evaluator safe to run concurrently: it is the only place a
     // step can be "created", and the database's unique (runId, stepId) is the
     // backstop underneath it.
     if (stepRunMap.get(stepId)) continue;
 
-    const node = nodeConfig as any;
-    const dependencies = (node.dependsOn || []) as string[];
+    const dependencies = node.dependsOn;
 
     let shouldCancel = false;
     let shouldSkip = false;
@@ -373,10 +423,8 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
       if (parentStatus === "SUCCESS") {
         // Conditional branches: a dependant only runs if the parent produced
         // the branch it asked for.
-        const requiredBranch = (node.routingConditions || {})[depId];
-        const actualBranch = (
-          (stepRunMap.get(depId)?.outputs as Record<string, any>) || {}
-        ).branch;
+        const requiredBranch = node.routingConditions?.[depId];
+        const actualBranch = readBranch(stepRunMap.get(depId)?.outputs);
 
         if (requiredBranch && actualBranch !== requiredBranch) {
           shouldSkip = true;
@@ -445,13 +493,13 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
             stepRunId: stepRun.id,
             kind: steps[stepId].kind || "ACTION",
           });
-        } catch (error: any) {
+        } catch (error: unknown) {
           // P2002 is the unique (runId, stepId) constraint doing its job: a
           // concurrent evaluator already created this step. That is a success
           // for us, not a failure. Anything else is a real fault and must
           // propagate - swallowing it leaves a step that exists and will never
           // be dispatched, because the row is PENDING and nothing owns it.
-          if (error?.code === "P2002") {
+          if (isUniqueConstraintViolation(error)) {
             console.warn(
               `[EVALUATOR] Step ${stepId} already exists for run ${runId}; concurrent pass won.`,
             );

@@ -23,6 +23,32 @@ export const redis = Redis.fromEnv();
 export const MAX_RETRIES = 3;
 
 /**
+ * Renders a caught value as the message stored on the step run and audit log.
+ *
+ * Anything can be thrown, not just an Error. Reading `.message` off it directly
+ * stored `undefined` into StepRun.error for a thrown string, which is the one
+ * field an operator has when diagnosing a failed step. The `message` property is
+ * still honoured for non-Error throwables that carry one, because Prisma and
+ * several SDKs throw that shape.
+ */
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    typeof (error as { message: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+
+  return String(error);
+}
+
+/**
  * Push a step's status to the browser.
  *
  * Awaited, and the failure swallowed, on purpose. A status broadcast is a
@@ -51,7 +77,7 @@ export async function wrapStepOperation(
   actionId: string,
   kind: "TRIGGER" | "ACTION",
   // Optional: Only provided during EXECUTE. Compensate pulls from the DB.
-  resolvedInputs?: Record<string, any>,
+  resolvedInputs?: Record<string, JsonValue>,
   operation: "EXECUTE" | "COMPENSATE" = "EXECUTE"
 ) {
   // 1. FETCH THE STEP STATE
@@ -234,18 +260,34 @@ export async function wrapStepOperation(
 
     return { success: true };
 
-  } catch (uncaughtError: any) {
+  } catch (uncaughtError: unknown) {
     // 5C. POST-FLIGHT: UNCAUGHT CRASH
     const latencyMs = Date.now() - startTime;
-    return await handleFailure(stepRun, operation, uncaughtError.message, true, latencyMs);
+    return await handleFailure(stepRun, operation, describeError(uncaughtError), true, latencyMs);
   }
 }
 
 /**
  * Helper utility to manage the complex math of retries and failure states
  */
+/**
+ * The fields `handleFailure` needs from a step run.
+ *
+ * Declared structurally rather than as the full Prisma payload because only these
+ * five are read. A structural type also keeps the helper honest about what it
+ * depends on, and means the caller's query can change without silently widening
+ * this signature.
+ */
+type FailureContext = {
+  id: string;
+  runId: string;
+  stepId: string;
+  attempts: number;
+  compensationAttempts: number;
+};
+
 async function handleFailure(
-  stepRun: any,
+  stepRun: FailureContext,
   operation: "EXECUTE" | "COMPENSATE",
   errorMessage: string,
   isRetriable: boolean = false,
