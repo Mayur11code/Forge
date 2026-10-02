@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import TaskBox from "@/features/organizations/components/Taskbox";
 // import { requireOrgAccess } from "@/features/organizations/require-org-access";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
-import { Prisma } from "@prisma/client";
+import { toTaskStatus, toTaskPriority } from "@/lib/tasks/filters";
 
 export default async function ProjectTasksPage({
   params,
@@ -51,6 +51,11 @@ export default async function ProjectTasksPage({
       ? sparams.priority
       : undefined;
 
+  // Validated against the Prisma enums rather than cast: an unknown value in the
+  // URL is a stale bookmark, not a server error.
+  const taskStatus = toTaskStatus(status);
+  const taskPriority = toTaskPriority(priority);
+
   // 2️⃣ Fetch project (scoped!)
   const project = await db.project.findFirst({
     where: {
@@ -69,8 +74,8 @@ export default async function ProjectTasksPage({
     where: {
       projectId: project.id,
 
-      ...(status && { status: status as any }),
-      ...(priority && { priority: priority as any }),
+      ...(taskStatus && { status: taskStatus }),
+      ...(taskPriority && { priority: taskPriority }),
 
       ...(query && {
         OR: [

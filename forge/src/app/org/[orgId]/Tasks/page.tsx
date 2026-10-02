@@ -5,6 +5,10 @@ import { db } from "@/lib/prisma/db";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
 import UpgradeButton from "@/features/organizations/components/razerpay/upgrade";
+import {
+  resolveTaskStatusFilter,
+  toTaskPriority,
+} from "@/lib/tasks/filters";
 
 export default async function TasksPage({
   params,
@@ -43,6 +47,9 @@ export default async function TasksPage({
 
 const filter =typeof resolvedSearchParams?.filter === "string" ? resolvedSearchParams.filter : "ALL";
 
+  const taskStatus = resolveTaskStatusFilter({ status, filter });
+  const taskPriority = toTaskPriority(priority);
+
 
   // 🔐 Auth + org guard
   const access = await getOrgAccess(orgId);
@@ -65,8 +72,11 @@ const filter =typeof resolvedSearchParams?.filter === "string" ? resolvedSearchP
         orgId: organization.id,
       },
 
-      ...(status && { status: status as any }),
-      ...(priority && { priority: priority as any }),
+      // `filter` and `status` both address the status column; the precedence
+      // between them lives in resolveTaskStatusFilter rather than depending on
+      // object-literal key order.
+      ...(taskStatus && { status: taskStatus }),
+      ...(taskPriority && { priority: taskPriority }),
 
       ...(query && {
         OR: [
@@ -84,7 +94,6 @@ const filter =typeof resolvedSearchParams?.filter === "string" ? resolvedSearchP
           },
         ],
       }),
-...(filter !== "ALL" && { status: filter as any }),
     },
 
     include: {
