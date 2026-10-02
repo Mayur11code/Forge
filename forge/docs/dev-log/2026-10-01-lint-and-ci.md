@@ -16,6 +16,49 @@ comment had to say why.
 That rule is what surfaced the bugs below. An `any` is not a type error in a
 codebase that is already full of them; it is a place where nobody checked.
 
+## The foundation: three contracts that were asserted, not checked
+
+Three things the rest of the pass depended on, and which were worth doing first
+because every later boundary check composes with them.
+
+**The event routing table now derives from the events.** `event-bus.ts` had a
+`Record<EventType, TriggerPayload[]>` for routing and, separately, an
+`EventPayloadMap` for payloads, with no link between them — a rule could name an
+event and a payload shape the schema did not describe. `TriggerPayloads` is now
+derived from the fields the rules actually read, and `EVENT_ROUTING` is typed as
+a `RoutingTable` so a missing event is a type error at the table rather than a
+silent no-op at dispatch.
+
+One deliberate widening: the payload a rule is allowed to *author* is
+`EventPayloadMap[EventType] & Record<string, unknown>`, wider than the payload
+the schema *validates*. The bus is a producer and sometimes needs to carry more
+than the consumer reads. The consequence is that Zod strips the extra fields at
+publication — which is how `SEND_WELCOME_EMAIL` ends up delivering an empty
+message (below). The alternative, making the authored type narrower than the
+consumed one, would have blocked legitimate producers.
+
+**`JsonValue` for the action contract.** `ActionContext` and `ActionResult` had
+free-form `any` payload fields, so the JSONB run context and the step config were
+both typed as "anything" at exactly the points where the engine's guarantees are
+strongest — after pointer resolution for `ActionContext`, after Zod for
+`ActionResult`. A recursive `JsonValue` makes "a value that will survive
+`JSON.parse(JSON.stringify(x))`" a checked type, which is what the run context
+column actually requires.
+
+**The definition is validated where it is read.** `evaluator.ts` cast
+`run.workflow.definition` straight into the engine. A malformed definition
+produced a run that simply never advanced — no dispatch, no error, no terminal
+state, nothing in the logs to explain it, and a support ticket that reads "the
+workflow just stops". It is now parsed with `WorkflowDefinitionSchema` at the
+read boundary and a failure throws with the Zod issues joined into the message,
+naming the workflow and the offending path.
+
+This is a real behavior change and the risk is worth stating plainly: **rows
+written under the permissive schema will now fail to execute** rather than
+failing quietly. That is the intended direction — a run that hangs forever is
+worse than one that refuses with a reason — but it is a change, and no migration
+is proposed for existing definitions.
+
 ## Four defects the lint pass found
 
 **Conditional routing never took the TRUE branch.** `evaluateCondition`
@@ -87,6 +130,31 @@ had just done, which costs a render and flashes a stale frame:
   `getNodeDefinition` is now overloaded and returns `undefined`, matching what its
   callers actually compared against.
 
+## What the tests had to be built around
+
+The two new suites are only meaningful because of decisions in the prisma double
+(`src/tests/workflow/helpers/prisma-double.ts`).
+
+**The double has to enforce the constraint it exists to test.** A permissive
+double would let a case pass because the test forced a result, rather than
+because the query excludes the row. The workflow delegate's `findFirst`,
+`updateMany` and `findMany` share matchers that actually apply the `orgId` and
+status predicates, so dropping a filter from production code fails loudly. The
+file's header argued this point originally about `updateMany` compare-and-sets;
+the same reasoning extends to every predicate a test relies on.
+
+**The condition suite pins the contract, not the implementation.**
+`condition-branch.test.ts` covers the TRUE and FALSE edges, missing pointers,
+string/number/boolean/null coercion, `"0"` against `0`, and empty-string
+handling — the last two because the coercion helper has branches where `"0"` and
+`0` must stay distinguishable while `" 0 "` and `""` must not.
+
+**The token suite covers the SDK's real content shape.** The budget bug only
+exists because `content` is an array of parts, so the fixtures are `TextPart`
+and `ToolResultPart` messages, not strings. A string-only fixture would have
+passed against the broken implementation, which is the specific mistake that let
+the bug ship.
+
 ## Verification
 
 | Check | Command | Result |
@@ -156,8 +224,27 @@ strips both at publication and the worker receives an empty message.
 
 ## Commit state
 
-Committed on `main`, pushed through `b99f7cf`, plus three commits from the final
-UI pass (`51df6a3`, `207362c`, `b632fe8`) and this entry. The CI workflow is at
-the repository root, outside the `forge` working directory, because GitHub reads
-workflows from `.github/workflows` at the root regardless of any
-`defaults.run.working-directory`.
+Ten commits on `main`, pushed through `4c10923`, working tree clean:
+
+| Commit | Scope |
+| --- | --- |
+| `f547ee4` | typed the event routing table against the event schemas |
+| `a5d6f66` | `JsonValue` for the action contract |
+| `8f4397b` | definition validation at the evaluator read boundary |
+| `c87fb70` | condition results under `data`, so TRUE branches are reachable (+ 9 tests) |
+| `8e1c61f` | token budget over real SDK content shapes (+ 9 tests) |
+| `b99f7cf` | `IncomingEdgeSchema`, edges validated like nodes |
+| `51df6a3` | task filters validated against the Prisma enums |
+| `207362c` | live-stream and canvas node boundaries |
+| `b632fe8` | state derived in effects and event handlers |
+| `882b7bf`, `4c10923` | this entry, and the CI workflow |
+
+The CI workflow lives at the repository root, outside the `forge` working
+directory, because GitHub reads workflows from `.github/workflows` at the root
+regardless of any `defaults.run.working-directory`; the job body is what runs in
+`forge`.
+
+**CI has not yet run on a GitHub runner.** The workflow was validated by parsing
+it and by running every step's command locally, which is not the same thing —
+`ubuntu-latest` differs from Windows in case sensitivity and shell, and the first
+push is the first real execution.
