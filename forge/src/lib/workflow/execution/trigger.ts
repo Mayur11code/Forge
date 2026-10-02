@@ -1,10 +1,15 @@
 // src/lib/workflow/execution/trigger.ts
 import { db } from "@/lib/prisma/db";
 import { advanceWorkflow } from "./evaluator";
+import type { JsonValue } from "@/lib/workflow-types/type";
 
 
 
-export async function startWorkflow(workflowId: string, triggerData: Record<string, any> = {}) {
+// Type-only. triggerData becomes WorkflowRun.context, a JSONB column, so
+// JsonValue is the honest bound: anything wider would be silently mangled on
+// write. This says what the column already enforced at runtime; it does not
+// touch the I6 org-scoping gap on this path, which is tracked separately.
+export async function startWorkflow(workflowId: string, triggerData: Record<string, JsonValue> = {}) {
   const workflow = await db.workflow.findUnique({
     where: { id: workflowId },
   });
