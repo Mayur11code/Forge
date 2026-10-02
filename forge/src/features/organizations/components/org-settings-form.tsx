@@ -36,7 +36,7 @@ export default function OrgSettingsForm({
           Organization Settings
         </h2>
         <p className="mt-1 text-sm text-zinc-500">
-          Manage your organization's public identity and branding.
+          Manage your organization&apos;s public identity and branding.
         </p>
       </div>
 

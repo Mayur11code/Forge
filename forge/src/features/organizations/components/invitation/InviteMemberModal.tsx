@@ -28,8 +28,12 @@ export default function InviteMemberModal({ orgSlug }: Props) {
         });
 
         setInviteUrl(result.inviteUrl);
-      } catch (err: any) {
-        setError(err.message || "Failed to create invitation.");
+      } catch (err: unknown) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to create invitation.",
+        );
       }
     });
   };
@@ -66,7 +70,13 @@ export default function InviteMemberModal({ orgSlug }: Props) {
               <label className="text-sm text-zinc-400">Role</label>
               <select
                 value={role}
-                onChange={(e) => setRole(e.target.value as any)}
+                onChange={(e) => {
+                  // The select offers exactly these two values, so this
+                  // narrows rather than asserts; an unexpected option leaves
+                  // the current role in place instead of storing it unchecked.
+                  const next = e.target.value;
+                  if (next === "MEMBER" || next === "ADMIN") setRole(next);
+                }}
                 className="w-full mt-1 px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg"
               >
                 <option value="MEMBER">Member</option>
