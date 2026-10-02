@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ModalPortal } from "../organizations/components/ui/ModalPortal";
 import { AttachmentUploader } from "./AttachmentUploader";
 import { getAttachments } from "@/app/actions/Tasks/attachments";
@@ -27,20 +27,34 @@ export function TaskAttachmentsModalClient({ taskId }: { taskId: string }) {
   //You would have to use the other type of modal (intercepting routes)
 
   async function loadAttachments() {
-    setLoading(true);
-    const data = await getAttachments(taskId);
-    setAttachments(data);
+  setLoading(true);
+  try {
+    setAttachments(await getAttachments(taskId));
+  } finally {
+    // finally, so a rejected fetch cannot leave the spinner running forever and
+    // strand the modal in a permanent loading state.
     setLoading(false);
   }
+}
 
-  useEffect(() => {
-    if (open) loadAttachments();
-  }, [open]);
+/**
+ * Opening the modal is an event, not a state transition to react to.
+ *
+ * The fetch used to sit in a useEffect keyed on `open`, which meant every open
+ * cost an extra render pass before the request was even issued, and the effect
+ * could not be trusted to run again if `taskId` changed underneath an open
+ * modal. Driving it from the click that opens the modal is the same behaviour
+ * with one fewer commit and an honest dependency.
+ */
+function handleOpen() {
+  setOpen(true);
+  void loadAttachments();
+}
 
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
+        onClick={handleOpen}
         className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300 transition-colors"
       >
         📎 Attachments

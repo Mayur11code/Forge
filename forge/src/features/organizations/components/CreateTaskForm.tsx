@@ -23,7 +23,11 @@ export default function CreateTaskForm({ onCreate }: CreateTaskFormProps) {
   // const [isSubmitting, setIsSubmitting] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
   const [localCount, setLocalCount] = useState(0);
-const [windowStart, setWindowStart] = useState(Date.now());
+// 0 means "no window started yet". Seeding this with Date.now() was an impure
+  // render: the value is read while rendering, so a server render and a client
+  // hydration each produce a different start time, which React reports as a
+  // mismatch. The window opens on the first submit instead.
+  const [windowStart, setWindowStart] = useState(0);
 
 const LIMIT = 5;
 const WINDOW = 10000; // 10 seconds
@@ -33,32 +37,39 @@ const WINDOW = 10000; // 10 seconds
 
     const now = Date.now();
 
-// reset window if expired
-if (now - windowStart > WINDOW) {
-  setWindowStart(now);
-  setLocalCount(0);
-}
+// A window that has expired contributes zero to the count. The original code
+    // called setLocalCount(0) and then went on to test the `localCount` captured
+    // in this closure, which still held the pre-reset value - so the first submit
+    // after a window rolled over was still blocked by a count that no longer
+    // existed.
+    const windowExpired = windowStart === 0 || now - windowStart > WINDOW;
+    const countInWindow = windowExpired ? 0 : localCount;
 
-// block if limit reached
-if (localCount >= LIMIT) {
-  setRateLimited(true);
-  const waitTime = WINDOW - (now - windowStart);
+    if (windowExpired) {
+      setWindowStart(now);
+      setLocalCount(0);
+    }
 
-  setTimeout(() => {
-    setRateLimited(false);
-  }, waitTime);
+    // block if limit reached
+    if (countInWindow >= LIMIT) {
+      setRateLimited(true);
+      const waitTime = WINDOW - (now - windowStart);
 
-  return;
-}
+      setTimeout(() => {
+        setRateLimited(false);
+      }, waitTime);
 
-setLocalCount(prev => prev + 1);
+      return;
+    }
+
+    setLocalCount(prev => prev + 1);
     if (title.trim().length < 3) return;
 
     // setIsSubmitting(true);
 
     try {
       setTitle("");
-      let result = await onCreate(title.trim());
+      const result = await onCreate(title.trim());
       if (result?.error === "RATE_LIMIT") {
         setRateLimited(true);
         // auto unlock after reset time
@@ -69,9 +80,11 @@ setLocalCount(prev => prev + 1);
         }, waitTime);
       }
     
-    } catch (err: any) {
+    } catch (err: unknown) {
     // 🎯 Handle rate limit error
-    if (err.message?.includes("too fast")) {
+    const message = err instanceof Error ? err.message : "";
+
+    if (message.includes("too fast")) {
       alert("⚠️ Slow down! Please wait a few seconds.");
     } else {
       alert("Something went wrong. Try again.");
