@@ -69,10 +69,10 @@ const execute: ExecuteFunction = async (ctx) => {
       success: true,
       data: { taskId: result.task.id, title: result.task.title }, // Piped into Global Context
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     return {
       success: false,
-      error: error.message || "Database connection failed",
+      error: error instanceof Error ? error.message : "Database connection failed",
       isRetriable: true, // Database timeout? Let QStash try again.
     };
   }

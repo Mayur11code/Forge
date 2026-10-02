@@ -27,13 +27,21 @@ export function isUnsignedWorkerAllowed(): boolean {
   return process.env.ALLOW_UNSIGNED_LOCAL_WORKER === "true";
 }
 
-type WorkerHandler<K extends EventType> = (params: {
-  event: {
-    id: string;
-    type: K;
-    data: EventPayloadMap[K];
-    time: string;
-  };
+/**
+ * The envelope every worker handler receives, typed against the event's own
+ * payload. Exported so the handlers can declare it directly: a handler declared
+ * as `({ event }: { event: any })` overrides the inference `createWorker` would
+ * otherwise supply and opts out of the payload check entirely.
+ */
+export type WorkerEventEnvelope<K extends EventType> = {
+  id: string;
+  type: K;
+  data: EventPayloadMap[K];
+  time: string;
+};
+
+export type WorkerHandler<K extends EventType> = (params: {
+  event: WorkerEventEnvelope<K>;
 }) => Promise<void>;
 
 

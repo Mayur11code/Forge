@@ -1,9 +1,8 @@
-import { createWorker } from "@/lib/events/worker";
+import type { WorkerHandler } from "@/lib/events/worker";
 
-export async function aiWorkerHandler({ event }: { event: any }) {
-
-  if (event.type !== "EMBEDDING_REQUESTED") return;
-
+export const aiWorkerHandler: WorkerHandler<"EMBEDDING_REQUESTED"> = async ({
+  event,
+}) => {
   const { entityId, type } = event.data;
 
   console.log("🤖 AI WORKER → EMBEDDING");

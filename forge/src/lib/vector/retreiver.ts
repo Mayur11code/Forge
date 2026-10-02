@@ -64,7 +64,7 @@ export async function retrieveRelevantContext(
 
         return compiledContextBlocks;
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("❌ [RETRIEVER_ERROR]: Execution failed during context generation ->", error);
         // Return empty string gracefully so the Chat API can fall back to general assistant instructions
         return "";
