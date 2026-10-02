@@ -2,15 +2,22 @@
 import { ExecuteFunction, CompensateFunction, WorkflowAction } from "../../../workflow-types/type";
 import { utapi } from "@/lib/uploadThing/uploadthing-server";
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 const execute: ExecuteFunction = async (ctx) => {
   try {
     // 1. Inputs are perfectly resolved by the engine
     const { userName, templateId } = ctx.inputs;
 
-    if (!userName) {
-      return { 
-        success: false, 
-        error: "Missing required field: userName", 
+    // Narrowed rather than merely truthiness-checked: `userName` is
+    // interpolated into a filename and slugified below, so a non-string here
+    // would throw on `.replace` instead of failing as a config error.
+    if (typeof userName !== "string") {
+      return {
+        success: false,
+        error: "Missing required field: userName",
         isRetriable: false // Bad user config
       };
     }
@@ -19,8 +26,8 @@ const execute: ExecuteFunction = async (ctx) => {
 
     // 2. GENERATE THE HEAVY DATA (The Coat)
     // Simulating a heavy text/CSV/PDF generation
-    const reportContent = `CONFIDENTIAL REPORT\nGenerated for: ${userName}\nTemplate: ${templateId || 'default'}\n\n` + "DATA... ".repeat(5000);
-    
+    const reportContent = `CONFIDENTIAL REPORT\nGenerated for: ${userName}\nTemplate: ${templateId ?? 'default'}\n\n` + "DATA... ".repeat(5000);
+
     const fileName = `report-${userName.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.txt`;
     const file = new File([reportContent], fileName, {
       type: "text/plain",
@@ -51,19 +58,30 @@ const execute: ExecuteFunction = async (ctx) => {
       } 
     };
 
-  } catch (error: any) {
+  } catch (error) {
     return {
       success: false,
-      error: error.message || "Failed to generate or upload report",
-      isRetriable: true 
+      error: errorMessage(error, "Failed to generate or upload report"),
+      isRetriable: true
     };
   }
 };
 
 const compensate: CompensateFunction = async (ctx) => {
   try {
-    // 1. Pull the exact historical output from the forward execution
-    const { fileKey, documentUrl } = ctx.outputs;
+    // 1. Pull the exact historical output from the forward execution.
+    // `outputs` is whatever the forward step wrote into the run context, so it
+    // is narrowed to an object with a string `fileKey` rather than destructured
+    // blindly - a compensated step whose outputs were truncated or re-serialised
+    // must skip cleanly, not delete an unrelated file.
+    const outputs = ctx.outputs;
+    const fileKey =
+      typeof outputs === "object" &&
+      outputs !== null &&
+      !Array.isArray(outputs) &&
+      typeof outputs.fileKey === "string"
+        ? outputs.fileKey
+        : undefined;
 
     if (!fileKey) {
       console.warn(`[ACTION: utils.generate_report] No fileKey found in outputs. Skipping compensation.`);
@@ -86,10 +104,10 @@ const compensate: CompensateFunction = async (ctx) => {
 
     return { success: true };
 
-  } catch (error: any) {
+  } catch (error) {
     return {
       success: false,
-      error: error.message || "Fatal error during compensation",
+      error: errorMessage(error, "Fatal error during compensation"),
       isRetriable: true
     };
   }

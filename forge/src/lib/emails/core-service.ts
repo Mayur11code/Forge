@@ -8,8 +8,17 @@ interface SendEmailParams {
   attachmentName?: string;
 }
 
+type EmailAttachment = {
+  filename: string;
+  content: Buffer;
+};
+
 export async function executeSendEmail({ to, subject, html, attachmentUrl, attachmentName }: SendEmailParams) {
-  let emailAttachments = [];
+  // `const`, not `let`: the array is only ever mutated in place, so a
+  // reassignment could never be intended. Annotated because an unannotated
+  // `const x = []` infers `never[]` rather than an array of the shape pushed
+  // below, which is how the element type gets quietly lost.
+  const emailAttachments: EmailAttachment[] = [];
 
   // 1. Process Claim Check
   if (attachmentUrl) {

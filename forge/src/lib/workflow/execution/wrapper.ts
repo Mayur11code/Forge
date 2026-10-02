@@ -2,6 +2,7 @@ import { db } from "@/lib/prisma/db";
 import { getAction } from "@/lib/workflow-types/action-registry";
 import { appendStepOutputToContext } from "./state";
 import { ActionContext } from "@/lib/workflow-types/type";
+import type { JsonValue } from "@/lib/workflow-types/type";
 import type { StepExecutionStatus } from "@prisma/client";
 import { Redis } from '@upstash/redis';
 import { pusherServer } from "@/lib/pusher/pusher-server";
@@ -179,8 +180,11 @@ export async function wrapStepOperation(
           workflowId: stepRun.run.workflowId,
           runId,
           stepId,
-          inputs: stepRun.inputs as Record<string, any>,
-          outputs: stepRun.outputs as Record<string, any> // Historical outputs!
+          // JSONB read boundary. These blobs are whatever the resolver wrote and
+          // whatever the forward step returned, so they are re-typed at the
+          // point of deserialisation rather than trusted as a shape.
+          inputs: stepRun.inputs as Record<string, JsonValue>,
+          outputs: stepRun.outputs as JsonValue, // Historical outputs!
         };
         result = await action.compensate(context);
       }
