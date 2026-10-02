@@ -38,7 +38,7 @@ export default async function WorkflowsDashboard({ params }: { params: Promise<{
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {workflows.length === 0 ? (
           <div className="col-span-full p-8 border border-zinc-800 border-dashed rounded-xl text-center text-zinc-500">
-            No workflows built yet. Click "Create Workflow" to get started.
+            No workflows built yet. Click &quot;Create Workflow&quot; to get started.
           </div>
         ) : (
           workflows.map((wf) => (
