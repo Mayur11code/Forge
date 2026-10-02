@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+# Cancel superseded runs on the same ref so a pushed fix does not wait behind
+# the run it replaces.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: forge
+
+jobs:
+  verify:
+    name: Typecheck, test and lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: forge/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Prisma generates the client from schema.prisma during install, but the
+      # postinstall is not guaranteed to run in every environment, so the
+      # generated client is made explicit before anything imports it.
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # The suite runs against an in-memory Prisma double, so no database
+      # service or migration step is needed here.
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
