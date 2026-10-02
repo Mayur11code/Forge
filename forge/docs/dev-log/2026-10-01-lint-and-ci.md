@@ -1,5 +1,11 @@
 # 2026-10-01 — Lint and type cleanup, and a CI gate
 
+> **Looking for the file-by-file explanation?** Read
+> [`../2026-10-01-change-guide.md`](../2026-10-01-change-guide.md) instead. It
+> walks all 42 touched files and explains why each one changed, including the
+> five live bugs the type errors were hiding. This entry is the chronological
+> record; that one is the explanation.
+
 The working tree carried 85 lint errors and 34 warnings. This entry records what
 most of them were actually hiding, because the ratio of "type error" to "real
 defect" was worse than the count suggested: roughly a third of the fixes changed
