@@ -5,7 +5,6 @@ import { useReactFlow, useOnSelectionChange, useNodesData } from "@xyflow/react"
 import { AVAILABLE_ACTIONS, AVAILABLE_TRIGGERS } from "../../../../lib/workflow-types/registry";
 import { useMemo } from "react"; // Add to 'react' import
 import { getAvailableUpstreamOutputs, getNodeDefinition, autoMapNodeVariables } from "@/lib/workflow/graph-ui/utils";
-import { ActionDef } from "@/lib/workflow-types/registry";
 import { useEdges } from "@xyflow/react"; // Add to '@xyflow/react'
 
 // 1. IMPORT YOUR REAL TYPES
@@ -43,10 +42,12 @@ export default function PropertiesPanel() {
   const { missingVariables, hasGraphError } = useMemo(() => {
     if (!nodeMatch || nodeMatch.type !== "action") return { missingVariables: [], hasGraphError: false };
 
-    const actionDef = getNodeDefinition(nodeMatch as any) as ActionDef | undefined;
+    const actionDef = getNodeDefinition(nodeMatch);
     if (!actionDef?.requires) return { missingVariables: [], hasGraphError: false };
 
-    const upstream = getAvailableUpstreamOutputs(selectedNodeId!, getNodes() as any, edges as any);
+    // getNodes() is already AppNode[] because useReactFlow was parameterised with
+    // it; useEdges has no type parameter, so the edges are narrowed here.
+    const upstream = getAvailableUpstreamOutputs(selectedNodeId!, getNodes(), edges as AppEdge[]);
     const availableKeys = upstream.map((out) => out.outputKey);
     const missing = actionDef.requires.filter((req) => !availableKeys.includes(req));
 
@@ -108,7 +109,7 @@ export default function PropertiesPanel() {
               // NEW: When a trigger changes, it might satisfy downstream actions.
               // We trigger the mapper for the whole graph to ensure children update.
               getNodes().forEach(n => {
-                if (n.type === 'action') autoMapNodeVariables(n.id, edges as any, setNodes);
+                if (n.type === 'action') autoMapNodeVariables(n.id, edges as AppEdge[], setNodes);
               });
             }}
           >
@@ -147,7 +148,7 @@ export default function PropertiesPanel() {
                 // Immediately check if existing wires can fill this NEW action's needs
                 autoMapNodeVariables(
                   selectedNodeId,
-                  edges as any,
+                  edges as AppEdge[],
                   setNodes
                 );
               }}
@@ -169,7 +170,7 @@ export default function PropertiesPanel() {
                 </p>
               </div>
               <p className="text-[11px] text-zinc-400 leading-relaxed mb-2">
-                This action requires variables that aren't reaching it yet. Connect a wire from a node that provides:
+                This action requires variables that aren&apos;t reaching it yet. Connect a wire from a node that provides:
               </p>
               <div className="flex flex-wrap gap-1">
                 {missingVariables.map((v) => (

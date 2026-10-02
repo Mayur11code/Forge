@@ -2,16 +2,47 @@
 import {
   AppNode,
   AppEdge,
+  type ActionNodeData,
+  type TriggerNodeData,
 } from "@/lib/workflow-types/workflow";
 
 import {
   ActionDef,
+  TriggerDef,
   AVAILABLE_ACTIONS,
   AVAILABLE_TRIGGERS,
 } from "@/lib/workflow-types/registry";
 
+/**
+ * What a definition lookup actually needs.
+ *
+ * `AppNode` is a React Flow `Node`, which requires `id`, `position` and friends.
+ * Several call sites hold only the discriminant and its data - a node rendered
+ * inside the canvas, or a node being rebuilt from a select's value - so they were
+ * casting a partial through `any` to satisfy the wider type. The lookup reads
+ * nothing else, so this states that.
+ */
+type NodeDefinitionInput =
+  | { type: "trigger"; data: TriggerNodeData }
+  | { type: "action"; data: ActionNodeData };
 
-export function getNodeDefinition(node: AppNode) {
+/**
+ * Overloaded on the discriminant so the result matches the argument: a caller
+ * holding an action node gets an `ActionDef` and can read `requires` without
+ * asserting one, which is what the previous `as ActionDef` casts were papering
+ * over. Without the third signature TS picks the first matching overload, so it
+ * is declared explicitly for callers holding the union.
+ */
+export function getNodeDefinition(
+  node: { type: "trigger"; data: TriggerNodeData },
+): TriggerDef | undefined;
+export function getNodeDefinition(
+  node: { type: "action"; data: ActionNodeData },
+): ActionDef | undefined;
+export function getNodeDefinition(
+  node: NodeDefinitionInput,
+): TriggerDef | ActionDef | undefined;
+export function getNodeDefinition(node: NodeDefinitionInput) {
   if (
     node.type === "trigger" &&
     node.data.eventId
@@ -30,7 +61,7 @@ export function getNodeDefinition(node: AppNode) {
     );
   }
 
-  return null;
+  return undefined;
 }
 
 
