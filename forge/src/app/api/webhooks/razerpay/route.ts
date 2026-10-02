@@ -49,9 +49,12 @@ const eventId = event.id || `${eventType}_${entityId}_${event.created_at}`;
       await db.razorpayEvent.create({
         data: { id: eventId },
       });
-    } catch (error: any) {
-      // P2002 is Prisma's "Unique Constraint Violation" error code
-      if (error.code === "P2002") {
+    } catch (error: unknown) {
+      // P2002 is Prisma's "Unique Constraint Violation" error code. Narrowed rather
+      // than typed `any`: only that code means "already processed", and treating
+      // every throw as a duplicate would silently swallow real database failures
+      // as if they were replays.
+      if ((error as { code?: unknown } | null)?.code === "P2002") {
         console.log(`⏭️ Skipping duplicate event: ${eventId}`);
         // We return 200 OK so Razorpay knows we received it and stops retrying
         return new NextResponse("Duplicate", { status: 200 }); 

@@ -21,6 +21,7 @@ import { resolveInputs } from "@/lib/workflow/execution/resolver";
 import { wrapStepOperation } from "@/lib/workflow/execution/wrapper";
 import { advanceWorkflow } from "@/lib/workflow/execution/evaluator";
 import type { WorkflowDefinition } from "@/lib/workflow-types/workflow";
+import type { JsonValue } from "@/lib/workflow-types/type";
 import type { StepExecutionStatus } from "@prisma/client";
 
 /**
@@ -170,10 +171,14 @@ async function handleExecuteWorkflowNode(
   const actionId = nodeDefinition.action;
 
   // --- Resolve the `{{...}}` pointers ---
-  let resolvedInputs: Record<string, any> | undefined;
+  let resolvedInputs: Record<string, JsonValue> | undefined;
   if (operation === "EXECUTE") {
     const rawInputs = nodeDefinition.config || {};
-    const globalContext = (stepRun.run.context as Record<string, any>) || {};
+    // JSONB read boundary. Prisma's Json type is wider than the resolver's, so
+    // the context is re-typed at the point of deserialisation rather than cast
+    // through `any`. `?? {}` rather than `|| {}`: a falsy-but-valid context is
+    // still a context.
+    const globalContext = (stepRun.run.context as Record<string, JsonValue>) ?? {};
     resolvedInputs = resolveInputs(rawInputs, globalContext);
     console.log(`[WORKER] Resolved inputs for step ${stepRunId}:`, resolvedInputs);
   }
@@ -240,7 +245,7 @@ async function handler(req: NextRequest) {
 
     console.error(`[WORKER] Unexpected cloud event type: ${body.type}`);
     return new NextResponse("Unsupported event type", { status: 400 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[WORKER] Unhandled fatal error:", error);
     // 500 so the message is not lost. The step's persisted status is what makes
     // the redelivery safe: the wrapper's claim is a compare-and-set, so a repeat

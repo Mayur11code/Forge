@@ -60,14 +60,41 @@ const IncomingNodeSchema = z.discriminatedUnion('type', [
 
 const IncomingNodesSchema = z.array(IncomingNodeSchema);
 
+/**
+ * Edges are validated on the same terms as nodes, and persisted from the parsed
+ * result for the same reason: `compileWorkflow` is the only thing that turns drawn
+ * edges into `dependsOn`, so an unvalidated edge is an unchecked instruction to the
+ * execution engine, and persisting the raw argument would store whatever the
+ * client sent in the JSONB column alongside a validated node set.
+ *
+ * React Flow carries optional presentation fields (`type`, `animated`, `label`,
+ * markers, style). They are passed through rather than stripped, because they are
+ * meaningful to the editor and harmless to the compiler, which reads only `source`
+ * and `target`.
+ */
+const IncomingEdgeSchema = z.object({
+  id: z.string(),
+  source: z.string(),
+  target: z.string(),
+  sourceHandle: z.string().nullish(),
+  targetHandle: z.string().nullish(),
+  type: z.string().optional(),
+  animated: z.boolean().optional(),
+  label: z.string().optional(),
+});
+
+const IncomingEdgesSchema = z.array(IncomingEdgeSchema);
+
+type IncomingNode = z.infer<typeof IncomingNodeSchema>;
+
 // ------------------------------------------------------------------
 // CREATE WORKFLOW
 // ------------------------------------------------------------------
 export async function saveWorkflowState(
   orgslug: string, 
   name: string,
-  uiNodes: any[], 
-  uiEdges: any[]
+  uiNodes: unknown[], 
+  uiEdges: unknown[]
 ) {
   try {
     const access = await getOrgAccess(orgslug);
@@ -76,15 +103,19 @@ export async function saveWorkflowState(
     const areNodesValid = IncomingNodesSchema.safeParse(uiNodes); 
     if (!areNodesValid.success) return { success: false, error: "Malformed workflow data." };
 
+    const areEdgesValid = IncomingEdgesSchema.safeParse(uiEdges);
+    if (!areEdgesValid.success) return { success: false, error: "Malformed workflow data." };
+
     // Compile and persist what was validated, not the raw argument. Persisting
     // the input while validating a copy would leave unvalidated keys in the row
     // and make the check advisory rather than binding.
-    const validNodes = areNodesValid.data;
+    const validNodes: IncomingNode[] = areNodesValid.data;
+    const validEdges = areEdgesValid.data;
 
     const orgId = access.organization.id;
 
     // --- THE COMPILER INJECTION ---
-    const compiledDefinition = compileWorkflow(validNodes, uiEdges);
+    const compiledDefinition = compileWorkflow(validNodes, validEdges);
     
     // Find the trigger to extract the global event ID
     const triggerNode = validNodes.find(n => n.type === 'trigger');
@@ -95,7 +126,7 @@ export async function saveWorkflowState(
         name,
         orgId,
         uiNodes: validNodes, 
-        uiEdges: uiEdges,
+        uiEdges: validEdges,
         // Inject the compiled DAG!
         definition: compiledDefinition, 
         // Sync the DB schema with the trigger configuration
@@ -123,8 +154,8 @@ export async function saveWorkflowState(
 export async function updateWorkflowState(
   orgslug: string,
   workflowId: string, 
-  uiNodes: any[], 
-  uiEdges: any[]
+  uiNodes: unknown[], 
+  uiEdges: unknown[]
 ) {
   try {
     const access = await getOrgAccess(orgslug);
@@ -133,11 +164,15 @@ export async function updateWorkflowState(
     const areNodesValid = IncomingNodesSchema.safeParse(uiNodes); 
     if (!areNodesValid.success) return { success: false, error: "Malformed workflow data." };
 
-    const validNodes = areNodesValid.data;
+    const areEdgesValid = IncomingEdgesSchema.safeParse(uiEdges);
+    if (!areEdgesValid.success) return { success: false, error: "Malformed workflow data." };
+
+    const validNodes: IncomingNode[] = areNodesValid.data;
+    const validEdges = areEdgesValid.data;
 
     // --- THE COMPILER INJECTION ---
     
-    const compiledDefinition = compileWorkflow(validNodes, uiEdges);
+    const compiledDefinition = compileWorkflow(validNodes, validEdges);
     
     const triggerNode = validNodes.find(n => n.type === 'trigger');
     const eventId = triggerNode?.data?.eventId || null;
@@ -166,7 +201,7 @@ export async function updateWorkflowState(
       },
       data: {
         uiNodes: validNodes, 
-        uiEdges,
+        uiEdges: validEdges,
         // Update the DAG on every save!
         definition: compiledDefinition,
         eventId: eventId,
