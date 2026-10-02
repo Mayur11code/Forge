@@ -5,11 +5,14 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Play, Loader2 } from "lucide-react";
 import { triggerWorkflowRun } from "@/app/actions/workflows/workflow-run";
+import type { JsonValue } from "@/lib/workflow-types/type";
 
 interface RunWorkflowButtonProps {
   workflowId: string;
   orgId: string;
-  payload?: Record<string, any>; // Flexible injection
+  // Becomes WorkflowRun.context, a JSONB column, so this is the type that survives
+  // the round trip rather than whatever the caller happened to build.
+  payload?: Record<string, JsonValue>; // Flexible injection
 }
 
 export default function RunWorkflowButton({

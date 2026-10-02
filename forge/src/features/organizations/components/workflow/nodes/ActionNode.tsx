@@ -16,13 +16,12 @@ import {
   RotateCcw,
 } from "lucide-react";
 
-import type { ActionNodeType } from "@/lib/workflow-types/workflow";
+import type { ActionNodeType, AppNode, AppEdge } from "@/lib/workflow-types/workflow";
 import {
   getAvailableUpstreamOutputs,
   getNodeDefinition,
 } from "@/lib/workflow/graph-ui/utils";
 
-import { ActionDef } from "@/lib/workflow-types/registry";
 import { StepExecutionStatus } from "@prisma/client";
 
 function ActionNode({
@@ -42,16 +41,18 @@ function ActionNode({
   // Action Definition
   // ------------------------------------------------------------------
 
-  const actionDef = getNodeDefinition(
-    { type: "action", data } as any
-  ) as ActionDef | undefined;
+  const actionDef = getNodeDefinition({ type: "action", data });
 
   // ------------------------------------------------------------------
   // Upstream Variable Discovery
   // ------------------------------------------------------------------
 
   const upstreamOutputs = useMemo(
-    () => getAvailableUpstreamOutputs(id, nodes as any, edges as any),
+    // The store is untyped React Flow state, so this is the boundary where the
+    // generic Node/Edge are narrowed to the application's own union. It is a cast
+    // because the store is not generic, but a checked one - getAvailableUpstreamOutputs
+    // only reads id/type/data and edge source/target.
+    () => getAvailableUpstreamOutputs(id, nodes as AppNode[], edges as AppEdge[]),
     [id, nodes, edges]
   );
 

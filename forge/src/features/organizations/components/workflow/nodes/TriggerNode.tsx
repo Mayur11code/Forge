@@ -10,7 +10,7 @@ export default function TriggerNode({ data, selected, isConnectable }: NodeProps
     : 'border-zinc-800 hover:border-zinc-700';
 
 // 2. Fetch the blueprint to see what variables this trigger outputs
-  const definition = getNodeDefinition({ type: 'trigger', data } as any);
+  const definition = getNodeDefinition({ type: 'trigger', data });
   const outputs = definition?.outputs || [];
 
   return (
