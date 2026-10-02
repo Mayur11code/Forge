@@ -1,5 +1,6 @@
 // src/lib/workflow/execution/state.ts
 import { db } from "@/lib/prisma/db";
+import type { JsonValue } from "@/lib/workflow-types/type";
 
 /**
  * How many times a contended merge re-reads before giving up.
@@ -38,7 +39,7 @@ const MAX_MERGE_ATTEMPTS = 5;
 export async function appendStepOutputToContext(
   runId: string,
   stepId: string,
-  outputData: Record<string, any>,
+  outputData: JsonValue,
 ) {
   for (let attempt = 1; attempt <= MAX_MERGE_ATTEMPTS; attempt++) {
     const run = await db.workflowRun.findUnique({
@@ -52,7 +53,11 @@ export async function appendStepOutputToContext(
       );
     }
 
-    const currentContext = (run.context as Record<string, any>) || {};
+    // The cast is the JSONB read boundary: Prisma types a `Json` column as
+    // `JsonValue`-compatible but widened, and `?? {}` rather than `|| {}`
+    // because a falsy-but-valid JSON output (0, "", false) must be stored as
+    // itself rather than silently replaced by an empty object.
+    const currentContext = (run.context as Record<string, JsonValue>) ?? {};
 
     const nextContext = {
       ...currentContext,
