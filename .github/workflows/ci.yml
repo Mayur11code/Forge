@@ -40,6 +40,15 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      # `next-env.d.ts` is gitignored, because Next regenerates it on
+      # `next dev` / `next build`. A fresh CI checkout therefore has no file
+      # carrying `/// <reference types="next/image-types/global" />`, which is
+      # what declares `*.png` and friends - so without this, `tsc` fails on any
+      # static asset import. `next typegen` writes it without running a full
+      # build, which is why there is no build step in this workflow.
+      - name: Generate Next type definitions
+        run: npx next typegen
+
       - name: Typecheck
         run: npx tsc --noEmit
 

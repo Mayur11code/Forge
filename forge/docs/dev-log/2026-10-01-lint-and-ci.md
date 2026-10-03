@@ -168,8 +168,9 @@ the bug ship.
 | Types | `npx tsc --noEmit` | clean, 0 errors |
 | Lint | `npx eslint` | **0 errors**, 29 warnings |
 | Full suite | `npm test` | **30 suites, 458 tests**, passing (was 28 / 440) |
-| Prisma client | `npx prisma generate` | generated, 566ms |
-| CI workflow | parsed with `js-yaml` | valid; 7 steps, `working-directory: forge` |
+| Prisma client | `npx prisma generate` | generated, 775ms |
+| Next types | `npx next typegen` | generated; required before `tsc` on a clean checkout |
+| CI workflow | parsed with `js-yaml` | valid; 8 steps, `working-directory: forge` |
 
 29 warnings remain, all pre-existing and none of them errors: unused imports and
 locals in 20 files, `@next/next/no-img-element` in 4, and two
@@ -180,9 +181,10 @@ declared on one `useCallback` but read on another. Warnings do not fail
 ## The CI gate
 
 `.github/workflows/ci.yml`, Node 22, `npm ci` → `npx prisma generate` →
-`npx tsc --noEmit` → `npm test` → `npm run lint`. Triggers on push and pull
-request against `main`, with `concurrency` cancelling superseded runs on the
-same ref so a pushed fix does not queue behind the run it replaces.
+`npx next typegen` → `npx tsc --noEmit` → `npm test` → `npm run lint`. Triggers
+on push and pull request against `main`, with `concurrency` cancelling
+superseded runs on the same ref so a pushed fix does not queue behind the run it
+replaces.
 
 Two deliberate choices:
 
@@ -250,7 +252,18 @@ directory, because GitHub reads workflows from `.github/workflows` at the root
 regardless of any `defaults.run.working-directory`; the job body is what runs in
 `forge`.
 
-**CI has not yet run on a GitHub runner.** The workflow was validated by parsing
-it and by running every step's command locally, which is not the same thing —
-`ubuntu-latest` differs from Windows in case sensitivity and shell, and the first
-push is the first real execution.
+**CI has now run, and the first run failed.** `tsc` exited 2 with
+`Cannot find module '@/lib/icons/mainlogo.png'`. `next-env.d.ts` is gitignored —
+Next regenerates it on `next dev` / `next build` — so a fresh checkout has no
+file carrying `/// <reference types="next/image-types/global" />`, which is what
+declares `*.png`. Every static asset import fails typecheck.
+
+`npx next typegen` was added between `prisma generate` and `tsc`. It writes
+`next-env.d.ts` without a full build, which is why this still does not need one.
+
+**The mistake worth recording:** I verified `npx tsc --noEmit` exits 0, and wrote
+that down as CI evidence. I had `next-env.d.ts` locally, because I had run the
+dev server. I checked the command and not the environment — and the environment
+is what CI has and my machine did not. The reproduction that would have caught
+it is one command: delete `next-env.d.ts`, then run `tsc`. It now passes, and it
+fails without `typegen`.

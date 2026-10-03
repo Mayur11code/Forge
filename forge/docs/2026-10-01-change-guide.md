@@ -579,12 +579,19 @@ the query excludes the row.
 
 `.github/workflows/ci.yml`, at the repository root.
 
-Node 22, then `npm ci` → `npx prisma generate` → `npx tsc --noEmit` →
-`npm test` → `npm run lint`. Runs on push and pull request against `main`, with
-`concurrency` cancelling superseded runs on the same ref — so pushing a fix does
-not queue behind the run it replaces.
+Node 22, then `npm ci` → `npx prisma generate` → `npx next typegen` →
+`npx tsc --noEmit` → `npm test` → `npm run lint`. Runs on push and pull request
+against `main`, with `concurrency` cancelling superseded runs on the same ref —
+so pushing a fix does not queue behind the run it replaces.
 
-Two deliberate choices:
+Three deliberate choices:
+
+**`npx next typegen` before `tsc`.** `next-env.d.ts` is gitignored, because Next
+regenerates it on `next dev` / `next build`. A fresh checkout therefore has no
+file carrying `/// <reference types="next/image-types/global" />`, which is what
+declares `*.png` — so typecheck fails on any static asset import. This was not
+hypothetical: the first CI run failed exactly this way. `next typegen` writes the
+file without a full build.
 
 **No build step.** `npm run build` is `prisma generate && next build`, and a
 Next build fails on unrelated type or prerender errors. Adding it would mean the
@@ -661,6 +668,8 @@ been exercised.** CI proves the suite stays green; it does not prove a Pusher
 event ever arrives, that a conditional branch routes correctly against a real
 run, or that the token budget behaves on live traffic.
 
-CI itself has not yet run on a GitHub runner. The workflow was validated by
-parsing it and by running every step's command locally on Windows, which is not
-the same thing.
+The first CI run failed on a missing `next-env.d.ts` (section 9), which is
+recorded above because it is the clearest example in this pass of a locally-green
+command not meaning the same thing in CI. `ubuntu-latest` still differs from
+Windows in case sensitivity and shell, so treat the next run as the real first
+one.
