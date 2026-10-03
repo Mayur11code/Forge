@@ -1,4 +1,4 @@
-# Change guide — lint and type pass, 2026-10-01
+# Change guide — 2026-10-01
 
 Every file this pass touched, and why. Written to be read in one sitting, in
 plain language, without knowing the codebase in advance.
