@@ -172,11 +172,11 @@ the bug ship.
 | Next types | `npx next typegen` | generated; required before `tsc` on a clean checkout |
 | CI workflow | parsed with `js-yaml` | valid; 8 steps, `working-directory: forge` |
 
-29 warnings remain, all pre-existing and none of them errors: unused imports and
-locals in 20 files, `@next/next/no-img-element` in 4, and two
-`react-hooks/exhaustive-deps` in `WorkflowCanvas.tsx` where `getNodes` is
-declared on one `useCallback` but read on another. Warnings do not fail
-`eslint` by default and CI uses that default, so they are not blocking.
+29 warnings remain, across 24 files: 24 unused imports or locals,
+3 `@next/next/no-img-element`, and two `react-hooks/exhaustive-deps` in
+`WorkflowCanvas.tsx` where `getNodes` is declared on one `useCallback` but read on
+another. Warnings do not fail `eslint` by default and CI uses that default, so
+they are not blocking.
 
 ## The CI gate
 
@@ -196,6 +196,79 @@ and test are the real gates here; the build is left to deploy.
 
 **No database service.** The suite runs against the in-memory Prisma double, so
 there is no migration ordering to get right on a fresh runner.
+
+## Two failures before the gate went green
+
+The workflow ran twice and failed twice. Both failures were the same class of
+error, and neither was visible from the machine that wrote the workflow.
+
+### Run 1 — `tsc` exited 2
+
+```
+src/features/organizations/components/Sidebar.tsx(6,22): error TS2307:
+Cannot find module '@/lib/icons/mainlogo.png' or its corresponding type declarations.
+```
+
+`next-env.d.ts` is gitignored, because Next regenerates it on `next dev` /
+`next build`. A fresh checkout therefore has no file carrying
+`/// <reference types="next/image-types/global" />`, which is what declares
+`*.png`. Every static asset import fails typecheck.
+
+`npx next typegen` was added between `prisma generate` and `tsc`. It writes
+`next-env.d.ts` without running a full build, which is why the no-build
+constraint still holds.
+
+### Run 2 — the test suite needed a credential
+
+```
+FAIL src/tests/agent/provider-binding.test.ts
+  ● Test suite failed to run
+    CRITICAL: GEMINI_API_KEY is missing from environment variables.
+Test Suites: 1 failed, 29 passed, 30 total
+```
+
+`provider.ts` constructs its singleton eagerly
+(`export const googleProvider = globalThis.geminiGlobal ?? initGeminiSingleton()`),
+and `initGeminiSingleton` throws when `GEMINI_API_KEY` is absent. That
+fail-fast is correct for a server — one that boots without credentials should
+stop immediately rather than hand out unauthenticated 500s later. But it means
+the throw happens on **import**, so the test file failed at module load and 0 of
+its 7 assertions ever ran.
+
+Fixed in `jest.setup-env.ts`, a `setupFiles` entry that provides a placeholder
+via `??=`. Three reasons it belongs there rather than as an `env:` block in the
+workflow:
+
+- It fixes the class of problem, not the instance. A fresh clone without `.env`
+  was failing locally too; that was the bug, and CI merely found it.
+- The suite makes **no network calls**. `provider-binding` is the only test that
+  imports the provider, and it compares `modelId`, `provider` and
+  `specificationVersion` — local properties of a model descriptor. Constructing a
+  client never presents a credential to anything, so there is nothing for a
+  placeholder to be wrong about.
+- It matches the precedent already in this repo. `jest.setup-db-guard.ts` exists
+  for the same shape of reason: because `next/jest` loads the real `.env`, that
+  load used to point tests at a live database.
+
+`??=` never overrides a real key, and the suite's own test that deletes the
+variable and asserts the throw still passes — it mutates `process.env` inside
+its test body, after setup has already run.
+
+### The mistake worth recording
+
+Both times I had verified the **command** and not the **environment**.
+
+For run 1, `npx tsc --noEmit` exited 0 on my machine because I had run the dev
+server and already had `next-env.d.ts`. The one command that would have caught
+it: delete the file, then run `tsc`.
+
+For run 2, `npm test` exited 0 on my machine because I had a real `.env`.
+
+Both reproductions are the same shape — remove the thing your machine happens to
+have, then rerun. It is now how both were confirmed fixed: the full 30 suites /
+458 tests were run with `.env` renamed away and `GEMINI_API_KEY` unset, which is
+exactly what a runner sees. Green in that condition, and green with `.env`
+present, so neither fix masks the other.
 
 ## Still not verified
 
@@ -251,19 +324,3 @@ The CI workflow lives at the repository root, outside the `forge` working
 directory, because GitHub reads workflows from `.github/workflows` at the root
 regardless of any `defaults.run.working-directory`; the job body is what runs in
 `forge`.
-
-**CI has now run, and the first run failed.** `tsc` exited 2 with
-`Cannot find module '@/lib/icons/mainlogo.png'`. `next-env.d.ts` is gitignored —
-Next regenerates it on `next dev` / `next build` — so a fresh checkout has no
-file carrying `/// <reference types="next/image-types/global" />`, which is what
-declares `*.png`. Every static asset import fails typecheck.
-
-`npx next typegen` was added between `prisma generate` and `tsc`. It writes
-`next-env.d.ts` without a full build, which is why this still does not need one.
-
-**The mistake worth recording:** I verified `npx tsc --noEmit` exits 0, and wrote
-that down as CI evidence. I had `next-env.d.ts` locally, because I had run the
-dev server. I checked the command and not the environment — and the environment
-is what CI has and my machine did not. The reproduction that would have caught
-it is one command: delete `next-env.d.ts`, then run `tsc`. It now passes, and it
-fails without `typegen`.
