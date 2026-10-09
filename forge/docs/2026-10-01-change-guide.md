@@ -584,7 +584,7 @@ Node 22, then `npm ci` → `npx prisma generate` → `npx next typegen` →
 against `main`, with `concurrency` cancelling superseded runs on the same ref —
 so pushing a fix does not queue behind the run it replaces.
 
-Three deliberate choices:
+Four deliberate choices:
 
 **`npx next typegen` before `tsc`.** `next-env.d.ts` is gitignored, because Next
 regenerates it on `next dev` / `next build`. A fresh checkout therefore has no
@@ -592,6 +592,16 @@ file carrying `/// <reference types="next/image-types/global" />`, which is what
 declares `*.png` — so typecheck fails on any static asset import. This was not
 hypothetical: the first CI run failed exactly this way. `next typegen` writes the
 file without a full build.
+
+**`jest.setup-env.ts` for the credential the tests do not need.** The second CI
+run failed because `provider.ts` constructs its provider singleton eagerly and
+throws when `GEMINI_API_KEY` is missing — so `provider-binding.test.ts` died at
+module load with 0 of its 7 assertions executed. A `setupFiles` entry now
+supplies a placeholder when no key is present. That belongs in Jest rather than
+as an `env:` block in the workflow because a fresh clone without `.env` was
+failing locally too; the suite makes no network calls, so there is nothing for a
+non-functional placeholder to be wrong about. It uses `??=` and never overrides a
+real key. See `jest.setup-env.ts` for the full reasoning.
 
 **No build step.** `npm run build` is `prisma generate && next build`, and a
 Next build fails on unrelated type or prerender errors. Adding it would mean the
@@ -610,7 +620,8 @@ everything imports.
 
 ## 10. Files touched but not described
 
-Small enough to list without a section of their own:
+Small enough to list without a section of their own. Bracketed numbers
+cross-reference the section that covers the file in full:
 
 | File | Change |
 | --- | --- |
@@ -626,6 +637,8 @@ Small enough to list without a section of their own:
 | `features/organizations/components/workflow/nodes/TriggerNode.tsx` | cast removed |
 | `features/attachments/TaskAttachmentModalClient.tsx` | fetch on click (7.3) |
 | `lib/vector/retreiver.ts` | `unknown` catch |
+| `jest.config.ts` | registered `setupFiles` (9) |
+| `jest.setup-env.ts` | *new* — placeholder credential for a suite with no network calls (9) |
 
 ---
 
@@ -664,12 +677,15 @@ risk in the canvas, and is worth a pass of its own. Warnings do not fail
 
 All evidence is Jest-level against an in-memory Prisma double, plus local command
 runs. **No live database, queue, Gemini, Pusher, or real workflow execution has
-been exercised.** CI proves the suite stays green; it does not prove a Pusher
-event ever arrives, that a conditional branch routes correctly against a real
-run, or that the token budget behaves on live traffic.
+been exercised.** A green CI proves the suite stays green; it does not prove a
+Pusher event ever arrives, that a conditional branch routes correctly against a
+real run, or that the token budget behaves on live traffic.
 
-The first CI run failed on a missing `next-env.d.ts` (section 9), which is
-recorded above because it is the clearest example in this pass of a locally-green
-command not meaning the same thing in CI. `ubuntu-latest` still differs from
-Windows in case sensitivity and shell, so treat the next run as the real first
-one.
+The workflow failed twice before both fixes landed — `next-env.d.ts` missing,
+then `GEMINI_API_KEY` missing (section 9). Both were verified by reproducing them
+first: removing the thing this machine happens to have, then rerunning. The full
+suite was confirmed green both with `.env` renamed away (what a runner sees) and
+with it present.
+
+`ubuntu-latest` still differs from Windows in case sensitivity and shell, so
+treat the next run as the real first one.
