@@ -538,6 +538,40 @@ dependency disagree. Nothing in the current engine rejects it, and there is no
 structural substitute. This is the single genuinely new validation in the
 Assignment 37 sequence, and it is why 37.3 is a P1 rather than a convenience.
 
+**Resolution — CLOSED 2026-10-12 (Phase 37.3).** A read-only preflight validator
+over `WorkflowProposal` now performs the checks F6 recorded as absent, without
+modifying the resolver:
+
+- `src/lib/workflow-types/workflow-proposal-references.ts` (new) —
+  `validateProposalReferences(proposal): ProposalIssue[]`, walking every string
+  leaf under every step's `inputs`.
+- Reuses the resolver's own grammar (`/\{\{([\w.-]+)\}\}/g`) rather than extending
+  it; a parity test drives the real `resolveInputs` against the same strings.
+- The plan's invalid example is rejected with `MISSING_DATA_DEPENDENCY`: a valid
+  step-output reference requires the source step in the consumer's own
+  `dependsOn`, and that array is never inferred or mutated.
+- Also rejects unknown sources (`UNKNOWN_REFERENCE_SOURCE`), undeclared outputs
+  (`UNKNOWN_OUTPUT`), malformed tokens/namespaces (`MALFORMED_REFERENCE`),
+  out-of-scope runtime namespaces (`UNAVAILABLE_REFERENCE_SCOPE`), and
+  prototype-path segments (`UNSAFE_REFERENCE_PATH`). Self-references are reported
+  as `SELF_REFERENCE`.
+
+The resolver's runtime behaviour — including its silent missing-path handling and
+its `current[part]` traversal — is **unchanged**; the phase is a preflight for
+generated proposals, not a runtime rewrite. `git diff --
+src/lib/workflow/execution/resolver.ts` is empty, and two tests read the file
+from disk to assert it is untouched.
+
+Evidence: `src/tests/workflow/proposal-references.test.ts` — 44/44 (full run 33
+suites / 579 tests); `assignments-37-phase-37.3-reference-validator.md` §10–§11.
+
+**Recorded limitations (not silent omissions).** Trigger output fields fail
+closed with `UNKNOWN_OUTPUT` because no authoritative trigger-output contract
+exists (`triggerData` is an unconstrained `Record<string, JsonValue>`). A sound
+`TYPE_MISMATCH` check is not implemented because every catalogued output is
+`z.string()` and no machine-declared field-type relationship exists without a
+type-inference layer. Dependency existence and cycle detection remain 37.4.
+
 ---
 
 ### F5 — `WorkflowDefinitionSchema` is not the production validation gate
@@ -880,7 +914,7 @@ execution. Conditional routing is **not** claimed to work end-to-end. See
 | **I2** node validation bypass | **P0** | Pre-37.11 prerequisite | Trusting generated `uiNodes` at the persistence boundary | **Yes** |
 | **F3** no authoritative capability contract | **P1** | **37.1** | Planner-facing action knowledge; the whole generation path | No — **CLOSED 2026-10-01** |
 | **I4** runtime/UI registry mismatch | **P1** | **37.1** | Reliable output contracts; absence of phantom actions | No — **CLOSED 2026-10-01, with 37.1** |
-| **F6** no reference / data-dependency validation | **P1** | **37.3** | Deterministic step generation; `MISSING_DATA_DEPENDENCY` | No |
+| **F6** no reference / data-dependency validation | **P1** | **37.3** | Deterministic step generation; `MISSING_DATA_DEPENDENCY` | No — **CLOSED 2026-10-12** |
 | **F5** schema is not the production gate | **P1** | **37.4** | A trustworthy compiler boundary for a second definition producer | No |
 | **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | Not yet — decision at 37.6/37.7 |
 | **I5** maintenance schedule unknown | **P1-CHECK** | **37.16** | Capstone recovery verification; only if confirmed absent | Only if confirmed absent |
@@ -1105,7 +1139,8 @@ the original placed UI derivation as a side concern after materialization.
 
 **Phase 0:** COMPLETE
 
-**Phases complete:** 37.0, 37.0A, 37.0B, **37.1 (VERIFIED 2026-10-01)**
+**Phases complete:** 37.0, 37.0A, 37.0B, **37.1 (VERIFIED 2026-10-01)**,
+**37.2 (VERIFIED 2026-10-12)**, **37.3 (VERIFIED 2026-10-12)**
 
 **Current blockers:**
 - I6
@@ -1114,7 +1149,8 @@ the original placed UI derivation as a side concern after materialization.
 (2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0** and still
 gates 37.12. None of the three was ever satisfied by closing either of the others.
 
-**Current implementation target:** 37.2 — WorkflowProposal schema
+**Current implementation target:** 37.4 — Proposal compiler / semantic validation
+adapter
 
 **Closed by Phase 37.1, with evidence:**
 - **F3** — the capability contract exists and is tested
@@ -1127,6 +1163,15 @@ gates 37.12. None of the three was ever satisfied by closing either of the other
 Both closures rest on a test that fails when the defect is reintroduced
 (mutation checks in `assignments-37-phase-37.1-capability-catalog.md` §12), not
 merely on the existence of a document.
+
+**Closed by Phase 37.3, with evidence:**
+- **F6** — a read-only preflight validator over `WorkflowProposal` rejects a data
+  reference whose execution dependency is absent (`MISSING_DATA_DEPENDENCY`),
+  along with unknown sources, undeclared outputs, malformed tokens, out-of-scope
+  namespaces and prototype-path segments
+  (`src/lib/workflow-types/workflow-proposal-references.ts`;
+  `src/tests/workflow/proposal-references.test.ts` — 44/44). The resolver was not
+  modified (`git diff -- src/lib/workflow/execution/resolver.ts` is empty).
 
 **Recorded, not resolved, by Phase 37.1:**
 - **I7** — conditional routing is not executable or authorable end-to-end. A
@@ -1145,6 +1190,13 @@ merely on the existence of a document.
 schema, migration, prompt, execution engine, or runtime behaviour was changed.
 `createTaskInOrg` and the canonical `createTaskSchema` were not modified. The
 Phase 0 audit remains unmodified.
+
+**Phase 37.2/37.3 scope note.** Phase 37.2 added
+`src/lib/workflow-types/workflow-proposal.ts` and its test. Phase 37.3 added
+`src/lib/workflow-types/workflow-proposal-references.ts`, its 44-test suite, and
+extended the `ProposalIssueCode` union in the 37.2 module. Neither phase changed
+`src/lib/workflow/execution/resolver.ts` or any runtime, Prisma schema, migration,
+prompt, or execution path. The Phase 0 audit remains unmodified.
 
 **I5 remains unverified** and is not listed as a blocker. It becomes one only if
 verification confirms no workflow-maintenance schedule exists.
