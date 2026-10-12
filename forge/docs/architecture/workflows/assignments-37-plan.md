@@ -172,6 +172,30 @@ continue to come from trusted persisted context.
 There is one authoritative planner-facing action capability source, and it is
 derived from the runtime registry rather than hand-maintained beside it.
 
+> **[RESOLVED — Phase 37.1, 2026-10-01] AD-P1.** Planner-facing action metadata
+> lives in a separate, client-safe catalog keyed by action id:
+> `src/lib/workflow-types/action-capabilities.ts`. The runtime registry
+> (`action-registry.ts`) remains the source of truth for membership and the only
+> execution authority; the UI (`registry.ts`) derives `requires`, `outputs` and
+> required must be derived from the capability schemas rather than restated. The
+> catalog is typed against the registry's literal key set, so registering an
+> action without describing it — or describing one without registering it — is a
+> compile error. `comment.add` was removed from the picker rather than registered.
+> See `assignments-37-phase-37.1-capability-catalog.md`.
+>
+> This did not put UI presentation onto the executable `WorkflowAction` type,
+> because the executable actions import the extended Prisma client and must never
+> reach a browser bundle. Presentation stays in `registry.ts`.
+
+> **[SCOPE NOTE — I7, recorded 2026-10-01] Conditional routing.** Conditional
+> routing is not executable or authorable end-to-end: the condition helper is
+> unregistered and does not satisfy `ExecuteFunction`, the canvas never emits
+> `routingConditions`, and the evaluator therefore skips every conditional
+> dependant. Phase 37.1 records this as **I7** and does **not** implement it. A
+> scope decision — support generated conditional branches, or forbid them — is
+> required before Assignment 37 claims either. This does not renumber the phase
+> sequence and does not block 37.2. See the issue register §5 → I7.
+
 ---
 
 # Phase 3 — Input/output reference system
@@ -851,6 +875,12 @@ boundary (Gate G); it is not required for 37.1.
 capability source, derived from the runtime registry rather than hand-maintained
 beside it. I4 reconciled: every action advertised to the model is registered, and
 every registered action's declared inputs and outputs match its implementation.
+
+> **[SATISFIED — Phase 37.1, 2026-10-01.]** One catalog
+> (`action-capabilities.ts`), total over the runtime registry, consumed by the UI
+> as a derived projection. `comment.add` is no longer advertised; `task.create`
+> inputs and outputs match `createTaskInOrg` / `createTaskAction`. Evidence:
+> `assignments-37-phase-37.1-capability-catalog.md` §6, §12.
 
 **Gate C — after 37.3.** Every output reference in a proposal has an existing
 source step, a valid output path per that action's declared output contract, and
