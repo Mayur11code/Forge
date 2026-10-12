@@ -2,9 +2,9 @@
 
 ```text
 Last Updated:     2026-10-12
-Current Phase:    37.3  (37.0A, 37.0B, 37.1 and 37.2 VERIFIED)
+Current Phase:    37.4  (37.0A, 37.0B, 37.1, 37.2 and 37.3 VERIFIED)
 Overall Status:   BLOCKED
-Next Action:      Begin 37.3 — Reference grammar + validator
+Next Action:      Begin 37.4 — Proposal compiler / semantic validation adapter
 ```
 
 > **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
@@ -30,6 +30,14 @@ Next Action:      Begin 37.3 — Reference grammar + validator
 > `generateWorkflow`, and is relocated, not waived. **I4 is now enforced** at the
 > generation boundary. See
 > `assignments-37-phase-37.2-workflow-proposal-schema.md`.
+
+> **37.3 VERIFIED 2026-10-12.** **F6 CLOSED.** A pure, read-only reference
+> validator over `WorkflowProposal` reuses the resolver's `{{…}}` grammar and
+> rejects unordered data references with `MISSING_DATA_DEPENDENCY`, alongside
+> source-existence, output-path, scope and prototype-path checks. 44 focused
+> tests (full run 33 suites / 579 tests; `tsc` clean); `resolver.ts` is
+> **unmodified**. Trigger output fields fail closed (no authoritative contract).
+> See `assignments-37-phase-37.3-reference-validator.md`.
 
 > **Third P0 recorded 2026-09-30.** **I6 — cross-tenant workflow execution** was
 > added after Phase 0 closed. The P0 set is now **three** issues: I1 (gated 37.5),
@@ -90,20 +98,21 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ASSIGNMENT 37 STATUS
 
 Overall:                     BLOCKED
-Current Phase:               37.3   (Reference grammar + validator)
-Previous Completed Phase:    37.2   (WorkflowProposal schema — VERIFIED)
-Next Phase:                  37.3   (Reference grammar + validator)
+Current Phase:               37.4   (Proposal compiler / semantic validation adapter)
+Previous Completed Phase:    37.3   (Reference grammar + validator — VERIFIED)
+Next Phase:                  37.4   (Proposal compiler / semantic validation adapter)
 Blocking Issue:              I6     (the only open P0)
 Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 NOT_STARTED
 Architecture Decision Pending: F1, F2, F4, F5
 Recorded scope decisions:    I7     (conditional routing — non-blocking)
-Last Verification:           2026-10-12 — 37.2 proposal-schema suite green
-                             (45 cases); full run 32 suites / 535 tests passed;
-                             tsc --noEmit clean; scoped eslint clean
+Last Verification:           2026-10-12 — 37.3 reference-validator suite green
+                             (44 cases); full run 33 suites / 579 tests passed;
+                             tsc --noEmit clean; scoped eslint clean;
+                             resolver.ts unmodified
 Last Updated:                2026-10-12
 
 Progress:
-[█████░░░░░░░░░░░░░░░] 25%   (5 of 20 tracked phases VERIFIED)
+[██████░░░░░░░░░░░░░░] 30%   (6 of 20 tracked phases VERIFIED)
 ```
 
 ### Why `BLOCKED` and not `IN_PROGRESS`
@@ -185,7 +194,7 @@ Always use the smallest applicable status.
 | 37.0B | Persistence-boundary prerequisite — I2 node validation | **VERIFIED** | **P0** | 37.0 | 37.10, 37.11 | Real node-data validation on create **and** update paths | Valid node accepted; malformed node rejected | 2026-09-30 | Closed as its own ticket. Satisfies Gate F. |
 | 37.1 | Action capability registry | **VERIFIED** | **P1** | 37.0A, 37.0B (isolation sufficient) | 37.2, 37.3, 37.4 | One authoritative planner-facing capability source | Planner obtains authoritative metadata for every generatable action | 2026-10-01 — 32-case suite + full run 31/490 + tsc clean | Resolves F3, absorbs I4. AD-P1 decided. Responsive `ActionCapabilities` typed against `RegisteredActionId`. |
 | 37.2 | WorkflowProposal schema | **VERIFIED** | P1 | 37.1 | 37.3, 37.4 | `WorkflowProposal` Zod schema | Static A / B→A / C→A,B parses; malformed fails structurally | 2026-10-12 - 45-case suite + full run 32/535 + tsc clean | localRef IDs; no DB IDs, no coordinates, no criticality. Enforces I4. Bounds hardened (bounded depth before serialization; no throw). **Real-model-path parse reassigned to 37.5.** |
-| 37.3 | Reference grammar + validator | **NOT_STARTED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | — | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`. **No new syntax.** |
+| 37.3 | Reference grammar + validator | **VERIFIED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | 2026-10-12 — 44-case suite + full run 33/579 + tsc clean; resolver diff empty | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`, `UNKNOWN_REFERENCE_SOURCE`, `UNKNOWN_OUTPUT`, `MALFORMED_REFERENCE`, `UNAVAILABLE_REFERENCE_SCOPE`, `UNSAFE_REFERENCE_PATH`, `SELF_REFERENCE`. **No new syntax; resolver unchanged.** Trigger fields fail closed. |
 | 37.4 | Proposal compiler / semantic validation adapter | **NOT_STARTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | — | Resolves F5. Reuses `collectWorkflowDefinitionIssues`. |
 | 37.5 | `generateWorkflow` agent tool | **NOT_STARTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | — | **Gate E: I1 must be VERIFIED.** |
 | 37.6 | Missing-input state | **NOT_STARTED** | P1 | 37.5 | 37.7, 37.8 | Durable `NEEDS_USER_INPUT` state | Model error and missing user info are distinguishable in the protocol | — | F4 part 1. No preemptive migration. |
@@ -1039,7 +1048,13 @@ Pending: none specific beyond 37.1's carried decision (I7 scope).
 
 ### Status
 
-**NOT_STARTED** · Priority: P1 · Resolves **F6**
+**VERIFIED** · Priority: P1 · Resolves **F6** · Verified 2026-10-12
+
+> Read-only reference validator over `WorkflowProposal`, reusing the resolver's
+> `{{…}}` grammar with no second syntax. Enforces `MISSING_DATA_DEPENDENCY` plus
+> source-existence, output-path, scope and prototype-path checks. 44 focused
+> tests; `resolver.ts` **unmodified**. Trigger output fields fail closed pending a
+> real contract.
 
 ### Objective
 
@@ -1099,10 +1114,10 @@ reads a sibling's output without depending on it.
 
 ### Deliverables
 
-- Reference validator — path **UNKNOWN**
-- New issue code(s), including `MISSING_DATA_DEPENDENCY`
-- Unit tests
-- Zero changes to `src/lib/workflow/execution/resolver.ts`
+- Reference validator — `src/lib/workflow-types/workflow-proposal-references.ts`
+- New issue code(s), including `MISSING_DATA_DEPENDENCY` (also `UNKNOWN_REFERENCE_SOURCE`, `UNKNOWN_OUTPUT`, `MALFORMED_REFERENCE`, `UNAVAILABLE_REFERENCE_SCOPE`, `UNSAFE_REFERENCE_PATH`, `SELF_REFERENCE`)
+- Unit tests — `src/tests/workflow/proposal-references.test.ts` (44 cases)
+- Zero changes to `src/lib/workflow/execution/resolver.ts` (confirmed: diff empty)
 
 ### Acceptance Gate
 
@@ -1125,14 +1140,28 @@ execution dependency can pass validation.
 
 Unit tests green, plus a diff check proving `resolver.ts` was not modified.
 
+**Satisfied.** 44 focused tests green; full run 33 suites / 579 tests; `tsc
+--noEmit` exit 0; scoped eslint exit 0; `git diff --check` clean; `git diff --
+src/lib/workflow/execution/resolver.ts` **empty**.
+
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/lib/workflow-types/workflow-proposal-references.ts (new);
+                ProposalIssueCode extended in workflow-proposal.ts
+Tests:          src/tests/workflow/proposal-references.test.ts — 44 focused
+Verification:   npx jest src/tests/workflow/proposal-references.test.ts -> 44/44
+                npx jest src/tests/workflow -> 12 suites / 262 tests
+                npx jest -> 33 suites / 579 tests
+                npx tsc --noEmit -> exit 0
+                npx eslint (3 touched files) -> exit 0
+                git diff --check -> clean
+                git diff -- src/lib/workflow/execution/resolver.ts -> empty
+Commit/PR:      not committed (user instruction: no commit/stage for 37.3)
+Relevant files: src/lib/workflow-types/workflow-proposal-references.ts,
+                src/lib/workflow-types/workflow-proposal.ts,
+                src/tests/workflow/proposal-references.test.ts,
+                docs/.../assignments-37-phase-37.3-reference-validator.md
 ```
 
 ### Known Risks / Findings
@@ -1146,10 +1175,28 @@ Note recorded in Phase 0 and *unrated*: the path character class `\w` permits
 No exploit was constructed and severity was not assessed. It is in scope for
 37.3 because the grammar is.
 
+**Outcome.** F6 is resolved by a read-only preflight validator; the resolver's
+runtime behaviour for existing workflows is unchanged. The prototype-path concern
+is addressed for generated proposals via `UNSAFE_REFERENCE_PATH`
+(`__proto__`/`prototype`/`constructor`).
+
+**Limitations recorded, not hidden.** (1) No authoritative trigger-output
+contract exists, so trigger field references fail closed with `UNKNOWN_OUTPUT`.
+(2) `TYPE_MISMATCH` is not implemented: all catalogued outputs are `z.string()`
+and no machine-declared cross-field type relationship supports a sound check
+without a type-inference layer. Neither limitation weakens the acceptance gate.
+
 ### Decisions
 
 Made: **reuse the existing `{{…}}` grammar.** Established in the plan; do not
 revisit.
+
+Made: **extend the existing `ProposalIssue` / `ProposalIssueCode` vocabulary**
+rather than introduce a parallel issue system. Seven reference codes added.
+
+Made: **direct, non-transitive data-dependency check.** A step that reads
+`{{A.outputs.x}}` must itself list `A` in `dependsOn`; dependencies are never
+inferred or inserted. DAG existence/cycle checks remain 37.4.
 
 Pending: none.
 
@@ -1157,6 +1204,8 @@ Pending: none.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-12 | IMPLEMENTED | Reference validator module + tests; resolver untouched | 44/44 focused tests; workflow 12/262; full 33/579; tsc exit 0; eslint 0/0; `git diff --check` clean |
+| 2026-10-12 | **VERIFIED** | Deterministic module + tests; resolver diff empty; F6 resolved | `git diff -- src/lib/workflow/execution/resolver.ts` empty; 44/44 focused |
 
 ---
 
@@ -2783,7 +2832,7 @@ present and tested.
 | **F3** | No authoritative planner-facing action capability contract | P1 | **CLOSED 2026-10-01** | No — was YES, now resolved | 37.1 | **YES** | `src/tests/workflow/action-capabilities.test.ts` — 32/32; catalog total over registry (TS coupling); `assignments-37-phase-37.1-capability-catalog.md` §6, §12 |
 | **F4** | `AgentToolExecution` cannot represent the proposal lifecycle | P1 | Open — recorded, fork undecided | No | 37.6 / 37.7 / 37.8 | **No** | — |
 | **F5** | `WorkflowDefinitionSchema` never called in production | P1 | Open — recorded | No | 37.4 | **No** | — |
-| **F6** | No reference / data-dependency validation; silent failure | P1 | Open — recorded | No (gates 37.4+) | 37.3 | **No** | — |
+| **F6** | No reference / data-dependency validation; silent failure | P1 | **CLOSED 2026-10-12** | No — was a risk for 37.4+ | 37.3 | **YES** | `src/tests/workflow/proposal-references.test.ts` — 44/44; `MISSING_DATA_DEPENDENCY` enforced; `git diff -- resolver.ts` empty |
 | **I1** | Cross-tenant workflow update | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0A | **YES** | `src/tests/workflow/workflow-update-scope.test.ts` — 5/5; suite fails 3/5 against the unscoped predicate |
 | **I6** | Cross-tenant workflow execution | **P0** | Open — recorded after Phase 0 | **YES** | separate ticket, before 37.12 | **No** | — |
 | **I2** | Node validation bypass at persistence boundary | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0B | **YES** | `src/tests/workflow/workflow-node-validation.test.ts` — 23/23; suite fails 19/23 against the inert schema |
@@ -2794,9 +2843,9 @@ present and tested.
 
 ### Count
 
-- Resolved: **4 of 13** (I1, I2, F3, I4)
+- Resolved: **5 of 13** (I1, I2, F3, I4, F6)
 - P0 open: **1** (I6)
-- P1 open: **3** (F4, F5, F6)
+- P1 open: **2** (F4, F5)
 - P1-CHECK unverified: **1** (I5)
 - P2/P3 open: **4** (F1, F2, I3, I7)
 
@@ -2917,12 +2966,18 @@ no second dialect.
 | 2026-10-12 | 37.2 | Full repository suite after hardening | Local — `npx jest` | **PASS** | 32 suites, 535 tests (was 32 / 530) | 37.2 |
 | 2026-10-12 | 37.2 | Type check after hardening | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.2 |
 | 2026-10-12 | 37.2 | Lint of the 2 touched files after hardening | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.2 |
+| 2026-10-12 | 37.3 | Reference validator suite — valid/nested/interpolated/whole-string, unknown source, unknown output, `MISSING_DATA_DEPENDENCY`, `SELF_REFERENCE`, malformed, scope-escape, prototype path, trigger fail-closed, determinism, read-only, resolver grammar parity | Local — `npx jest src/tests/workflow/proposal-references.test.ts` | **PASS** | 44/44 tests | 37.3 |
+| 2026-10-12 | 37.3 | Workflow regression suite after adding the reference validator | Local — `npx jest src/tests/workflow` | **PASS** | 12 suites, 262 tests (was 11 / 218) | 37.3 |
+| 2026-10-12 | 37.3 | Full repository suite | Local — `npx jest` | **PASS** | 33 suites, 579 tests (was 32 / 535) | 37.3 |
+| 2026-10-12 | 37.3 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.3 |
+| 2026-10-12 | 37.3 | Lint of the 3 touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.3 |
+| 2026-10-12 | 37.3 | Resolver integrity — source unchanged | Local — `git diff -- src/lib/workflow/execution/resolver.ts` | **PASS** | empty diff; file not in `git status --short` | 37.3 |
 
 ### Coverage summary
 
 | Category | Events recorded |
 |---|---|
-| unit | 13 |
+| unit | 18 |
 | integration | 0 |
 | database | 0 |
 | Redis | 0 |
@@ -2941,6 +2996,7 @@ node-validation evidence is Jest-level against the in-memory prisma double in
 compiler-level; 37.2's evidence is Jest-level and `tsc`-level. None is a live
 database check, and Phase 37.16 remains the phase that owes one. No database,
 queue, Gemini, or real workflow execution has been exercised in this assignment.
+37.3's evidence is Jest-level and `tsc`-level (static validator, no runtime).
 **37.2's former model-path clause** (a real `generateWorkflow` proposal parsing
 without a compiler fix-up) is **reassigned to 37.5**, which owns the model path.
 
@@ -3067,7 +3123,7 @@ regardless of intent.
 - [x] 37.1 complete — **VERIFIED 2026-10-01** — evidence: `src/tests/workflow/action-capabilities.test.ts`
 - [ ] **I6 closed and verified (separate ticket, before 37.12)**
 - [x] 37.2 complete — **VERIFIED 2026-10-12** — schema + validator + 45 cases green; bounds hardened; real-model-path parse reassigned to 37.5 — evidence: `src/tests/workflow/workflow-proposal.test.ts`
-- [ ] 37.3 complete
+- [x] 37.3 complete — **VERIFIED 2026-10-12** — reference validator over the existing `{{…}}` grammar; 44 cases green; `MISSING_DATA_DEPENDENCY` enforced; resolver unmodified; F6 closed — evidence: `src/tests/workflow/proposal-references.test.ts`
 - [ ] 37.4 complete
 - [ ] 37.5 complete
 - [ ] 37.6 complete
@@ -3087,7 +3143,7 @@ regardless of intent.
 
 - [ ] All P0 issues verified (I1 ✓, I2 ✓, **I6**) — three separate tickets; none
       substitutes for another. Only I6 remains.
-- [ ] All P1 issues resolved or explicitly deferred (F3 ✓, I4 ✓; F4, F5, F6 open)
+- [ ] All P1 issues resolved or explicitly deferred (F3 ✓, I4 ✓, F6 ✓; F4, F5 open)
 - [ ] I5 verified or documented as unverifiable
 - [ ] All P2/P3 issues resolved or explicitly deferred (F1, F2, I3, I7)
 
