@@ -348,6 +348,15 @@ behavior already hardened in 35/36.
 > proposal compiler is a *second* producer of `WorkflowDefinition`, so this phase
 > must settle which of the schema or the collector is the real gate, and make the
 > comment at `src/lib/workflow-types/workflow.ts:42-44` true of production code.
+>
+> **[RESOLVED — AD-P4, 2026-10-12, Phase 37.4]** The gate is
+> `collectWorkflowDefinitionIssues`, which the compiler
+> (`src/lib/workflow-types/workflow-proposal-compiler.ts`) calls directly and
+> normalizes into structured `ProposalIssue[]`. The schema's `superRefine` collapses
+> every `code` to `z.ZodIssueCode.custom` and drops the cycle `path`, so it cannot
+> be the structured gate; it stays the runtime read-boundary validator (invoked at
+> `evaluator.ts:223`) and is unchanged. The revision's "never called in production"
+> premise was inaccurate — see the issue register F5 resolution note.
 
 ---
 
@@ -858,9 +867,10 @@ reference model.
 Recorded so a well-meaning reader does not "tidy up" a finding ahead of its phase
 and invalidate the design it was meant to inform.
 
-**DO NOT** preemptively fix **F1**, **F2**, **F4**, or **F5** before their
-designated phase. Each is a fork whose consumer does not exist yet; resolving it
-early means guessing at a requirement rather than responding to it.
+**DO NOT** preemptively fix **F1**, **F2**, or **F4** before their designated
+phase. Each is a fork whose consumer does not exist yet; resolving it early means
+guessing at a requirement rather than responding to it. (F5 was resolved at its
+assigned phase, 37.4 — see the resolution note above.)
 
 **DO NOT** fold **I6** into the I1 ticket, and **DO NOT** fix I6 as a side effect
 of another phase. Cross-tenant UPDATE (I1) and cross-tenant EXECUTION (I6) are
@@ -920,8 +930,11 @@ an explicit execution dependency in `dependsOn`. A reference that resolves but i
 unordered is rejected.
 
 **Gate D — after 37.4.** Proposal validation and existing DAG semantic validation
-form one deterministic compiler boundary. F5 resolved: it is settled which of
-`WorkflowDefinitionSchema` or the compiler's issue collector is the gate.
+form one deterministic compiler boundary. **F5 resolved (AD-P4):**
+`collectWorkflowDefinitionIssues` is the gate; the compiler calls it directly and
+returns structured `code`/`path`. `WorkflowDefinitionSchema` remains the runtime
+read-boundary validator and is unchanged. The compiler has no production caller
+until 37.5, so this is a tested boundary, not yet a production-path verification.
 
 **Gate E — before 37.5 becomes workflow-writing.** I1 is closed. The predicate on
 any workflow write is tenant-scoped, and a regression test proves cross-tenant
@@ -1015,7 +1028,7 @@ Phase 37.0B: **VERIFIED 2026-09-30** — I2 closed; node `data` is validated aga
 23-case suite is green. Gate F satisfied.
 Current blockers: **I6** — the one remaining P0.
 Current implementation target: **37.1 — Action capability registry**.
-Later architectural decisions: **F1**, **F2**, **F4**, **F5**.
+Later architectural decisions: **F1**, **F2**, **F4**. (F5 resolved at 37.4.)
 
 This planning revision fixed no issue; the I6 work was documentation and gating
 only, and the execution path is not modified. I1 and I2 were subsequently closed

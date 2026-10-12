@@ -578,6 +578,9 @@ type-inference layer. Dependency existence and cycle detection remain 37.4.
 
 **Classification:** P1 · resolve at **37.4**. Do not refactor yet.
 
+**Status:** **CLOSED 2026-10-12 (Phase 37.4).** See the resolution note at the end
+of this entry.
+
 **Observed.** The schema exists and is fully specified —
 `src/lib/workflow-types/workflow.ts:237-251`:
 
@@ -614,6 +617,30 @@ For 37.4 this matters concretely: a proposal compiler is a *new* producer of
 the schema, or the compiler's issue collector — and the hardening comment names
 the first while production uses the second. 37.4 must pick one and make the
 assertion in that comment true.
+
+**Resolution — CLOSED 2026-10-12 (Phase 37.4).**
+
+*Premise correction.* The F5 premise — "`WorkflowDefinitionSchema` is never called
+in production" — is inaccurate as of the 2026-10-01 lint pass. `evaluator.ts:223`
+re-parses the persisted definition with
+`WorkflowDefinitionSchema.safeParse(run.workflow.definition)`. The schema is a
+runtime read-boundary validator. It is not, and cannot be, the graph-semantic
+gate: its `superRefine` re-emits every issue as `z.ZodIssueCode.custom` and drops
+the cycle `path` (`workflow.ts:243-250`), discarding exactly the structure
+(AD-P4) that the compiler must return to the caller.
+
+*Decision (AD-P4).* `collectWorkflowDefinitionIssues` is the canonical
+graph-semantic gate. The new compiler
+(`src/lib/workflow-types/workflow-proposal-compiler.ts`) runs it directly and
+normalizes its issues into `ProposalIssue[]` with `code`, `path` and `message`
+intact. `WorkflowDefinitionSchema` is unchanged and remains the runtime
+read-boundary validator. No production file was modified to close F5.
+
+*Scope of the guarantee.* The compiler is a static boundary with no production
+caller until 37.5, so this is a design resolution plus a tested boundary, not yet
+a production-path verification. Evidence: `workflow-proposal-compiler.test.ts` —
+25/25; tracker §37.4 Test Gate (three graph checks reachable, adapter total over
+all seven collector codes).
 
 ---
 
@@ -915,7 +942,7 @@ execution. Conditional routing is **not** claimed to work end-to-end. See
 | **F3** no authoritative capability contract | **P1** | **37.1** | Planner-facing action knowledge; the whole generation path | No — **CLOSED 2026-10-01** |
 | **I4** runtime/UI registry mismatch | **P1** | **37.1** | Reliable output contracts; absence of phantom actions | No — **CLOSED 2026-10-01, with 37.1** |
 | **F6** no reference / data-dependency validation | **P1** | **37.3** | Deterministic step generation; `MISSING_DATA_DEPENDENCY` | No — **CLOSED 2026-10-12** |
-| **F5** schema is not the production gate | **P1** | **37.4** | A trustworthy compiler boundary for a second definition producer | No |
+| **F5** schema is not the production semantic gate | **P1** | **37.4** | Deterministic, structured proposal compilation; AD-P4 | No — **CLOSED 2026-10-12** |
 | **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | Not yet — decision at 37.6/37.7 |
 | **I5** maintenance schedule unknown | **P1-CHECK** | **37.16** | Capstone recovery verification; only if confirmed absent | Only if confirmed absent |
 | **F1** canvas-first persistence | **P2** | **37.10 / 37.11** | Materialization ordering; layout strategy | No |
@@ -983,9 +1010,11 @@ generated conditional branches, or forbid them — must be taken before Assignme
 Recorded so that a well-meaning reader does not "tidy up" a finding ahead of its
 phase and invalidate the design it was meant to inform.
 
-**DO NOT** preemptively fix **F1**, **F2**, **F4**, or **F5** before their
-designated phase. Each is a fork with a consumer that does not exist yet, and
-resolving it early means guessing at a requirement rather than responding to it.
+**DO NOT** preemptively fix **F1**, **F2**, or **F4** before their designated
+phase. Each is a fork with a consumer that does not exist yet, and resolving it
+early means guessing at a requirement rather than responding to it.
+(F5 has since been resolved at its assigned phase, 37.4; see its resolution note.
+It was a gate-selection decision, not a rewrite.)
 
 **DO NOT** fold **I6** into the I1 ticket. They are separate defects on separate
 paths, gated at different phases, and one closed ticket must not be allowed to
@@ -1048,9 +1077,15 @@ rejected.
 
 **Gate D — after 37.4.**
 Proposal validation and existing DAG semantic validation form one deterministic
-compiler boundary. F5 is resolved: it is settled which of
-`WorkflowDefinitionSchema` or the compiler's issue collector is the gate, and the
-comment at `src/lib/workflow-types/workflow.ts:42-44` is true of production code.
+compiler boundary, and issue `code`/`path` survive to the caller. **F5 is
+resolved (AD-P4):** `collectWorkflowDefinitionIssues` is the canonical
+graph-semantic gate and the compiler calls it directly.
+`WorkflowDefinitionSchema` remains the runtime read-boundary validator (invoked at
+`evaluator.ts:223`) and is unchanged. The guarantee in the comment at
+`workflow.ts:42-44` is upheld in production by the compiler's collector call; no
+production file was edited to close F5. The compiler has no production caller
+until 37.5, so this gate is a tested boundary, not yet a production-path
+verification.
 
 **Gate E — before 37.5 becomes workflow-writing.**
 I1 is closed. The predicate on any workflow write is tenant-scoped, and a
