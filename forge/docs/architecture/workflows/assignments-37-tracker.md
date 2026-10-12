@@ -1,10 +1,10 @@
 # Assignment 37 — Master Phase Tracker
 
 ```text
-Last Updated:     2026-10-01
-Current Phase:    37.2  (37.0A, 37.0B and 37.1 are VERIFIED)
+Last Updated:     2026-10-12
+Current Phase:    37.3  (37.0A, 37.0B, 37.1 and 37.2 VERIFIED)
 Overall Status:   BLOCKED
-Next Action:      Begin 37.2 — WorkflowProposal schema
+Next Action:      Begin 37.3 — Reference grammar + validator
 ```
 
 > **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
@@ -18,6 +18,18 @@ Next Action:      Begin 37.2 — WorkflowProposal schema
 > recorded** (conditional routing not executable/authorable end-to-end) — a
 > non-blocking scope decision, not an implementation task. See
 > `assignments-37-phase-37.1-capability-catalog.md`.
+
+> **37.2 VERIFIED 2026-10-12.** `WorkflowProposal` schema and
+> `validateWorkflowProposal` implemented, client-safe, with structured issue
+> codes. Unit tests green (45 cases; full run 32 suites / 535 tests; `tsc` clean).
+> Resource bounds hardened: depth is now checked by a bounded, non-recursive
+> traversal **before** serialization, an oversized proposal short-circuits before
+> action validation, and a non-serializable input becomes a structured issue
+> rather than a thrown error. The earlier `PARTIALLY_VERIFIED` note cited a
+> real-model-path parse clause; that clause is **reassigned to 37.5**, which owns
+> `generateWorkflow`, and is relocated, not waived. **I4 is now enforced** at the
+> generation boundary. See
+> `assignments-37-phase-37.2-workflow-proposal-schema.md`.
 
 > **Third P0 recorded 2026-09-30.** **I6 — cross-tenant workflow execution** was
 > added after Phase 0 closed. The P0 set is now **three** issues: I1 (gated 37.5),
@@ -78,20 +90,20 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ASSIGNMENT 37 STATUS
 
 Overall:                     BLOCKED
-Current Phase:               37.2   (WorkflowProposal schema)
-Previous Completed Phase:    37.1   (Action capability registry — F3/I4 — VERIFIED)
+Current Phase:               37.3   (Reference grammar + validator)
+Previous Completed Phase:    37.2   (WorkflowProposal schema — VERIFIED)
 Next Phase:                  37.3   (Reference grammar + validator)
 Blocking Issue:              I6     (the only open P0)
 Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 NOT_STARTED
 Architecture Decision Pending: F1, F2, F4, F5
 Recorded scope decisions:    I7     (conditional routing — non-blocking)
-Last Verification:           2026-10-01 — 37.1 capability catalog suite green
-                             (32 cases); full run 31 suites / 490 tests passed;
-                             tsc --noEmit clean
-Last Updated:                2026-10-01
+Last Verification:           2026-10-12 — 37.2 proposal-schema suite green
+                             (45 cases); full run 32 suites / 535 tests passed;
+                             tsc --noEmit clean; scoped eslint clean
+Last Updated:                2026-10-12
 
 Progress:
-[████░░░░░░░░░░░░░░░░] 20%   (4 of 20 tracked phases VERIFIED)
+[█████░░░░░░░░░░░░░░░] 25%   (5 of 20 tracked phases VERIFIED)
 ```
 
 ### Why `BLOCKED` and not `IN_PROGRESS`
@@ -106,10 +118,10 @@ the paragraph above describes defects that no longer exist. Gate E's predicate
 requirement is met. The separate persistence-layer requirement in Gate A is
 covered by I2.
 
-One P0, **I6**, remains and gates a later boundary. It does not stop 37.2, but the
-assignment cannot reach 37.12 until a tenant-scoped execution entrypoint exists.
-**I7** is recorded as a scope decision, not a blocker; it likewise does not stop
-37.2.
+One P0, **I6**, remains and gates a later boundary. It did not stop 37.2 and does
+not stop 37.3/37.4, but the assignment cannot reach 37.12 until a tenant-scoped
+execution entrypoint exists. **I7** is recorded as a scope decision, not a
+blocker; it likewise does not stop 37.3/37.4.
 
 ### Progress calculation
 
@@ -172,7 +184,7 @@ Always use the smallest applicable status.
 | 37.0A | Security prerequisite — I1 tenant-scoped workflow update | **VERIFIED** | **P0** | 37.0 | 37.5, 37.8, 37.11, all agent writes | Tenant-scoped update predicate + regression test | Cross-org write rejected; same-org write succeeds | 2026-09-30 | Closed as its own ticket, ahead of Gate E. Not bundled into a feature phase. |
 | 37.0B | Persistence-boundary prerequisite — I2 node validation | **VERIFIED** | **P0** | 37.0 | 37.10, 37.11 | Real node-data validation on create **and** update paths | Valid node accepted; malformed node rejected | 2026-09-30 | Closed as its own ticket. Satisfies Gate F. |
 | 37.1 | Action capability registry | **VERIFIED** | **P1** | 37.0A, 37.0B (isolation sufficient) | 37.2, 37.3, 37.4 | One authoritative planner-facing capability source | Planner obtains authoritative metadata for every generatable action | 2026-10-01 — 32-case suite + full run 31/490 + tsc clean | Resolves F3, absorbs I4. AD-P1 decided. Responsive `ActionCapabilities` typed against `RegisteredActionId`. |
-| 37.2 | WorkflowProposal schema | **NOT_STARTED** | P1 | 37.1 | 37.3, 37.4 | `WorkflowProposal` Zod schema | Static A / B→A / C→A,B parses; malformed fails structurally | — | localRef IDs; no DB IDs, no coordinates, no criticality. |
+| 37.2 | WorkflowProposal schema | **VERIFIED** | P1 | 37.1 | 37.3, 37.4 | `WorkflowProposal` Zod schema | Static A / B→A / C→A,B parses; malformed fails structurally | 2026-10-12 - 45-case suite + full run 32/535 + tsc clean | localRef IDs; no DB IDs, no coordinates, no criticality. Enforces I4. Bounds hardened (bounded depth before serialization; no throw). **Real-model-path parse reassigned to 37.5.** |
 | 37.3 | Reference grammar + validator | **NOT_STARTED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | — | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`. **No new syntax.** |
 | 37.4 | Proposal compiler / semantic validation adapter | **NOT_STARTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | — | Resolves F5. Reuses `collectWorkflowDefinitionIssues`. |
 | 37.5 | `generateWorkflow` agent tool | **NOT_STARTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | — | **Gate E: I1 must be VERIFIED.** |
@@ -870,7 +882,13 @@ whether generated conditional branching is in scope (I7).
 
 ### Status
 
-**NOT_STARTED** · Priority: P1
+**VERIFIED** · Priority: P1 · Verified 2026-10-12
+
+> Unit tests green (45 cases) and resource bounds hardened. The earlier
+> `PARTIALLY_VERIFIED` note cited a real-model-path parse clause; that clause is
+> **reassigned to 37.5**, which owns `generateWorkflow`, and is relocated, not
+> waived. 37.2's gate — static `A` / `B→A` / `C→A,B` parse, malformed fails
+> structurally — is fully satisfied.
 
 ### Objective
 
@@ -917,10 +935,13 @@ it deliberately excludes everything the backend owns.
 
 ### Deliverables
 
-- `WorkflowProposal` schema — path **UNKNOWN**, expected under
-  `src/lib/workflow-types/` or a proposal-specific module
-- Structural validation tests
-- Type exports
+- `WorkflowProposal` schema — **done**:
+  `src/lib/workflow-types/workflow-proposal.ts` (`WorkflowProposalSchema`,
+  `WorkflowProposalStepSchema`, `validateWorkflowProposal`)
+- Structural validation tests — **done**:
+  `src/tests/workflow/workflow-proposal.test.ts` (45 cases)
+- Type exports — `WorkflowProposal`, `WorkflowProposalStep`, `ProposalIssue`,
+  `ProposalIssueCode`, `ProposalValidationResult`
 
 ### Acceptance Gate
 
@@ -940,38 +961,77 @@ later, and not at execution time.
 
 ### Verification Gate
 
-Unit tests green, plus inspection that a proposal produced by the real model path
-parses without a compiler fix-up step.
+Unit tests green, plus the static `A` / `B→A` / `C→A,B` parse check and the
+structural-failure checks. The real-model-path parse (a `generateWorkflow`
+proposal parsing without a compiler fix-up) is **not** part of this gate; it is
+owned by 37.5, which builds and exercises the model path, and is recorded in
+37.5's Verification Gate. **Satisfied** — 45/45 focused tests; full run 32 suites
+/ 535 tests; `tsc` clean; scoped eslint clean.
 
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/lib/workflow-types/workflow-proposal.ts (NEW; bounds hardened)
+                reuse: action-capabilities.ts getActionCapability +
+                requiredInputFields; resolver reference grammar (resolver.ts:51)
+Tests:          src/tests/workflow/workflow-proposal.test.ts (NEW, 45 cases)
+Verification:   45/45 focused; full run 32 suites / 535 tests; tsc --noEmit exit 0;
+                scoped eslint 0/0. Real-model-path clause reassigned to 37.5.
+Commit/PR:      not committed (branch change deferred)
+Relevant files: src/lib/workflow-types/workflow-proposal.ts
+                src/tests/workflow/workflow-proposal.test.ts
+                docs/architecture/workflows/assignments-37-phase-37.2-workflow-proposal-schema.md
 ```
 
 ### Known Risks / Findings
 
 **I4** (from 37.1) — "action must be a registered workflow action" is currently
 unenforceable, because `WorkflowStep.action` is `z.string()` and the compiler does
-no membership check. 37.1 makes it enforceable.
+no membership check. 37.1 makes it enforceable. **37.2 enforces it** at the
+generation boundary: `validateWorkflowProposal` rejects an action absent from the
+capability catalog with `UNKNOWN_ACTION`.
 
 **F2** (surfaced later, at 37.11) — the proposal's `name` belongs in
 `Workflow.name`, not `definition.name`.
 
+**Reassigned — real-model-path parse clause.** The former gate clause ("a
+proposal produced by the real model path parses without a compiler fix-up step")
+cannot be completed in 37.2 because the model-facing generation path
+(`generateWorkflow`) is 37.5. It is reassigned to 37.5/37.13 and is recorded in
+37.5's Verification Gate. It is relocated, not waived, and its absence does not
+make 37.2 `PARTIALLY_VERIFIED`: 37.2's own gate is complete.
+
 ### Decisions
 
-Made: none.
+Made (2026-10-12, recorded in AD-08 and the phase record):
 
-Pending: none specific beyond 37.1's carried decision.
+- Steps are a **record keyed by `localRef`**, not an array — the key is the
+  logical identity, so a duplicate id is unrepresentable and no redundant `id`
+  field can drift (AD-08).
+- Per-action input rules are **reused from the 37.1 capability schema**, not
+  restated. Reference templates are forgiven per offending field; unknown keys
+  never are.
+- A `{{...}}` value is **deferred, not wrong**: reference tolerance uses the
+  existing resolver grammar with **no second syntax** (AD-03).
+- Validation is **structural only**; dependency existence, acyclicity and
+  reference resolution are deferred to 37.3/37.4.
+- Resource bounds established: `MAX_PROPOSAL_STEPS = 50`,
+  `MAX_PROPOSAL_SERIALIZED_LENGTH = 262144`, `MAX_INPUT_DEPTH = 8`
+  (plus name/description lengths). Not the evaluator pass count.
+- Resource bounds **hardened (2026-10-12)**: depth is enforced by a bounded,
+  non-recursive traversal **before** serialization; the size bound short-circuits
+  before action validation; and a value that cannot be serialized (a `BigInt`, a
+  cycle) becomes a structured `INVALID_INPUT`/`INPUT_TOO_DEEP` issue rather than a
+  thrown error. No bound was weakened and no issue code was added.
+
+Pending: none specific beyond 37.1's carried decision (I7 scope).
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-12 | PARTIALLY_VERIFIED | Schema + validator implemented and tested; model-path verification clause temporarily deferred to 37.5 | 40/40 focused; full run 32 suites / 530 tests; tsc exit 0; eslint 0/0 |
+| 2026-10-12 | **VERIFIED** | Bounds hardened against adversarial input; real-model-path clause formally reassigned to 37.5; 37.2's own gate complete | 45/45 focused; full run 32 suites / 535 tests; tsc exit 0; eslint 0/0 |
 
 ---
 
@@ -1295,6 +1355,12 @@ The tool is registered, proposes only, and executes nothing.
 
 Integration test proving a `generateWorkflow` turn produces a proposal artifact
 and zero side effects.
+
+**Carried from 37.2 (reassigned 2026-10-12):** inspection confirming that a
+proposal produced by the **real model path** parses via `validateWorkflowProposal`
+without a compiler fix-up step. This could not run in 37.2 because the model path
+did not exist; it is completed here, where the `generateWorkflow` turn exists, and
+is a condition of 37.5's own `VERIFIED`.
 
 ### Evidence
 
@@ -2807,6 +2873,11 @@ decision is fabricated.**
 
 **AD-P1 resolved 2026-10-01** (recorded above as AD-15). It is no longer pending.
 
+**AD-08 satisfied 2026-10-12** by 37.2: proposal steps are a record keyed by
+`localRef`, so a backend-generated id is unrepresentable and a duplicate id cannot
+exist. AD-03 (reference syntax) re-confirmed: 37.2 reuses the resolver grammar with
+no second dialect.
+
 ---
 
 # Verification Ledger
@@ -2837,12 +2908,21 @@ decision is fabricated.**
 | 2026-10-01 | 37.1 | Compile-time coupling guard (registration with no capability) | Local — `tsc` on mutated source, reverted | **PASS** (correctly rejected) | `TS1360: … does not satisfy the expected type 'Record<"unregistered.new" \| "task.create", ActionCapability>'` | 37.1 |
 | 2026-10-01 | 37.1 | Mutation A — remove `title` from capability output schema | Local — mutation check | **PASS** (correctly detected) | 3 failed / 29 passed | 37.1 |
 | 2026-10-01 | 37.1 | Mutation B — re-advertise `comment.add` in the UI picker | Local — mutation check | **PASS** (correctly detected) | 3 failed / 29 passed | 37.1 |
+| 2026-10-12 | 37.2 | WorkflowProposal schema + validator suite — shape, graph shapes (A, B→A, fan-in, fan-out, diamond), structural rejects, action resolution, input/reference tolerance, bounds, structural-vs-graph boundary, grammar parity, client safety | Local — `npx jest src/tests/workflow/workflow-proposal.test.ts` | **PASS** | 40/40 tests | 37.2 |
+| 2026-10-12 | 37.2 | Capability + DAG regression after adding the proposal module | Local — `npx jest action-capabilities + dag-validation` | **PASS** | 2 suites, 56 tests | 37.2 |
+| 2026-10-12 | 37.2 | Full repository suite | Local — `npx jest` | **PASS** | 32 suites, 530 tests (was 31 / 490) | 37.2 |
+| 2026-10-12 | 37.2 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.2 |
+| 2026-10-12 | 37.2 | Lint of the 2 touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.2 |
+| 2026-10-12 | 37.2 | Bounds hardening — 50 000-deep nesting (no stack overflow), cyclic input, non-serializable `BigInt` input, depth-before-serialization, oversize short-circuit | Local — `npx jest src/tests/workflow/workflow-proposal.test.ts` | **PASS** | 45/45 tests (5 new adversarial cases) | 37.2 |
+| 2026-10-12 | 37.2 | Full repository suite after hardening | Local — `npx jest` | **PASS** | 32 suites, 535 tests (was 32 / 530) | 37.2 |
+| 2026-10-12 | 37.2 | Type check after hardening | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.2 |
+| 2026-10-12 | 37.2 | Lint of the 2 touched files after hardening | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.2 |
 
 ### Coverage summary
 
 | Category | Events recorded |
 |---|---|
-| unit | 4 |
+| unit | 13 |
 | integration | 0 |
 | database | 0 |
 | Redis | 0 |
@@ -2858,9 +2938,11 @@ decision is fabricated.**
 **Live verification remains outstanding.** The 37.0A tenant-isolation and 37.0B
 node-validation evidence is Jest-level against the in-memory prisma double in
 `src/tests/workflow/helpers/prisma-double.ts`; 37.1's evidence is Jest-level and
-compiler-level. None is a live database check, and Phase 37.16 remains the phase
-that owes one. No database, queue, Gemini, or real workflow execution has been
-exercised in this assignment.
+compiler-level; 37.2's evidence is Jest-level and `tsc`-level. None is a live
+database check, and Phase 37.16 remains the phase that owes one. No database,
+queue, Gemini, or real workflow execution has been exercised in this assignment.
+**37.2's former model-path clause** (a real `generateWorkflow` proposal parsing
+without a compiler fix-up) is **reassigned to 37.5**, which owns the model path.
 
 ---
 
@@ -2984,7 +3066,7 @@ regardless of intent.
 - [x] I2 closed and verified (37.0B) — **VERIFIED 2026-09-30** — evidence: `src/tests/workflow/workflow-node-validation.test.ts`
 - [x] 37.1 complete — **VERIFIED 2026-10-01** — evidence: `src/tests/workflow/action-capabilities.test.ts`
 - [ ] **I6 closed and verified (separate ticket, before 37.12)**
-- [ ] 37.2 complete
+- [x] 37.2 complete — **VERIFIED 2026-10-12** — schema + validator + 45 cases green; bounds hardened; real-model-path parse reassigned to 37.5 — evidence: `src/tests/workflow/workflow-proposal.test.ts`
 - [ ] 37.3 complete
 - [ ] 37.4 complete
 - [ ] 37.5 complete
