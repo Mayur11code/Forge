@@ -250,7 +250,26 @@ export type ProposalIssueCode =
   | "MISSING_DATA_DEPENDENCY"
   | "SELF_REFERENCE"
   | "UNAVAILABLE_REFERENCE_SCOPE"
-  | "UNSAFE_REFERENCE_PATH";
+  | "UNSAFE_REFERENCE_PATH"
+  // Assignment 37.4 — graph semantic validation (workflow-proposal-compiler.ts).
+  // These seven members mirror `WorkflowDefinitionIssueCode`
+  // (./workflow.ts:46-53) one-for-one, so the compiler's normalization adapter is
+  // total and the collector's vocabulary is preserved rather than translated.
+  //
+  // Only THREE are reachable through normal proposal compilation:
+  // `UNKNOWN_DEPENDENCY`, `SELF_DEPENDENCY`, `CYCLE`. The other four are
+  // unreachable by the compiler pipeline's own invariants and are kept only so
+  // the adapter has no silent gap: an empty proposal is rejected as
+  // `EMPTY_PROPOSAL` before mapping, mapped step ids equal their unique record
+  // keys (so `ID_MISMATCH`/`DUPLICATE_STEP_ID` cannot arise), and a proposal
+  // cannot express `routingConditions` (`UNKNOWN_ROUTING_CONDITION`).
+  | "EMPTY_GRAPH"
+  | "ID_MISMATCH"
+  | "DUPLICATE_STEP_ID"
+  | "UNKNOWN_DEPENDENCY"
+  | "SELF_DEPENDENCY"
+  | "UNKNOWN_ROUTING_CONDITION"
+  | "CYCLE";
 
 /** One structured rejection. `path` is dotted, e.g. `steps.create.inputs.title`. */
 export type ProposalIssue = {
