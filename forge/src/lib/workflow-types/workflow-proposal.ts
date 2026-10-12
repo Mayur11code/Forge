@@ -240,7 +240,17 @@ export type ProposalIssueCode =
   | "UNKNOWN_INPUT_FIELD"
   | "INVALID_INPUT"
   | "INPUT_TOO_DEEP"
-  | "PROPOSAL_TOO_LARGE";
+  | "PROPOSAL_TOO_LARGE"
+  // Assignment 37.3 — reference validation (workflow-proposal-references.ts).
+  // These belong to the same issue system so a reviewer or the 37.4 compiler
+  // switches on one code union rather than two parallel vocabularies.
+  | "MALFORMED_REFERENCE"
+  | "UNKNOWN_REFERENCE_SOURCE"
+  | "UNKNOWN_OUTPUT"
+  | "MISSING_DATA_DEPENDENCY"
+  | "SELF_REFERENCE"
+  | "UNAVAILABLE_REFERENCE_SCOPE"
+  | "UNSAFE_REFERENCE_PATH";
 
 /** One structured rejection. `path` is dotted, e.g. `steps.create.inputs.title`. */
 export type ProposalIssue = {

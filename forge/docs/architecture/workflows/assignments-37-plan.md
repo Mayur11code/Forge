@@ -283,6 +283,18 @@ Invalid — the second graph must be rejected because its **data dependency** an
 > `dependsOn` but never inspects inputs. This phase adds validation, **not**
 > vocabulary.
 
+> **[VERIFIED — Phase 37.3, 2026-10-12]** Implemented as a read-only validator
+> over `WorkflowProposal` reusing the resolver's `{{…}}` grammar
+> (`src/lib/workflow-types/workflow-proposal-references.ts`). Checks 1–3 are
+> enforced; the invalid example above is rejected with
+> `MISSING_DATA_DEPENDENCY`. Additional codes: `UNKNOWN_REFERENCE_SOURCE`,
+> `UNKNOWN_OUTPUT`, `MALFORMED_REFERENCE`, `UNAVAILABLE_REFERENCE_SCOPE`,
+> `UNSAFE_REFERENCE_PATH`, `SELF_REFERENCE`. The resolver is **unmodified**
+> (empty diff). Trigger output fields fail closed pending a real contract; no
+> `TYPE_MISMATCH` (all catalogued outputs are strings — documented limitation).
+> 44 focused tests; F6 closed. See
+> `assignments-37-phase-37.3-reference-validator.md`.
+
 ### Gate
 
 A deterministic reference-validation module and tests.
