@@ -1213,7 +1213,14 @@ Pending: none.
 
 ### Status
 
-**NOT_STARTED** · Priority: P1 · Resolves **F5**
+**IMPLEMENTED** · Priority: P1 · Resolves **F5** · Implemented 2026-10-12
+
+> Deterministic proposal → `WorkflowDefinition` compiler that composes structure,
+> reference and graph-semantic validation into one boundary returning structured
+> `ProposalIssue[]`. 25 focused tests. `collectWorkflowDefinitionIssues` confirmed
+> canonical (AD-P4); `WorkflowDefinitionSchema` unchanged. F5's premise is
+> corrected below. Not yet integrated — no production caller until 37.5 — so this
+> phase is `IMPLEMENTED`, not `VERIFIED`.
 
 ### Objective
 
@@ -1277,10 +1284,10 @@ Structured output is required for the agent to self-correct.
 
 ### Deliverables
 
-- Proposal compiler — path **UNKNOWN**
-- Structured error type
-- Reuse tests over all seven existing DAG codes
-- F5 resolution note in the plan and Decision Log
+- Proposal compiler — `src/lib/workflow-types/workflow-proposal-compiler.ts`
+- Structured result type (`WorkflowCompilationResult`) carrying `ProposalIssue[]`
+- Reuse tests over the collector's codes (`WorkflowDefinitionIssueCode`)
+- F5 resolution note in the plan and Decision Log (this section + AD-P4)
 
 ### Acceptance Gate
 
@@ -1289,41 +1296,86 @@ compiler boundary. Issue `code` and `path` survive to the caller.
 
 ### Test Gate
 
-- All seven existing DAG checks reachable from a proposal
-- `code` and `path` present in structured output
-- No duplicate DAG implementation
-- F5 decision implemented — the chosen gate is actually invoked in production
+- The three graph checks reachable through a proposal are exercised end-to-end:
+  `UNKNOWN_DEPENDENCY`, `SELF_DEPENDENCY`, `CYCLE`
+- The other four collector codes (`EMPTY_GRAPH`, `ID_MISMATCH`,
+  `DUPLICATE_STEP_ID`, `UNKNOWN_ROUTING_CONDITION`) are **not** reachable from a
+  proposal by construction: empty proposals are rejected earlier as
+  `EMPTY_PROPOSAL`; a proposal's step record key and inner `id` are identical; and
+  a proposal cannot express `routingConditions`. The normalization adapter is
+  nevertheless asserted total over all seven codes so none can be silently dropped.
+- `code` and `path` present in structured output; the cycle sequence survives in
+  the issue `message`, never smuggled into `path`
+- No duplicate DAG implementation — `collectWorkflowDefinitionIssues` is reused
+- F5/AD-P4 decision implemented — the compiler invokes the collector; the
+  compiler's own production invocation lands with 37.5
 
 ### Verification Gate
 
 Unit tests green, plus a production-path check that the chosen gate runs on
 materialization, not only in tests.
 
+**Not yet satisfied — deferred.** Unit tests are green. The production-path half
+requires a production caller and a materialization path (37.5 and 37.11). By this
+gate 37.4 is `IMPLEMENTED`, not `VERIFIED`.
+
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/lib/workflow-types/workflow-proposal-compiler.ts (new);
+                ProposalIssueCode extended with 7 graph codes in workflow-proposal.ts
+Tests:          src/tests/workflow/workflow-proposal-compiler.test.ts — 25 focused
+Verification:   npx jest workflow-proposal-compiler -> 25/25
+                npx jest src/tests/workflow -> 13 suites / 287 tests
+                npx jest -> 34 suites / 604 tests
+                npx tsc --noEmit -> exit 0
+                npx eslint (3 touched files) -> exit 0
+                git diff --check -> clean
+                git diff -- src/lib/workflow/execution/resolver.ts -> empty
+Commit/PR:      not committed (user instruction: no commit/stage for 37.4)
+Relevant files: src/lib/workflow-types/workflow-proposal-compiler.ts,
+                src/lib/workflow-types/workflow-proposal.ts,
+                src/tests/workflow/workflow-proposal-compiler.test.ts,
+                docs/.../assignments-37-phase-37.4-proposal-compiler.md
 ```
 
 ### Known Risks / Findings
 
-**F5.** `WorkflowDefinitionSchema` appears only at its definition, its inferred
-type, and `src/tests/workflow/dag-validation.test.ts`. A proposal compiler is a
-*second* producer of `WorkflowDefinition`, so the gate must be explicit.
+**F5 — resolved; its premise was inaccurate.** `WorkflowDefinitionSchema` *is*
+called in production: `evaluator.ts:223` re-parses the persisted definition with
+`WorkflowDefinitionSchema.safeParse(run.workflow.definition)` (added in the
+2026-10-01 lint pass). It remains a runtime read-boundary validator, not the
+semantic gate. Its `superRefine` re-emits every issue as `z.ZodIssueCode.custom`
+and discards the cycle `path` (`workflow.ts:243-250`), so it cannot serve as the
+compiler's structured-issue source. `collectWorkflowDefinitionIssues` is the
+canonical graph-semantic gate (AD-P4). No production file was changed to close F5.
 
 ### Decisions
 
-Pending: **F5 — which gate is canonical**, `WorkflowDefinitionSchema` or the
-compiler's issue collector.
+Resolved: **AD-P4 — `collectWorkflowDefinitionIssues` is the canonical
+graph-semantic gate.** The compiler routes graph validation through the collector,
+which preserves `code` and cycle `path`; `WorkflowDefinitionSchema` stays the
+runtime read-boundary validator and is unchanged.
+
+Made: **no second DAG validator.** The compiler calls the existing collector
+(Out of Scope honoured).
+
+Made: **deterministic placeholder identity.** `definition.id` is the constant
+`"proposal"` and `definition.name` is `"Compiled Execution Graph"` — never a clock
+or proposal-derived value. Real identity belongs to materialization (37.11 / F2 /
+AD-P6).
+
+Made: **`ProposalIssueCode` extended with the seven collector codes** so the
+normalization adapter is total over `WorkflowDefinitionIssueCode` and cannot
+silently drop a future code.
+
+Pending: none.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-12 | IMPLEMENTED | Proposal compiler module + tests; `ProposalIssueCode` extended; F5 + AD-P4 resolved | 25/25 focused; workflow 13 suites / 287 tests; tsc exit 0; eslint 0; `git diff --check` clean; resolver diff empty |
 
 ---
 
@@ -2821,9 +2873,9 @@ Pending: none.
 
 # Issue Register Dashboard
 
-**Resolved: I1 (37.0A), I2 (37.0B), F3 and I4 (37.1).** Everything else listed
-below is open or unverified. Resolutions are only recorded when the fix is
-present and tested.
+**Resolved: I1 (37.0A), I2 (37.0B), F3 and I4 (37.1), F6 (37.3), F5 (37.4).**
+Everything else listed below is open or unverified. Resolutions are only recorded
+when the fix is present and tested.
 
 | ID | Description | Priority | Current State | Blocking? | Assigned Phase | Resolved? | Verification Evidence |
 |---|---|---|---|---|---|---|---|
@@ -2831,7 +2883,7 @@ present and tested.
 | **F2** | `definition.id` is a per-save placeholder; `definition.name` is a constant | P2 | Open — recorded | No | 37.11 | **No** | — |
 | **F3** | No authoritative planner-facing action capability contract | P1 | **CLOSED 2026-10-01** | No — was YES, now resolved | 37.1 | **YES** | `src/tests/workflow/action-capabilities.test.ts` — 32/32; catalog total over registry (TS coupling); `assignments-37-phase-37.1-capability-catalog.md` §6, §12 |
 | **F4** | `AgentToolExecution` cannot represent the proposal lifecycle | P1 | Open — recorded, fork undecided | No | 37.6 / 37.7 / 37.8 | **No** | — |
-| **F5** | `WorkflowDefinitionSchema` never called in production | P1 | Open — recorded | No | 37.4 | **No** | — |
+| **F5** | `WorkflowDefinitionSchema` never called in production | P1 | **CLOSED 2026-10-12** (premise corrected) | No — was a gate-selection question | 37.4 | **YES** | `src/tests/workflow/workflow-proposal-compiler.test.ts` — 25/25; AD-P4: collector is canonical; schema is then still invoked at `evaluator.ts:223` |
 | **F6** | No reference / data-dependency validation; silent failure | P1 | **CLOSED 2026-10-12** | No — was a risk for 37.4+ | 37.3 | **YES** | `src/tests/workflow/proposal-references.test.ts` — 44/44; `MISSING_DATA_DEPENDENCY` enforced; `git diff -- resolver.ts` empty |
 | **I1** | Cross-tenant workflow update | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0A | **YES** | `src/tests/workflow/workflow-update-scope.test.ts` — 5/5; suite fails 3/5 against the unscoped predicate |
 | **I6** | Cross-tenant workflow execution | **P0** | Open — recorded after Phase 0 | **YES** | separate ticket, before 37.12 | **No** | — |
@@ -2843,9 +2895,9 @@ present and tested.
 
 ### Count
 
-- Resolved: **5 of 13** (I1, I2, F3, I4, F6)
+- Resolved: **6 of 13** (I1, I2, F3, I4, F5, F6)
 - P0 open: **1** (I6)
-- P1 open: **2** (F4, F5)
+- P1 open: **1** (F4)
 - P1-CHECK unverified: **1** (I5)
 - P2/P3 open: **4** (F1, F2, I3, I7)
 
@@ -2908,6 +2960,7 @@ decision is fabricated.**
 | AD-13 | I5 classification | P1 / P1-CHECK | **P1-CHECK.** Deployed QStash schedules are not observable from the repository; it is not a confirmed defect. | 2026-09-30 | 37.0 | Register I5 |
 | AD-14 | Is I6 merged into the I1 ticket? | Merge / Separate tickets | **Separate tickets.** I1 is cross-tenant UPDATE gated at 37.5; I6 is cross-tenant EXECUTION gated at 37.12. Different paths, different regression tests. | 2026-09-30 | I6 documentation | Register I6 |
 | AD-15 (AD-P1) | Where does planner-facing action metadata live? | On `WorkflowAction` / Separate client-safe catalog keyed by action id | **Separate client-safe catalog keyed by action id** (`action-capabilities.ts`). Executable actions import the extended Prisma client and must not enter the browser bundle; the registry stays the execution authority and membership source of truth; UI presentation stays in `registry.ts`. | 2026-10-01 | 37.1 | `action-capabilities.ts`; `action-registry.ts` (`RegisteredActionId`); §12 of the phase record |
+| AD-16 (AD-P4) | Which validation gate is canonical — `WorkflowDefinitionSchema` or the issue collector? | Schema superRefine / issue collector | **The issue collector** (`collectWorkflowDefinitionIssues`) is the canonical graph-semantic gate. The schema's `superRefine` collapses every `code` to `z.ZodIssueCode.custom` and drops the cycle `path`, so the schema stays the runtime read-boundary validator (invoked at `evaluator.ts:223`) and is unchanged. | 2026-10-12 | 37.4 | `workflow-proposal-compiler.ts`; tracker §37.4 Test Gate; `workflow.ts:243-250` |
 
 ### Pending decisions — PENDING DECISION
 
@@ -2915,12 +2968,17 @@ decision is fabricated.**
 |---|---|---|---|
 | **AD-P2** | How is the missing-input state persisted? | 37.7, 37.8 | 37.6 / 37.7 |
 | **AD-P3** | Reuse `AgentToolExecution` or add a `WorkflowProposal` model? | 37.9, 37.11 | 37.8 |
-| **AD-P4** | Which validation gate is canonical — `WorkflowDefinitionSchema` or the issue collector? | 37.5, 37.11 | 37.4 |
 | **AD-P5** | Synthesize layout before persistence, or add a definition-first write path? | 37.11 | 37.10 |
 | **AD-P6** | Where does proposal provenance live, given `definition.id` is a placeholder? | 37.11 | 37.11 |
 | **AD-P7** | Does a durable pause use the unused session-status enum slot? | 37.14 | 37.6 / 37.7 |
 
 **AD-P1 resolved 2026-10-01** (recorded above as AD-15). It is no longer pending.
+
+**AD-P4 resolved 2026-10-12** by 37.4: `collectWorkflowDefinitionIssues` is the
+canonical graph-semantic gate. The compiler calls it directly; the schema's
+`superRefine` collapses `code` to `z.ZodIssueCode.custom` and drops the cycle
+`path`, so `WorkflowDefinitionSchema` stays the runtime read-boundary validator
+(invoked at `evaluator.ts:223`) and is unchanged. It is no longer pending.
 
 **AD-08 satisfied 2026-10-12** by 37.2: proposal steps are a record keyed by
 `localRef`, so a backend-generated id is unrepresentable and a duplicate id cannot
@@ -2972,12 +3030,18 @@ no second dialect.
 | 2026-10-12 | 37.3 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.3 |
 | 2026-10-12 | 37.3 | Lint of the 3 touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.3 |
 | 2026-10-12 | 37.3 | Resolver integrity — source unchanged | Local — `git diff -- src/lib/workflow/execution/resolver.ts` | **PASS** | empty diff; file not in `git status --short` | 37.3 |
+| 2026-10-12 | 37.4 | Proposal compiler suite — pipeline order/short-circuit, mapping identity, no mutation, determinism, no clock, reachable graph checks, adapter total over all seven collector codes, structured `code`/`path` | Local — `npx jest workflow-proposal-compiler` | **PASS** | 25/25 tests | 37.4 |
+| 2026-10-12 | 37.4 | Workflow regression suite after adding the compiler | Local — `npx jest src/tests/workflow` | **PASS** | 13 suites, 287 tests (was 12 / 262) | 37.4 |
+| 2026-10-12 | 37.4 | Full repository suite | Local — `npx jest` | **PASS** | 34 suites, 604 tests (was 33 / 579) | 37.4 |
+| 2026-10-12 | 37.4 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.4 |
+| 2026-10-12 | 37.4 | Lint of the 3 touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.4 |
+| 2026-10-12 | 37.4 | Resolver integrity — source unchanged | Local — `git diff -- src/lib/workflow/execution/resolver.ts` | **PASS** | empty diff | 37.4 |
 
 ### Coverage summary
 
 | Category | Events recorded |
 |---|---|
-| unit | 18 |
+| unit | 20 |
 | integration | 0 |
 | database | 0 |
 | Redis | 0 |
@@ -2997,6 +3061,9 @@ compiler-level; 37.2's evidence is Jest-level and `tsc`-level. None is a live
 database check, and Phase 37.16 remains the phase that owes one. No database,
 queue, Gemini, or real workflow execution has been exercised in this assignment.
 37.3's evidence is Jest-level and `tsc`-level (static validator, no runtime).
+37.4's evidence is Jest-level and `tsc`-level (static compiler, no runtime; the
+compiler has no production caller until 37.5, so its production-path verification
+is deferred).
 **37.2's former model-path clause** (a real `generateWorkflow` proposal parsing
 without a compiler fix-up) is **reassigned to 37.5**, which owns the model path.
 
