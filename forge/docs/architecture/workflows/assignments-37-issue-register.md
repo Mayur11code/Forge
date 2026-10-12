@@ -400,6 +400,24 @@ question to settle there is *where capability metadata lives* — on
 gate answer stands: **the agent currently has no machine-readable action contract
 to generate a valid step from.**
 
+**Resolution — CLOSED 2026-10-01 (Phase 37.1).** AD-P1 is decided: a separate,
+client-safe capability catalog keyed by action id, in
+`src/lib/workflow-types/action-capabilities.ts`, with the runtime registry as the
+source of truth for membership. Each capability carries label, description, a
+strict input schema, an output schema for the business `data` payload, a
+compensation flag and failure characteristics. `task.create` is described from
+source, not from the Phase 0 prose.
+
+The contract is now checkable at compile time and at test time, not just present:
+`ActionCapabilities satisfies Record<RegisteredActionId, ActionCapability>` makes
+catalog/registry agreement a type error in both directions, and
+`src/tests/workflow/action-capabilities.test.ts` (32 tests) is the runtime
+backstop. Evidence: `assignments-37-phase-37.1-capability-catalog.md` §6, §12.
+
+**Trust boundary preserved.** No capability input schema admits `orgId`,
+`userId`, `workflowId` or `runId`; a test asserts their rejection. Organization
+identity still comes from the persisted `Workflow` row.
+
 ---
 
 ### I4 — Runtime/UI action registry mismatch
@@ -444,6 +462,35 @@ from `ActionDef.outputs`.
 Assignment 37's decision to make, and doing either before 37.1 would fork the
 source of truth a second time. The correct ordering is to settle 37.1's
 capability surface first, then reconcile the two lists against it.
+
+**Resolution — CLOSED 2026-10-01 (Phase 37.1).** The two lists are reconciled by
+removing the second list, not by editing it into agreement.
+`AVAILABLE_ACTIONS` is now a projection of the capability catalog
+(`src/lib/workflow-types/registry.ts`), and the catalog is total over the runtime
+registry, so `comment.add` — present in the UI list and absent from the runtime —
+cannot appear. It was **not** registered and no comment executor was written;
+`communication.send_email` and `utils.generate_report` were likewise not exposed
+despite their implementation files existing on disk. The rule recorded here now
+holds structurally: **a function existing in the repository does not make it an
+available workflow capability.**
+
+Both halves of the `task.create` disagreement are corrected, and both are
+derived rather than restated:
+
+| aspect | before | now |
+|---|---|---|
+| required inputs | `['projectId']` | `['title', 'projectId']` |
+| outputs | `['taskId']` | `['taskId', 'title']` |
+
+`requires` and `outputs` are computed from the capability input and output
+schemas, so they cannot drift from the action again. Evidence:
+`assignments-37-phase-37.1-capability-catalog.md` §6–§7, §12; mutation B in §12
+re-advertises `comment.add` and the suite fails 3 tests.
+
+The output half is the more consequential fix: `outputs` feeds
+`getAvailableUpstreamOutputs`, so before this phase a reference to the real
+`{{create_task.outputs.title}}` could not be wired on the canvas. It can now, and
+37.3's reference validator will check paths against the same derivation.
 
 ---
 
@@ -758,6 +805,72 @@ three are distinguishable and one has no representation at any level.
 
 ---
 
+### I7 — Conditional routing is not executable / authorable end-to-end
+
+**Classification:** P2 scope / architecture finding · **non-blocking for 37.1** ·
+requires a scope decision before Assignment 37 claims generated conditional
+branches.
+
+**Recorded after Phase 0, from Phase 37.1 reconnaissance.** Like I6, this is not
+a Phase 0 finding and the Phase 0 audit is not amended. It was reported during
+37.1 reconnaissance, re-inspected against source, and confirmed. A related
+output-contract defect in the condition helper was already fixed on 2026-10-01
+(see `src/tests/workflow/condition-branch.test.ts`); that fix was necessary but
+not sufficient, and this finding records the remainder.
+
+**What exists.**
+
+- `executeConditionNode` (`src/lib/workflow/actions/logic/conditions.ts:40`)
+  evaluates `value1 <operator> value2` and returns
+  `{ success, data: { branch: "TRUE" | "FALSE", details } }`.
+- The evaluator gates a dependant on its parent's branch:
+  `requiredBranch = node.routingConditions?.[depId]`,
+  `actualBranch = readBranch(stepRunMap.get(depId)?.outputs)`
+  (`src/lib/workflow/execution/evaluator.ts:424-431`).
+
+**What is unreachable or missing.**
+
+1. `executeConditionNode` is **not registered** in `ActionRegistry`, and its
+   signature is not an `ExecuteFunction` — it takes `Record<string, JsonValue>`,
+   not `ActionContext`. Its only importer is its own test; no engine code calls
+   it.
+2. The wrapper dispatches only through `getAction(actionId)`
+   (`src/lib/workflow/execution/wrapper.ts:180`), which fails an unregistered
+   action with "Action not found in registry". A condition step therefore cannot
+   execute, so no step ever writes `{ branch }` into `StepRun.outputs`.
+3. `readBranch` consequently always reads `undefined`, and
+   `requiredBranch && actualBranch !== requiredBranch` is true for every
+   conditional dependant — so every conditional branch is skipped.
+
+**What the canvas can author.** Nothing that yields `routingConditions`.
+`ActionNodeDataSchema` (`src/lib/workflow-types/workflow.ts`) has no routing
+field, and `compileWorkflow` (`src/lib/workflow/graph-ui/compiler.ts`) never sets
+`WorkflowStep.routingConditions`. The field is declared in `WorkflowStepSchema`
+and read by the evaluator, but no authoring path populates it.
+
+**Why registering `executeConditionNode` would not complete the feature.** It
+would let the step run and publish a branch, but (a) nothing sets a dependant's
+`routingConditions[depId]`, so there is still no required branch to compare
+against; (b) the action's inputs (`value1`, `operator`, `value2`) come from no
+canvas field and no capability descriptor; and (c) a condition node has no
+representation in the capability catalog.
+
+**Scope decision required before Assignment 37 claims generated conditional
+branches:**
+
+1. **In scope** — add a condition node kind, a canvas authoring path, branch
+   declaration on dependants, and a capability contract for the condition inputs;
+   or
+2. **Out of scope** — forbid generated proposals from emitting conditional steps,
+   and ensure the capability surface does not imply otherwise.
+
+**Not decided, and not implemented, in 37.1.** No evaluator logic, routing
+semantics, node kind, or registry entry was changed to enable conditional
+execution. Conditional routing is **not** claimed to work end-to-end. See
+`assignments-37-phase-37.1-capability-catalog.md` §10.
+
+---
+
 ## 6. Dependency Map
 
 | Finding | Priority | Assignment phase | Blocks what? | Separate ticket? |
@@ -765,8 +878,8 @@ three are distinguishable and one has no representation at any level.
 | **I1** cross-tenant workflow update | **P0** | Pre-37.5 prerequisite | All agent-originated workflow writes / materialization | **Yes** |
 | **I6** cross-tenant workflow execution | **P0** | Pre-37.12 prerequisite | Handing any generated workflow to the existing execution engine | **Yes** |
 | **I2** node validation bypass | **P0** | Pre-37.11 prerequisite | Trusting generated `uiNodes` at the persistence boundary | **Yes** |
-| **F3** no authoritative capability contract | **P1** | **37.1** | Planner-facing action knowledge; the whole generation path | No |
-| **I4** runtime/UI registry mismatch | **P1** | **37.1** | Reliable output contracts; absence of phantom actions | No — resolve with 37.1 |
+| **F3** no authoritative capability contract | **P1** | **37.1** | Planner-facing action knowledge; the whole generation path | No — **CLOSED 2026-10-01** |
+| **I4** runtime/UI registry mismatch | **P1** | **37.1** | Reliable output contracts; absence of phantom actions | No — **CLOSED 2026-10-01, with 37.1** |
 | **F6** no reference / data-dependency validation | **P1** | **37.3** | Deterministic step generation; `MISSING_DATA_DEPENDENCY` | No |
 | **F5** schema is not the production gate | **P1** | **37.4** | A trustworthy compiler boundary for a second definition producer | No |
 | **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | Not yet — decision at 37.6/37.7 |
@@ -774,6 +887,7 @@ three are distinguishable and one has no representation at any level.
 | **F1** canvas-first persistence | **P2** | **37.10 / 37.11** | Materialization ordering; layout strategy | No |
 | **F2** definition id/name are placeholders | **P2** | **37.11** | Provenance; correct human-facing name placement | No |
 | **I3** `WAITING_CONFIRMATION` unreachable | **P2/P3** | Later state-machine cleanup | Nothing in 37.1–37.5 | No |
+| **I7** conditional routing not executable/authorable | **P2** | Scope decision (recorded 37.1) | Any claim that generated conditional branches work | No — needs a scope decision, not a ticket yet |
 
 Mapping applied as specified. No repository evidence conflicts with it; the one
 point where evidence was thinner than the mapping assumed is **I5**, which is
@@ -791,9 +905,9 @@ convenience.
 
 ```
 37.0    Contract reconnaissance                          COMPLETE
-37.0A   Security prerequisite — I1 tenant-scoped update
-37.0B   Persistence-boundary prerequisite — I2 node validation
-37.1    Action capability registry                      (F3, absorbs I4)
+37.0A   Security prerequisite — I1 tenant-scoped update   COMPLETE
+37.0B   Persistence-boundary prerequisite — I2 node validation  COMPLETE
+37.1    Action capability registry                      COMPLETE (F3, absorbed I4)
 37.2    WorkflowProposal schema
 37.3    Reference grammar + validator                   (F6, MISSING_DATA_DEPENDENCY)
 37.4    Proposal compiler / semantic validation adapter (F5)
@@ -822,6 +936,11 @@ The four structural changes from the original ordering:
 4. **37.12 is gated on I6.** Execution handoff cannot become `VERIFIED` until
    cross-tenant workflow execution is closed. I6 is a separate ticket from I1 and
    is not satisfied by closing I1.
+
+**I7 adds a pending scope decision, not a phase.** Conditional routing is not
+executable or authorable end-to-end (section 5 → I7). The decision — support
+generated conditional branches, or forbid them — must be taken before Assignment
+37 claims either way. It does not renumber the sequence and does not block 37.2.
 
 ---
 
@@ -986,6 +1105,8 @@ the original placed UI derivation as a side concern after materialization.
 
 **Phase 0:** COMPLETE
 
+**Phases complete:** 37.0, 37.0A, 37.0B, **37.1 (VERIFIED 2026-10-01)**
+
 **Current blockers:**
 - I6
 
@@ -993,7 +1114,24 @@ the original placed UI derivation as a side concern after materialization.
 (2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0** and still
 gates 37.12. None of the three was ever satisfied by closing either of the others.
 
-**Current implementation target:** 37.1 — Action capability registry
+**Current implementation target:** 37.2 — WorkflowProposal schema
+
+**Closed by Phase 37.1, with evidence:**
+- **F3** — the capability contract exists and is tested
+  (`src/lib/workflow-types/action-capabilities.ts`;
+  `src/tests/workflow/action-capabilities.test.ts`).
+- **I4** — the UI list is a derived projection of the catalog; `comment.add` is
+  no longer advertised; the `task.create` required-input and output mismatches
+  are corrected.
+
+Both closures rest on a test that fails when the defect is reintroduced
+(mutation checks in `assignments-37-phase-37.1-capability-catalog.md` §12), not
+merely on the existence of a document.
+
+**Recorded, not resolved, by Phase 37.1:**
+- **I7** — conditional routing is not executable or authorable end-to-end. A
+  scope decision is required before Assignment 37 claims generated conditional
+  branches. Non-blocking.
 
 **Later architectural decisions:**
 - F1
@@ -1001,10 +1139,12 @@ gates 37.12. None of the three was ever satisfied by closing either of the other
 - F4
 - F5
 
-**Not fixed by this documentation task.** No issue, finding, or defect listed in
-this register has been remediated. This document and the accompanying plan
-revision are the only artifacts produced; no application source, Prisma schema,
-migration, prompt, or runtime behavior was modified.
+**Scope note.** Phase 37.1 modified application source
+(`src/lib/workflow-types/action-registry.ts`, `registry.ts`), added
+`src/lib/workflow-types/action-capabilities.ts`, and added a test file. No Prisma
+schema, migration, prompt, execution engine, or runtime behaviour was changed.
+`createTaskInOrg` and the canonical `createTaskSchema` were not modified. The
+Phase 0 audit remains unmodified.
 
 **I5 remains unverified** and is not listed as a blocker. It becomes one only if
 verification confirms no workflow-maintenance schedule exists.
@@ -1014,6 +1154,7 @@ verification confirms no workflow-maintenance schedule exists.
 *Provenance: findings F1–F6 and I1–I5 traced to
 `docs/architecture/workflows/assignments-37-phase-0-audit.md`. **I6 was recorded
 separately, after Phase 0 closed**, from inspection of `triggerWorkflowRun` and
-`startWorkflow`; the Phase 0 audit is unmodified. Where Phase 0 recorded
-`UNKNOWN`, this register preserves the uncertainty rather than resolving it by
-assumption.*
+`startWorkflow`; **I7 was recorded separately, during Phase 37.1 reconnaissance**,
+from inspection of the evaluator, wrapper and compiler. The Phase 0 audit is
+unmodified in both cases. Where Phase 0 recorded `UNKNOWN`, this register
+preserves the uncertainty rather than resolving it by assumption.*
