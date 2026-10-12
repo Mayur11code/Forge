@@ -1,16 +1,23 @@
 # Assignment 37 — Master Phase Tracker
 
 ```text
-Last Updated:     2026-09-30
-Current Phase:    37.1  (37.0A and 37.0B are VERIFIED)
+Last Updated:     2026-10-01
+Current Phase:    37.2  (37.0A, 37.0B and 37.1 are VERIFIED)
 Overall Status:   BLOCKED
-Next Action:      Begin 37.1 — action capability registry
+Next Action:      Begin 37.2 — WorkflowProposal schema
 ```
 
 > **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
 > against `TriggerNodeDataSchema` / `ActionNodeDataSchema` on **both** save paths,
 > and the validated value is what gets compiled and persisted. Gate F is
 > satisfied. **One P0 remains open: I6**, still a separate gate on 37.12.
+
+> **37.1 VERIFIED 2026-10-01.** F3 and I4 are **CLOSED**: one client-safe
+> capability catalog, total over the runtime registry, with `task.create`
+> corrected and `comment.add` removed from the picker. AD-P1 decided. **I7
+> recorded** (conditional routing not executable/authorable end-to-end) — a
+> non-blocking scope decision, not an implementation task. See
+> `assignments-37-phase-37.1-capability-catalog.md`.
 
 > **Third P0 recorded 2026-09-30.** **I6 — cross-tenant workflow execution** was
 > added after Phase 0 closed. The P0 set is now **three** issues: I1 (gated 37.5),
@@ -54,7 +61,7 @@ is by quietly eroding the boundary rather than by failing to build the feature.
 | Document | Role |
 |---|---|
 | `assignments-37-phase-0-audit.md` | Evidence. What the code actually does today. |
-| `assignments-37-issue-register.md` | Findings. F1–F6, I1–I5, priorities, dependency map. |
+| `assignments-37-issue-register.md` | Findings. F1–F6, I1–I7, priorities, dependency map. |
 | `assignments-37-plan.md` | Architecture. What Assignment 37 is building. |
 | **`assignments-37-tracker.md`** (this file) | **Operations. Where we actually are.** |
 
@@ -71,18 +78,20 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ASSIGNMENT 37 STATUS
 
 Overall:                     BLOCKED
-Current Phase:               37.1   (Action capability registry)
-Previous Completed Phase:    37.0B  (Persistence-boundary prerequisite — I2 — VERIFIED)
-Next Phase:                  37.2   (WorkflowProposal schema)
+Current Phase:               37.2   (WorkflowProposal schema)
+Previous Completed Phase:    37.1   (Action capability registry — F3/I4 — VERIFIED)
+Next Phase:                  37.3   (Reference grammar + validator)
 Blocking Issue:              I6     (the only open P0)
 Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 NOT_STARTED
 Architecture Decision Pending: F1, F2, F4, F5
-Last Verification:           2026-09-30 — 37.0B I2 node-validation suite green
-                             (23 cases); full run 28 suites / 440 tests passed
-Last Updated:                2026-09-30
+Recorded scope decisions:    I7     (conditional routing — non-blocking)
+Last Verification:           2026-10-01 — 37.1 capability catalog suite green
+                             (32 cases); full run 31 suites / 490 tests passed;
+                             tsc --noEmit clean
+Last Updated:                2026-10-01
 
 Progress:
-[███░░░░░░░░░░░░░░░░] 15%   (3 of 20 tracked phases VERIFIED)
+[████░░░░░░░░░░░░░░░░] 20%   (4 of 20 tracked phases VERIFIED)
 ```
 
 ### Why `BLOCKED` and not `IN_PROGRESS`
@@ -97,8 +106,10 @@ the paragraph above describes defects that no longer exist. Gate E's predicate
 requirement is met. The separate persistence-layer requirement in Gate A is
 covered by I2.
 
-One P0, **I6**, remains and gates a later boundary. It does not stop 37.1, but the
+One P0, **I6**, remains and gates a later boundary. It does not stop 37.2, but the
 assignment cannot reach 37.12 until a tenant-scoped execution entrypoint exists.
+**I7** is recorded as a scope decision, not a blocker; it likewise does not stop
+37.2.
 
 ### Progress calculation
 
@@ -160,7 +171,7 @@ Always use the smallest applicable status.
 | 37.0 | Contract reconnaissance | **VERIFIED** | P0-enabling | — | everything | Contract map + 6 findings + 5 issues | Phase 0 gate answered | `assignments-37-phase-0-audit.md` | No source modified. `git status` shows only untracked documentation. |
 | 37.0A | Security prerequisite — I1 tenant-scoped workflow update | **VERIFIED** | **P0** | 37.0 | 37.5, 37.8, 37.11, all agent writes | Tenant-scoped update predicate + regression test | Cross-org write rejected; same-org write succeeds | 2026-09-30 | Closed as its own ticket, ahead of Gate E. Not bundled into a feature phase. |
 | 37.0B | Persistence-boundary prerequisite — I2 node validation | **VERIFIED** | **P0** | 37.0 | 37.10, 37.11 | Real node-data validation on create **and** update paths | Valid node accepted; malformed node rejected | 2026-09-30 | Closed as its own ticket. Satisfies Gate F. |
-| 37.1 | Action capability registry | **NOT_STARTED** | **P1** | 37.0A, 37.0B (isolation sufficient) | 37.2, 37.3, 37.4 | One authoritative planner-facing capability source | Planner obtains authoritative metadata for every generatable action | — | Resolves F3, absorbs I4. |
+| 37.1 | Action capability registry | **VERIFIED** | **P1** | 37.0A, 37.0B (isolation sufficient) | 37.2, 37.3, 37.4 | One authoritative planner-facing capability source | Planner obtains authoritative metadata for every generatable action | 2026-10-01 — 32-case suite + full run 31/490 + tsc clean | Resolves F3, absorbs I4. AD-P1 decided. Responsive `ActionCapabilities` typed against `RegisteredActionId`. |
 | 37.2 | WorkflowProposal schema | **NOT_STARTED** | P1 | 37.1 | 37.3, 37.4 | `WorkflowProposal` Zod schema | Static A / B→A / C→A,B parses; malformed fails structurally | — | localRef IDs; no DB IDs, no coordinates, no criticality. |
 | 37.3 | Reference grammar + validator | **NOT_STARTED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | — | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`. **No new syntax.** |
 | 37.4 | Proposal compiler / semantic validation adapter | **NOT_STARTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | — | Resolves F5. Reuses `collectWorkflowDefinitionIssues`. |
@@ -683,7 +694,7 @@ Pending: none specific to I2.
 
 ### Status
 
-**NOT_STARTED** · Classification: **P1**
+**VERIFIED** · Classification: **P1** · Verified 2026-10-01
 
 ### Objective
 
@@ -746,65 +757,112 @@ assume a shape.
 
 ### Deliverables
 
-- Capability surface — file/type location **UNKNOWN** until designed
-- Reconciliation of `ActionDef` against `ActionRegistry` — location UNKNOWN
-- Tests asserting registry/capability agreement
-- Updated `assignments-37-tracker.md` Decision Log entry
+- **Capability surface:**
+  `src/lib/workflow-types/action-capabilities.ts` (new). Client-safe catalog
+  keyed by action id; imports only `zod` and `import type { RegisteredActionId }`
+  (type-only, erased by `isolatedModules`). Exports `ActionCapability`,
+  `inputFields`, `requiredInputFields`, `optionalInputFields`,
+  `referenceableOutputFields`, `ActionCapabilities`, `getActionCapability`,
+  `CAPABILITY_ACTION_IDS`.
+- **Registry coupling:** `src/lib/workflow-types/action-registry.ts` now declares
+  `ActionRegistry` as `satisfies Record<string, WorkflowAction>` and exports
+  `RegisteredActionId = keyof typeof ActionRegistry`.
+- **UI projection:** `src/lib/workflow-types/registry.ts` derives
+  `AVAILABLE_ACTIONS` from `ActionCapabilities`; `ACTION_FIELD_PRESENTATION`
+  overlay typed `Partial<Record<RegisteredActionId, …>>` and carries no
+  `required` key. `AVAILABLE_TRIGGERS` untouched.
+- **Tests:** `src/tests/workflow/action-capabilities.test.ts` (new, 32 cases).
+- **Docs:** `docs/architecture/workflows/assignments-37-phase-37.1-capability-catalog.md`.
 
 ### Acceptance Gate
 
 The planner can obtain authoritative metadata for every action it is allowed to
-generate, and no advertised action is unregistered.
+generate, and no advertised action is unregistered. **Satisfied** — the catalog is
+total over the runtime registry (compile-time in both directions) and the UI list
+is a projection of it.
 
 ### Test Gate
 
-- Every capability entry corresponds to a registered action
-- No registered action is missing from the capability surface
-- `task.create` declared inputs match its implementation
-  (implementation requires `title` **and** `projectId`; the UI `ActionDef`
-  declares only `projectId`)
-- `task.create` declared outputs match its implementation
-  (implementation returns `{ taskId, title }`; `ActionDef` declares `['taskId']`)
-- Capability surface contains no trusted identity field
+- Every capability entry corresponds to a registered action — **passes**
+- No registered action is missing from the capability surface — **passes**
+- `task.create` declared inputs match its implementation — **passes**
+  (`['title', 'projectId']`)
+- `task.create` declared outputs match its implementation — **passes**
+  (`['taskId', 'title']`)
+- Capability surface contains no trusted identity field — **passes**
+  (`orgId`/`userId`/`workflowId`/`runId` rejected by the strict input schema)
 
 ### Verification Gate
 
 Unit tests plus an inspection confirming `comment.add` is no longer advertised as
 generatable without being registered — or has been registered deliberately.
+**Satisfied:** `comment.add` is no longer advertised and was not registered. No
+comment executor was written.
 
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/lib/workflow-types/action-capabilities.ts        (new)
+                src/lib/workflow-types/action-registry.ts            (modified)
+                src/lib/workflow-types/registry.ts                   (modified)
+Tests:          src/tests/workflow/action-capabilities.test.ts       (new, 32 cases)
+Verification:   npx jest src/tests/workflow/action-capabilities.test.ts → 32 passed
+                npx jest                                                 → 31 suites / 490 tests passed
+                npx tsc --noEmit                                         → exit 0
+                npx eslint on touched files                              → 0 errors / 0 warnings
+                Mutation A (remove `title` from capability output)       → 3 failed / 29 passed
+                Mutation B (re-advertise `comment.add` in picker)        → 3 failed / 29 passed
+                Compile guard (capability, no registration)              → TS2353
+                Compile guard (registration, no capability)              → TS1360
+Commit/PR:      not committed (working tree per instruction)
+Relevant files: see Implementation above; Phase 0 audit unmodified
 ```
 
 ### Known Risks / Findings
 
-**F3.** `WorkflowAction` carries no description, input or output contract.
-Two candidate sources exist and already contradict each other.
+**F3 — CLOSED.** A capability contract now exists and is tested.
 
-**I4.** `comment.add` is in `AVAILABLE_ACTIONS`
-(`registry.ts:76-85`) but not in `ActionRegistry`. A workflow using it saves and
-then fails at execution, because the compiler performs no registry membership
-check.
+**I4 — CLOSED.** The UI list is a derived projection; `comment.add` is gone;
+`task.create` required inputs and outputs are corrected. The rule is now
+structural: an implementation file existing on disk does not make it an available
+capability. `communication.send_email` and `utils.generate_report` remain
+unexposed.
 
-Risk: creating a *third* surface instead of reconciling the two existing ones.
+Risk that materialised and was avoided: creating a *third* surface instead of
+reconciling the two existing ones. The catalog is the single surface, and both
+the runtime registry and the UI list derive from it.
+
+**I7 — RECORDED (non-blocking).** Conditional routing is not executable or
+authorable end-to-end. `executeConditionNode` is unregistered and is not an
+`ExecuteFunction`; the canvas never emits `routingConditions`; the evaluator
+therefore skips every conditional dependant. 37.1 records this and does **not**
+implement it. A scope decision — support generated conditional branches, or
+forbid them — is required before Assignment 37 claims either. Does not block 37.2.
 
 ### Decisions
 
-Made: none.
+Made (2026-10-01): **AD-P1 — planner-facing capability metadata lives in a
+separate, client-safe catalog keyed by action id** (`action-capabilities.ts`),
+not on the executable `WorkflowAction`. Rationale: executable actions import the
+extended Prisma client and must never enter a browser bundle; the capability
+catalog is safe to import from client components. The runtime registry remains the
+single execution authority and the source of truth for membership. UI
+presentation stays in `registry.ts` and controls only presentation (widget type,
+field order, labels) — never semantics. Coupling is enforced by typing
+`ActionCapabilities` against `RegisteredActionId` and by runtime consistency
+tests.
 
-Pending: where capability metadata lives (on `WorkflowAction` vs a descriptor
-keyed by action id). **This is the phase's primary design decision.**
+Pending: none for 37.1. Carried forward as an open question, not a 37.1 task:
+whether generated conditional branching is in scope (I7).
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-09-30 | NOT_STARTED | Registered as the phase resolving F3 and absorbing I4. | This section. |
+| 2026-10-01 | IN_PROGRESS | AD-P1 decided; catalog + registry coupling + UI projection implemented. | `action-capabilities.ts`, `action-registry.ts`, `registry.ts`. |
+| 2026-10-01 | TESTING | 32-case suite added; mutation/compile guards run. | `action-capabilities.test.ts`; Mutation A/B; TS2353/TS1360. |
+| 2026-10-01 | **VERIFIED** | Suite green (32), full run 31 suites / 490 tests, `tsc` clean, eslint clean; F3 + I4 closed; I7 recorded. | Evidence block above; `assignments-37-phase-37.1-capability-catalog.md`. |
 
 ---
 
@@ -2648,13 +2706,15 @@ Pending: none.
 
 # Issue Register Dashboard
 
-**Nothing is resolved.** No fix has been implemented.
+**Resolved: I1 (37.0A), I2 (37.0B), F3 and I4 (37.1).** Everything else listed
+below is open or unverified. Resolutions are only recorded when the fix is
+present and tested.
 
 | ID | Description | Priority | Current State | Blocking? | Assigned Phase | Resolved? | Verification Evidence |
 |---|---|---|---|---|---|---|---|
 | **F1** | Canvas-first persistence; no definition → UI reverse projection | P2 | Open — recorded | No (gates 37.10/37.11 ordering) | 37.10 / 37.11 | **No** | — |
 | **F2** | `definition.id` is a per-save placeholder; `definition.name` is a constant | P2 | Open — recorded | No | 37.11 | **No** | — |
-| **F3** | No authoritative planner-facing action capability contract | P1 | Open — recorded | No (gates 37.2+) | 37.1 | **No** | — |
+| **F3** | No authoritative planner-facing action capability contract | P1 | **CLOSED 2026-10-01** | No — was YES, now resolved | 37.1 | **YES** | `src/tests/workflow/action-capabilities.test.ts` — 32/32; catalog total over registry (TS coupling); `assignments-37-phase-37.1-capability-catalog.md` §6, §12 |
 | **F4** | `AgentToolExecution` cannot represent the proposal lifecycle | P1 | Open — recorded, fork undecided | No | 37.6 / 37.7 / 37.8 | **No** | — |
 | **F5** | `WorkflowDefinitionSchema` never called in production | P1 | Open — recorded | No | 37.4 | **No** | — |
 | **F6** | No reference / data-dependency validation; silent failure | P1 | Open — recorded | No (gates 37.4+) | 37.3 | **No** | — |
@@ -2662,16 +2722,26 @@ Pending: none.
 | **I6** | Cross-tenant workflow execution | **P0** | Open — recorded after Phase 0 | **YES** | separate ticket, before 37.12 | **No** | — |
 | **I2** | Node validation bypass at persistence boundary | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0B | **YES** | `src/tests/workflow/workflow-node-validation.test.ts` — 23/23; suite fails 19/23 against the inert schema |
 | **I3** | `WAITING_CONFIRMATION` session state unreachable | P2/P3 | Open | No | later cleanup / 37.14 | **No** | — |
-| **I4** | Runtime / UI action registry mismatch | P1 | Open | No | 37.1 | **No** | — |
+| **I4** | Runtime / UI action registry mismatch | P1 | **CLOSED 2026-10-01** | No — was YES, now resolved | 37.1 | **YES** | `action-capabilities.test.ts` — 32/32; Mutation B (re-advertise `comment.add`) fails 3/30; UI list is a derived projection |
 | **I5** | Workflow maintenance schedule unknown | **P1-CHECK** | **Unverified** | No — not an active blocker | 37.16 | **No** | — |
+| **I7** | Conditional routing not executable / authorable end-to-end | P2 | Open — recorded 2026-10-01 | No (scope decision needed) | scope decision (recorded during 37.1) | **No** | `assignments-37-issue-register.md` §5 → I7; `assignments-37-phase-37.1-capability-catalog.md` §10 |
 
 ### Count
 
-- Resolved: **2 of 12** (I1, I2)
+- Resolved: **4 of 13** (I1, I2, F3, I4)
 - P0 open: **1** (I6)
-- P1 open: **5** (F3, F4, F5, F6, I4)
+- P1 open: **3** (F4, F5, F6)
 - P1-CHECK unverified: **1** (I5)
-- P2/P3 open: **3** (F1, F2, I3)
+- P2/P3 open: **4** (F1, F2, I3, I7)
+
+### I7 — recorded during 37.1 reconnaissance
+
+**I7 is not a Phase 0 finding.** It was reported while implementing 37.1 and
+confirmed against the evaluator, wrapper and compiler; the Phase 0 audit is
+unmodified. It records that conditional routing is not executable or authorable
+end to end, and that a scope decision is owed before Assignment 37 claims
+generated conditional branches. It is non-blocking for 37.1. See the issue
+register §5 → I7 for the full evidence trail.
 
 ### I6 — recorded after Phase 0
 
@@ -2722,18 +2792,20 @@ decision is fabricated.**
 | AD-12 | P0 findings bundled into feature phases? | Bundle / Separate tickets | **Separate prerequisite tickets (37.0A, 37.0B).** | 2026-09-30 | 37.0 revision | Register §2 |
 | AD-13 | I5 classification | P1 / P1-CHECK | **P1-CHECK.** Deployed QStash schedules are not observable from the repository; it is not a confirmed defect. | 2026-09-30 | 37.0 | Register I5 |
 | AD-14 | Is I6 merged into the I1 ticket? | Merge / Separate tickets | **Separate tickets.** I1 is cross-tenant UPDATE gated at 37.5; I6 is cross-tenant EXECUTION gated at 37.12. Different paths, different regression tests. | 2026-09-30 | I6 documentation | Register I6 |
+| AD-15 (AD-P1) | Where does planner-facing action metadata live? | On `WorkflowAction` / Separate client-safe catalog keyed by action id | **Separate client-safe catalog keyed by action id** (`action-capabilities.ts`). Executable actions import the extended Prisma client and must not enter the browser bundle; the registry stays the execution authority and membership source of truth; UI presentation stays in `registry.ts`. | 2026-10-01 | 37.1 | `action-capabilities.ts`; `action-registry.ts` (`RegisteredActionId`); §12 of the phase record |
 
 ### Pending decisions — PENDING DECISION
 
 | Ref | Question | Blocks | Where decided |
 |---|---|---|---|
-| **AD-P1** | Where does planner-facing action metadata live? | 37.2, 37.3, 37.4 | 37.1 |
 | **AD-P2** | How is the missing-input state persisted? | 37.7, 37.8 | 37.6 / 37.7 |
 | **AD-P3** | Reuse `AgentToolExecution` or add a `WorkflowProposal` model? | 37.9, 37.11 | 37.8 |
 | **AD-P4** | Which validation gate is canonical — `WorkflowDefinitionSchema` or the issue collector? | 37.5, 37.11 | 37.4 |
 | **AD-P5** | Synthesize layout before persistence, or add a definition-first write path? | 37.11 | 37.10 |
 | **AD-P6** | Where does proposal provenance live, given `definition.id` is a placeholder? | 37.11 | 37.11 |
 | **AD-P7** | Does a durable pause use the unused session-status enum slot? | 37.14 | 37.6 / 37.7 |
+
+**AD-P1 resolved 2026-10-01** (recorded above as AD-15). It is no longer pending.
 
 ---
 
@@ -2757,12 +2829,20 @@ decision is fabricated.**
 | 2026-09-30 | 37.0B | Full repository suite | Local — `npm test` | **PASS** | 28 suites, 440 tests (was 27 / 417) | 37.0B |
 | 2026-09-30 | 37.0B | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.0B |
 | 2026-09-30 | 37.0B | Lint of the 4 touched files | Local — `npx eslint` | **PASS** (no new errors) | same 4 pre-existing `no-explicit-any`; both new test files clean | 37.0B |
+| 2026-10-01 | 37.1 | Capability catalog suite — totality, required/optional fields, output fields, trusted-identity rejection, `comment.add` absence | Local — `npx jest src/tests/workflow/action-capabilities.test.ts` | **PASS** | 32/32 tests | 37.1 |
+| 2026-10-01 | 37.1 | Full repository suite | Local — `npx jest` | **PASS** | 31 suites, 490 tests (was 30 / 458) | 37.1 |
+| 2026-10-01 | 37.1 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.1 |
+| 2026-10-01 | 37.1 | Lint of the 4 touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.1 |
+| 2026-10-01 | 37.1 | Compile-time coupling guard (capability with no registration) | Local — `tsc` on mutated source, reverted | **PASS** (correctly rejected) | `TS2353: '"phantom.action"' does not exist in type 'Record<"task.create", ActionCapability>'` | 37.1 |
+| 2026-10-01 | 37.1 | Compile-time coupling guard (registration with no capability) | Local — `tsc` on mutated source, reverted | **PASS** (correctly rejected) | `TS1360: … does not satisfy the expected type 'Record<"unregistered.new" \| "task.create", ActionCapability>'` | 37.1 |
+| 2026-10-01 | 37.1 | Mutation A — remove `title` from capability output schema | Local — mutation check | **PASS** (correctly detected) | 3 failed / 29 passed | 37.1 |
+| 2026-10-01 | 37.1 | Mutation B — re-advertise `comment.add` in the UI picker | Local — mutation check | **PASS** (correctly detected) | 3 failed / 29 passed | 37.1 |
 
 ### Coverage summary
 
 | Category | Events recorded |
 |---|---|
-| unit | 2 |
+| unit | 4 |
 | integration | 0 |
 | database | 0 |
 | Redis | 0 |
@@ -2772,13 +2852,15 @@ decision is fabricated.**
 | security | 0 |
 | tenant isolation | 2 |
 | validation / persistence boundary | 2 |
+| contract / consistency | 5 |
 | documentation / inspection | 3 |
 
 **Live verification remains outstanding.** The 37.0A tenant-isolation and 37.0B
 node-validation evidence is Jest-level against the in-memory prisma double in
-`src/tests/workflow/helpers/prisma-double.ts`; neither is a live database check,
-and Phase 37.16 remains the phase that owes one. No database, queue, Gemini, or
-real workflow execution has been exercised in this assignment.
+`src/tests/workflow/helpers/prisma-double.ts`; 37.1's evidence is Jest-level and
+compiler-level. None is a live database check, and Phase 37.16 remains the phase
+that owes one. No database, queue, Gemini, or real workflow execution has been
+exercised in this assignment.
 
 ---
 
@@ -2813,12 +2895,10 @@ of any migration — that is a 37.17 item.
 
 # Implementation Ledger
 
-**Historical trail of implementation changes.** No entries exist because no
-implementation has been performed. Phase 0 was documentation only.
+**Historical trail of implementation changes.**
 
 | Date | Phase | File | Change | Reason | Test | Verified |
 |---|---|---|---|---|---|---|
-
 | 2026-09-30 | 37.0 | `docs/architecture/workflows/assignments-37-phase-0-audit.md` | Created | Phase 0 deliverable | N/A | Phase 0 gate |
 | 2026-09-30 | 37.0 | `docs/architecture/workflows/assignments-37-issue-register.md` | Created | Preserve Phase 0 findings | N/A | Reviewed |
 | 2026-09-30 | 37.0 | `docs/architecture/workflows/assignments-37-plan.md` | Created | Revised plan post-Phase 0 | N/A | Reviewed |
@@ -2830,10 +2910,17 @@ implementation has been performed. Phase 0 was documentation only.
 | 2026-09-30 | 37.0B | `src/tests/workflow/workflow-node-validation.test.ts` | Created | I2 regression coverage, both save paths | — | 23/23 |
 | 2026-09-30 | 37.0B | `src/tests/workflow/helpers/prisma-double.ts` | Added `workflow.create` so a create-path test can observe the persisted row | I2 — rejection tests assert nothing reached the database | workflow suite green | VERIFIED 2026-09-30 |
 | 2026-09-30 | 37.0B | `src/tests/workflow/workflow-update-scope.test.ts` | Fixture node given a `label` so it is a valid node | I1 suite must exercise tenant scope, not node shape — real validation would otherwise reject it before the tenant check | 5/5 | VERIFIED 2026-09-30 |
+| 2026-10-01 | 37.1 | `src/lib/workflow-types/action-capabilities.ts` | Created — client-safe capability catalog (input/output schemas, compensation, failure notes) plus derivation helpers | F3 — one authoritative planner-facing capability source without exposing server-only deps | `action-capabilities.test.ts` 32/32 | VERIFIED 2026-10-01 |
+| 2026-10-01 | 37.1 | `src/lib/workflow-types/action-registry.ts` | `ActionRegistry` now `satisfies Record<string, WorkflowAction>`; exports `RegisteredActionId = keyof typeof ActionRegistry` | Couple the catalog to the runtime registry's literal key set (compile-time totality) | `tsc --noEmit` exit 0; TS2353/TS1360 guards | VERIFIED 2026-10-01 |
+| 2026-10-01 | 37.1 | `src/lib/workflow-types/registry.ts` | `AVAILABLE_ACTIONS` projected from `ActionCapabilities`; `ACTION_FIELD_PRESENTATION` typed `Partial<Record<RegisteredActionId, …>>` with no `required` key | I4 — remove the hand-maintained second list that drifted (`comment.add`); derive requiredness/outputs | `action-capabilities.test.ts`; Mutation B fails 3/30 | VERIFIED 2026-10-01 |
+| 2026-10-01 | 37.1 | `src/tests/workflow/action-capabilities.test.ts` | Created | F3/I4 regression: totality, required/optional inputs, output fields, trusted-identity rejection, `comment.add` absence | — | 32/32 |
+| 2026-10-01 | 37.1 | `docs/architecture/workflows/assignments-37-phase-37.1-capability-catalog.md` | Created | 37.1 phase record, three boundaries, AD-P1, I7 | N/A | Reviewed |
 
 **No Prisma schema, migration, prompt, or agent tool has been changed.** The
 execution path (`workflow-run.ts`, `execution/trigger.ts`, `execution/resolver.ts`)
-is untouched — that is I6 and it remains open.
+is untouched — that is I6 and it remains open. Conditional routing
+(`actions/logic/conditions.ts`, the evaluator gate) is untouched — that is I7,
+recorded but not implemented.
 
 ---
 
@@ -2851,7 +2938,8 @@ is untouched — that is I6 and it remains open.
 |---|---|
 | **I5** — maintenance schedule unknown | P1-CHECK. Repository evidence supports "not wired in source" and does not support "does not exist." Verify at 37.16. |
 | F1, F2, F4, F5 | P2 / design forks. Each has a named phase. |
-| I3, I4 | P2/P3 and P1 respectively; I4 gates 37.2 onward but is assigned to 37.1. |
+| **I7** — conditional routing not executable/authorable | P2 scope decision, recorded during 37.1. Non-blocking; no phase claims generated conditional branches until it is decided. |
+| I3 | P2/P3; resolved with later state-machine cleanup. |
 
 **No fictional blockers are recorded.**
 
@@ -2881,6 +2969,9 @@ regardless of intent.
 - [ ] **No execution-path change under 37.0A.** `triggerWorkflowRun`,
       `startWorkflow` and the maintenance/test-run routes are untouched by the
       I1 fix. I6 is a separate ticket.
+- [ ] **No conditional-routing implementation under 37.1.** `executeConditionNode`
+      is not registered, no routing field is added to the canvas, and the
+      evaluator's branch gate is not changed. I7 is a scope decision, not a task.
 
 ---
 
@@ -2891,8 +2982,8 @@ regardless of intent.
 - [x] Phase 37.0 complete — **VERIFIED 2026-09-30** — evidence: `assignments-37-phase-0-audit.md`
 - [x] I1 closed and verified (37.0A) — **VERIFIED 2026-09-30** — evidence: `src/tests/workflow/workflow-update-scope.test.ts`
 - [x] I2 closed and verified (37.0B) — **VERIFIED 2026-09-30** — evidence: `src/tests/workflow/workflow-node-validation.test.ts`
+- [x] 37.1 complete — **VERIFIED 2026-10-01** — evidence: `src/tests/workflow/action-capabilities.test.ts`
 - [ ] **I6 closed and verified (separate ticket, before 37.12)**
-- [ ] 37.1 complete
 - [ ] 37.2 complete
 - [ ] 37.3 complete
 - [ ] 37.4 complete
@@ -2914,13 +3005,13 @@ regardless of intent.
 
 - [ ] All P0 issues verified (I1 ✓, I2 ✓, **I6**) — three separate tickets; none
       substitutes for another. Only I6 remains.
-- [ ] All P1 issues resolved or explicitly deferred (F3, F4, F5, F6, I4)
+- [ ] All P1 issues resolved or explicitly deferred (F3 ✓, I4 ✓; F4, F5, F6 open)
 - [ ] I5 verified or documented as unverifiable
-- [ ] All P2/P3 issues resolved or explicitly deferred (F1, F2, I3)
+- [ ] All P2/P3 issues resolved or explicitly deferred (F1, F2, I3, I7)
 
 ### Decision closure
 
-- [ ] All pending architectural decisions resolved (AD-P1 … AD-P7)
+- [ ] All pending architectural decisions resolved (AD-P2 … AD-P7; AD-P1 ✓ 2026-10-01)
 
 ### Evidence closure
 
@@ -2949,5 +3040,6 @@ regardless of intent.
 ---
 
 *Tracker created 2026-09-30 alongside the Phase 0 audit, issue register, and plan.
-No finding in this document is claimed to be fixed. No test or live verification
-has been performed.*
+Updated 2026-10-01 after Phase 37.1 verification: F3 and I4 are closed with
+evidence, AD-P1 is decided, and I7 is recorded. No deployed/live behavior is
+claimed; all 37.1 evidence is local Jest- and compiler-level.*
