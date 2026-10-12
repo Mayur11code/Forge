@@ -134,6 +134,26 @@ A static proposal of `A`; `B -> A`; `C -> A,B` must parse cleanly. Malformed
 actions, duplicate IDs, bad references, and malformed inputs must fail
 structurally.
 
+> **[IMPLEMENTED — Phase 37.2, 2026-10-12]** `WorkflowProposal` landed as
+> `src/lib/workflow-types/workflow-proposal.ts` (`WorkflowProposalSchema`,
+> `WorkflowProposalStepSchema`, `validateWorkflowProposal`). Per-action input rules
+> are reused from the 37.1 capability catalog; issues carry machine-readable codes
+> and dotted paths. `steps` is a **record keyed by `localRef`** — the key is the
+> identity, so a duplicate id is unrepresentable and no redundant `id` field can
+> drift. `{{...}}` values are accepted as **deferred**, using the existing resolver
+> grammar (no second syntax). This schema is STRUCTURAL: dependency existence,
+> acyclicity and reference resolution remain deferred to 37.3/37.4.
+>
+> **[VERIFIED — Phase 37.2, 2026-10-12]** 45/45 focused tests; full run 32 suites /
+> 535 tests; `tsc` clean; scoped eslint clean. Resource bounds hardened: depth is
+> checked by a bounded, non-recursive traversal **before** serialization, an
+> oversized proposal short-circuits before action validation, and a
+> non-serializable input becomes a structured issue rather than a thrown error.
+> The earlier `PARTIALLY_VERIFIED` status cited a real-model-path parse clause;
+> that clause is **reassigned to 37.5**, which builds and exercises
+> `generateWorkflow`, and is relocated, not waived. See
+> `assignments-37-phase-37.2-workflow-proposal-schema.md`.
+
 ---
 
 # Phase 2 — Build the Action Capability Catalog
