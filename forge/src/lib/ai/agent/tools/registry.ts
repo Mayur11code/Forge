@@ -34,6 +34,11 @@ import {
 } from "./create-task";
 import { executeListTasks, listTasksTool } from "./list-tasks";
 import {
+  describeGenerateWorkflowProposal,
+  executeGenerateWorkflow,
+  generateWorkflowTool,
+} from "./generate-workflow";
+import {
   describeUpdateTaskProposal,
   executeUpdateTask,
   updateTaskTool,
@@ -82,6 +87,14 @@ const registry = {
     tool: listTasksTool,
     executor: executeListTasks,
     policy: READ_ONLY_POLICY,
+  },
+  generateWorkflow: {
+    tool: generateWorkflowTool,
+    executor: executeGenerateWorkflow,
+    policy: READ_ONLY_POLICY,
+    // Presentation only. generateWorkflow is READ_ONLY, so this describer is
+    // not on the confirmation path today; it satisfies the shared contract.
+    describeProposal: describeGenerateWorkflowProposal,
   },
   updateTask: {
     tool: updateTaskTool,

@@ -1060,8 +1060,10 @@ descriptor may contain schema information and must never contain authority.
 **Gate A — before 37.1.**
 P0 security/integrity prerequisites (I1, I2) are either closed, or explicitly
 isolated from the contract work with a named owner and a date. Isolation is
-acceptable for 37.1–37.4 because none of those phases write workflows. It is not
-acceptable for 37.5 onward (Gate E) or for materialization (Gate F).
+isolated from the contract work with a named owner and a date. Isolation is
+acceptable for 37.1–37.5 because none of those phases writes a workflow (37.5's
+`generateWorkflow` is `READ_ONLY`; see AD-17). It is not acceptable once a phase
+writes workflows — materialization at 37.11 (Gate F).
 
 **Gate B — after 37.1.**
 There is exactly one authoritative planner-facing action capability source, and it
@@ -1089,7 +1091,10 @@ verification.
 
 **Gate E — before 37.5 becomes workflow-writing.**
 I1 is closed. The predicate on any workflow write is tenant-scoped, and a
-regression test proves cross-tenant writes are rejected.
+regression test proves cross-tenant writes are rejected. **Phase 37.5
+(2026-10-12)** registered `generateWorkflow` as `READ_ONLY` (AD-17): it performs
+no workflow write, so this gate is not yet exercised by it and remains the
+precondition for the first phase that does write a workflow.
 
 **Gate F — before materialization.**
 F1's decision is resolved — synthesized layout versus a definition-first write

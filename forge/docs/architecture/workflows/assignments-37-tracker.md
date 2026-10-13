@@ -2,9 +2,9 @@
 
 ```text
 Last Updated:     2026-10-12
-Current Phase:    37.4  (37.0A, 37.0B, 37.1, 37.2 and 37.3 VERIFIED)
+Current Phase:    37.5  (37.0A, 37.0B, 37.1, 37.2, 37.3 VERIFIED; 37.4, 37.5 IMPLEMENTED)
 Overall Status:   BLOCKED
-Next Action:      Begin 37.4 — Proposal compiler / semantic validation adapter
+Next Action:      Verify 37.5 — real-model-path parse clause still open (Gate on 37.6 readiness)
 ```
 
 > **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
@@ -38,6 +38,24 @@ Next Action:      Begin 37.4 — Proposal compiler / semantic validation adapter
 > tests (full run 33 suites / 579 tests; `tsc` clean); `resolver.ts` is
 > **unmodified**. Trigger output fields fail closed (no authoritative contract).
 > See `assignments-37-phase-37.3-reference-validator.md`.
+
+> **37.4 IMPLEMENTED 2026-10-12 — not VERIFIED.** The deterministic proposal →
+> `WorkflowDefinition` compiler composes structure, reference and graph-semantic
+> validation into one boundary returning structured `ProposalIssue[]` (25 tests).
+> **F5 CLOSED, AD-P4 resolved** (`collectWorkflowDefinitionIssues` is the canonical
+> gate; `WorkflowDefinitionSchema` remains the runtime read-boundary validator). It
+> was left un-integrated (no production caller) until 37.5, which is why it never
+> earned `VERIFIED`. See `assignments-37-phase-37.4-proposal-compiler.md`.
+
+> **37.5 IMPLEMENTED 2026-10-12 — not VERIFIED.** `generateWorkflow` is registered
+> as a **`READ_ONLY`** tool (AD-17) that compiles a model proposal through the 37.4
+> boundary and returns `{ok:true, proposal}` or the shared `INVALID_INPUT` envelope
+> with exact `path`/`code`/`message`. It creates no `Workflow`/`WorkflowRun`, writes
+> nothing, and executes no action (24 tests; full 35 suites / 628 tests; `tsc`
+> clean). **Gate E satisfied (I1 VERIFIED).** The 37.2 real-model-path parse clause
+> is discharged only on the mocked/scripted path, so the phase is not `VERIFIED`.
+> The stale "three tools" prompt enumeration is deferred to 37.13. See
+> `assignments-37-phase-37.5-generate-workflow.md`.
 
 > **Third P0 recorded 2026-09-30.** **I6 — cross-tenant workflow execution** was
 > added after Phase 0 closed. The P0 set is now **three** issues: I1 (gated 37.5),
@@ -195,8 +213,8 @@ Always use the smallest applicable status.
 | 37.1 | Action capability registry | **VERIFIED** | **P1** | 37.0A, 37.0B (isolation sufficient) | 37.2, 37.3, 37.4 | One authoritative planner-facing capability source | Planner obtains authoritative metadata for every generatable action | 2026-10-01 — 32-case suite + full run 31/490 + tsc clean | Resolves F3, absorbs I4. AD-P1 decided. Responsive `ActionCapabilities` typed against `RegisteredActionId`. |
 | 37.2 | WorkflowProposal schema | **VERIFIED** | P1 | 37.1 | 37.3, 37.4 | `WorkflowProposal` Zod schema | Static A / B→A / C→A,B parses; malformed fails structurally | 2026-10-12 - 45-case suite + full run 32/535 + tsc clean | localRef IDs; no DB IDs, no coordinates, no criticality. Enforces I4. Bounds hardened (bounded depth before serialization; no throw). **Real-model-path parse reassigned to 37.5.** |
 | 37.3 | Reference grammar + validator | **VERIFIED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | 2026-10-12 — 44-case suite + full run 33/579 + tsc clean; resolver diff empty | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`, `UNKNOWN_REFERENCE_SOURCE`, `UNKNOWN_OUTPUT`, `MALFORMED_REFERENCE`, `UNAVAILABLE_REFERENCE_SCOPE`, `UNSAFE_REFERENCE_PATH`, `SELF_REFERENCE`. **No new syntax; resolver unchanged.** Trigger fields fail closed. |
-| 37.4 | Proposal compiler / semantic validation adapter | **NOT_STARTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | — | Resolves F5. Reuses `collectWorkflowDefinitionIssues`. |
-| 37.5 | `generateWorkflow` agent tool | **NOT_STARTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | — | **Gate E: I1 must be VERIFIED.** |
+| 37.4 | Proposal compiler / semantic validation adapter | **IMPLEMENTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | 2026-10-12 — 25-case suite + workflow 13 suites / 287 tests + tsc clean; resolver diff empty | Resolves F5 (AD-P4). Now consumed in production by 37.5. Not independently `VERIFIED`. |
+| 37.5 | `generateWorkflow` agent tool | **IMPLEMENTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | 2026-10-12 — 24-case suite + full 35/628 + tsc clean; resolver/canvas/runtime diff empty | **Gate E: I1 VERIFIED.** Policy `READ_ONLY` (AD-17). Propose-only, no workflow-domain writes. **Real-model-path parse clause (carried from 37.2) not yet satisfied — hence not `VERIFIED`.** Prompt enumeration deferred to 37.13. |
 | 37.6 | Missing-input state | **NOT_STARTED** | P1 | 37.5 | 37.7, 37.8 | Durable `NEEDS_USER_INPUT` state | Model error and missing user info are distinguishable in the protocol | — | F4 part 1. No preemptive migration. |
 | 37.7 | Human criticality state | **NOT_STARTED** | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | — | F4 part 2. |
 | 37.8 | Durable proposal persistence | **NOT_STARTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | — | **PENDING DECISION** — reuse vs new model. |
@@ -1219,8 +1237,8 @@ Pending: none.
 > reference and graph-semantic validation into one boundary returning structured
 > `ProposalIssue[]`. 25 focused tests. `collectWorkflowDefinitionIssues` confirmed
 > canonical (AD-P4); `WorkflowDefinitionSchema` unchanged. F5's premise is
-> corrected below. Not yet integrated — no production caller until 37.5 — so this
-> phase is `IMPLEMENTED`, not `VERIFIED`.
+> corrected below. Its first production caller arrived with 37.5
+> (`generateWorkflow`), but no independent verification carried it to `VERIFIED`.
 
 ### Objective
 
@@ -1383,7 +1401,14 @@ Pending: none.
 
 ### Status
 
-**NOT_STARTED** · Priority: P1
+**IMPLEMENTED** · Priority: P1 · Implemented 2026-10-12
+
+> `generateWorkflow` is registered as a **`READ_ONLY`** tool that compiles a
+> model-supplied proposal through `compileWorkflowProposal` and returns either a
+> validated proposal (`{ok:true, proposal}`) or structured `INVALID_INPUT` issues.
+> It creates no `Workflow`, no `WorkflowRun`, no proposal row, executes no action
+> and enqueues no workflow event. 24 focused tests. The 37.2 real-model-path parse
+> clause is **not yet discharged**, so this phase is `IMPLEMENTED`, not `VERIFIED`.
 
 ### Objective
 
@@ -1433,60 +1458,86 @@ observation or a validated proposal awaiting review.
 
 ### Deliverables
 
-- `generateWorkflow` tool module — path **UNKNOWN**, expected under
-  `src/lib/ai/agent/tools/`
-- Registry entry with policy
-- Proposal describer for the review surface
-- Tests
+- `src/lib/ai/agent/tools/generate-workflow/` — `schema.ts` (re-exports the 37.2
+  `WorkflowProposalSchema`), `tool.ts` (`tool({inputSchema})`), `execute.ts`
+  (compiler call + issue mapping), `describe.ts`, `types.ts`, `index.ts`
+- Registry entry `generateWorkflow` in `src/lib/ai/agent/tools/registry.ts`
+  (`tool` / `executor` / `policy: READ_ONLY_POLICY` / `describeProposal`)
+- Shared `buildStructuredValidationFailure` in
+  `src/lib/ai/agent/tools/shared-output.ts` (reuses the existing
+  `ToolValidationIssue` + failure shape; no new contract)
+- `src/tests/agent/generate-workflow.test.ts`
 
 ### Acceptance Gate
 
-The tool is registered, proposes only, and executes nothing.
+The tool is registered, proposes only, and executes nothing. **Met.**
 
 ### Test Gate
 
-- Tool appears in the model-visible tool set
-- Executor returns structured issues on invalid input
-- No action `execute` is reachable from this tool
-- No `Workflow` row is created by this tool
-- Policy is resolved server-side from the tool name
-- Unregistered-input paths fail closed
+- Tool appears in the model-visible tool set — **met** (`agentTools` includes it)
+- Executor returns structured issues on invalid input — **met**
+  (`UNKNOWN_ACTION`, `UNKNOWN_DEPENDENCY`, `CYCLE`, `UNKNOWN_REFERENCE_SOURCE`,
+  `MISSING_REQUIRED_INPUT` mapped with `path`/`code`/`message` preserved)
+- No action `execute` is reachable from this tool — **met** (spy on
+  `createTaskAction.execute` never called; `startWorkflow` / `publishEvent` /
+  `prisma.task.*` never called)
+- No `Workflow` row is created by this tool — **met** (no workflow model is even
+  reachable from the executor)
+- Policy is resolved server-side from the tool name — **met**
+  (`resolveToolPolicy("generateWorkflow")` → `READ_ONLY`, no confirmation)
+- Unregistered-input paths fail closed — **met**
 
 ### Verification Gate
 
 Integration test proving a `generateWorkflow` turn produces a proposal artifact
-and zero side effects.
+and zero side effects — **met** for the durable tool-result path (persisted under
+the exact `toolCallId`, `AGENT_LOOP_REQUESTED` recorded, `completeToolExecution`
+called, no workflow-domain write).
 
 **Carried from 37.2 (reassigned 2026-10-12):** inspection confirming that a
 proposal produced by the **real model path** parses via `validateWorkflowProposal`
 without a compiler fix-up step. This could not run in 37.2 because the model path
-did not exist; it is completed here, where the `generateWorkflow` turn exists, and
-is a condition of 37.5's own `VERIFIED`.
+did not exist. The 37.5 tests exercise the **mocked/scripted** model path and prove
+the parse is a single step with no fix-up; a live-model run is still owed and is a
+condition of 37.5's own `VERIFIED`.
 
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation:  src/lib/ai/agent/tools/generate-workflow/{schema,tool,execute,describe,types,index}.ts;
+                 registry.ts entry; shared-output.ts helper
+Tests:           npx jest generate-workflow -> 1 suite / 24 tests pass
+                 npx jest src/tests/agent -> 18 suites / 321 tests pass
+                 npx jest src/tests/workflow -> 13 suites / 287 tests pass
+                 npx jest (full) -> 35 suites / 628 tests pass
+                 npx tsc --noEmit -> exit 0; scoped eslint -> 0 errors / 0 warnings
+                 git diff --check -> clean; resolver/canvas/runtime diffs empty
+Verification:    durable tool-result integration case (see Test above)
+Commit/PR:       not committed (working tree)
+Relevant files:  tracker/phase record/decision log (this doc set)
 ```
 
 ### Known Risks / Findings
 
-**I1** — blocking per Gate E. **I2** — not yet closed; this phase writes no
-workflow, so it is not blocking here, but it becomes blocking at 37.10/37.11.
+- **I1** — cleared (37.0A VERIFIED), Gate E satisfied.
+- **I2** — not yet closed; this phase writes no workflow, so not blocking here.
+- The deferred 37.13 prompt still enumerates "exactly three tools"; registering a
+  fourth makes that text stale. The tool is nevertheless in `agentTools`; the
+  prompt text is a 37.13 item.
 
 ### Decisions
 
-Pending: the tool's access classification and therefore whether it requires
-confirmation. `WRITE` is the likely candidate but is a design decision.
+Resolved (2026-10-12): **AD-17 — `generateWorkflow` is `READ_ONLY`.** It performs no
+workflow-domain write, so gating it behind a pre-execution confirmation would
+suppress the compilation and the structured feedback the model needs to
+self-correct; the human approval boundary belongs downstream (37.8/37.9), not at
+proposal time. The confirmer is therefore unused (presentation only).
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-12 | IMPLEMENTED | Tool module + registry entry + describer + shared failure helper; `READ_ONLY` (AD-17) | 24/24 focused; full 35 suites / 628 tests; tsc exit 0; eslint 0; `git diff --check` clean; resolver/canvas/runtime diff empty |
 
 ---
 
@@ -2961,6 +3012,7 @@ decision is fabricated.**
 | AD-14 | Is I6 merged into the I1 ticket? | Merge / Separate tickets | **Separate tickets.** I1 is cross-tenant UPDATE gated at 37.5; I6 is cross-tenant EXECUTION gated at 37.12. Different paths, different regression tests. | 2026-09-30 | I6 documentation | Register I6 |
 | AD-15 (AD-P1) | Where does planner-facing action metadata live? | On `WorkflowAction` / Separate client-safe catalog keyed by action id | **Separate client-safe catalog keyed by action id** (`action-capabilities.ts`). Executable actions import the extended Prisma client and must not enter the browser bundle; the registry stays the execution authority and membership source of truth; UI presentation stays in `registry.ts`. | 2026-10-01 | 37.1 | `action-capabilities.ts`; `action-registry.ts` (`RegisteredActionId`); §12 of the phase record |
 | AD-16 (AD-P4) | Which validation gate is canonical — `WorkflowDefinitionSchema` or the issue collector? | Schema superRefine / issue collector | **The issue collector** (`collectWorkflowDefinitionIssues`) is the canonical graph-semantic gate. The schema's `superRefine` collapses every `code` to `z.ZodIssueCode.custom` and drops the cycle `path`, so the schema stays the runtime read-boundary validator (invoked at `evaluator.ts:223`) and is unchanged. | 2026-10-12 | 37.4 | `workflow-proposal-compiler.ts`; tracker §37.4 Test Gate; `workflow.ts:243-250` |
+| AD-17 | What access classification does `generateWorkflow` carry? | `READ_ONLY` / `WRITE` (`WRITE` gates a pre-execution confirmation) | **`READ_ONLY`.** The tool performs no workflow-domain write, so a pre-execution confirmation would suppress the compilation and the structured `INVALID_INPUT` feedback the model needs to self-correct. The human approval boundary lives downstream (37.8/37.9), not at proposal time. The proposal describer is therefore presentation-only. | 2026-10-12 | 37.5 | `src/lib/ai/agent/tools/generate-workflow/`; `registry.ts`; `policy.ts:17,52-56` |
 
 ### Pending decisions — PENDING DECISION
 
@@ -3036,6 +3088,13 @@ no second dialect.
 | 2026-10-12 | 37.4 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.4 |
 | 2026-10-12 | 37.4 | Lint of the 3 touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.4 |
 | 2026-10-12 | 37.4 | Resolver integrity — source unchanged | Local — `git diff -- src/lib/workflow/execution/resolver.ts` | **PASS** | empty diff | 37.4 |
+| 2026-10-12 | 37.5 | `generateWorkflow` suite — registration/policy/server-side resolution/fail-closed, valid-proposal preservation + no persisted artifact, compiler issues mapped with exact `path`/`code`/`message` (UNKNOWN_ACTION, UNKNOWN_DEPENDENCY, CYCLE, UNKNOWN_REFERENCE_SOURCE, MISSING_REQUIRED_INPUT), schema-level vs compiler boundary, no forbidden side effects (`createTaskAction.execute`, `startWorkflow`, `publishEvent`, `prisma.task.*`), describer + shared-resolver fallback, durable tool-result path | Local — `npx jest generate-workflow` | **PASS** | 24/24 tests | 37.5 |
+| 2026-10-12 | 37.5 | Agent regression suite after registering the tool | Local — `npx jest src/tests/agent` | **PASS** | 18 suites, 321 tests (was 17 / 297) | 37.5 |
+| 2026-10-12 | 37.5 | Workflow regression suite | Local — `npx jest src/tests/workflow` | **PASS** | 13 suites, 287 tests (unchanged) | 37.5 |
+| 2026-10-12 | 37.5 | Full repository suite | Local — `npx jest` | **PASS** | 35 suites, 628 tests (was 34 / 604) | 37.5 |
+| 2026-10-12 | 37.5 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.5 |
+| 2026-10-12 | 37.5 | Lint of the touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.5 |
+| 2026-10-12 | 37.5 | Resolver/canvas/runtime integrity — source unchanged | Local — `git diff` on those paths | **PASS** | empty diff | 37.5 |
 
 ### Coverage summary
 
