@@ -460,6 +460,17 @@ The tool **does not execute workflow actions**.
 
 > **[REVISED — Gate E, I1]** This is the phase at which the agent becomes a
 > workflow writer. I1 must be closed first.
+>
+> **[IMPLEMENTED — 2026-10-12, Phase 37.5, AD-17]** I1 is closed (Gate E
+> satisfied). The tool is registered as `READ_ONLY`, not `WRITE`: it writes
+> nothing, so a pre-execution confirmation would suppress the compilation and the
+> structured feedback the model needs to self-correct. It returns
+> `{ ok: true, proposal }` or the shared `INVALID_INPUT` envelope, and the
+> candidate `WorkflowDefinition` is not returned. The human approval boundary is
+> downstream (Phase 8/9), not here. The prompt text change ("exactly three tools")
+> is deferred to 37.13. The real-model-path clause reassigned from 37.2 is
+> discharged only on the mocked/scripted path, so 37.5 is `IMPLEMENTED`, not
+> `VERIFIED`. See `assignments-37-phase-37.5-generate-workflow.md`.
 
 ---
 
