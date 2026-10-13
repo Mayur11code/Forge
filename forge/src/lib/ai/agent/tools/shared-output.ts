@@ -80,13 +80,49 @@ export function buildValidationFailure(
       message: issue.message,
     }));
 
-  const omitted = error.issues.length - issues.length;
+  return failureFromIssues(issues, error.issues.length, toolName);
+}
+
+/**
+ * Same observation, for tools whose validation does not happen at the tool
+ * boundary.
+ *
+ * `generateWorkflow` delegates to the workflow proposal compiler rather than
+ * re-validating at the edge, so its failures arrive as an already-structured
+ * `{ code, path, message }[]` instead of a `ZodError`. Funnelling them through
+ * the same builder keeps the recovery contract identical: whatever a model
+ * learns from a `createTask` rejection it also learns from a proposal one.
+ *
+ * `issues` are copied so the caller's array cannot be mutated through the
+ * returned value.
+ */
+export function buildStructuredValidationFailure(
+  issues: readonly ToolValidationIssue[],
+  toolName: string,
+): ValidationFailure {
+  const reported = issues
+    .slice(0, MAX_REPORTED_ISSUES)
+    .map((issue) => ({ ...issue }));
+
+  return failureFromIssues(reported, issues.length, toolName);
+}
+
+/**
+ * Shared tail of the two builders: report `kept` issues, say how many were
+ * dropped, and never skip the truncation notice.
+ */
+function failureFromIssues(
+  kept: readonly ToolValidationIssue[],
+  total: number,
+  toolName: string,
+): ValidationFailure {
+  const omitted = total - kept.length;
 
   const summary =
-    issues.length === 0
+    kept.length === 0
       ? `${toolName} received arguments that do not match its schema.`
       : `${toolName} received invalid arguments: ` +
-        issues
+        kept
           .map((issue) => (issue.path ? `${issue.path}: ${issue.message}` : issue.message))
           .join("; ") +
         (omitted > 0
@@ -97,7 +133,7 @@ export function buildValidationFailure(
     ok: false,
     code: "INVALID_INPUT",
     error: summary,
-    issues,
+    issues: [...kept],
   };
 }
 
