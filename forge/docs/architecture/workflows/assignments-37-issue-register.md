@@ -693,6 +693,38 @@ model may eventually prove insufficient. The fork — encode proposal state insi
 the state machine, versus a dedicated model — is taken at 37.6/37.7 with the
 consumer already known.
 
+**Phase 37.6 resolution note (2026-10-14, AD-18):**
+The protocol-level distinction between model error (`INVALID_INPUT`) and missing user information
+(`NEEDS_USER_INPUT`) is implemented schema-free in `src/lib/ai/agent/tools/generate-workflow/`
+along with clarification-intent validation and safe same-session answer continuation logic.
+**37.6 honored the no-preemptive-migration boundary: no Prisma model or migration was created.**
+Final proposal-lifecycle persistence, storage model decision (AgentToolExecution reuse vs dedicated
+WorkflowProposal table), and restart-survival verification are deferred to 37.8 (relocated, not waived).
+**F4 remains OPEN** until the 37.8 persistence decision and acceptance criteria are satisfied.
+
+**Remediation note (2026-10-14):** The continuation lifecycle is now genuinely wired rather than inert.
+The tool worker halts on a `NEEDS_USER_INPUT` result instead of recording `AGENT_LOOP_REQUESTED`
+(which previously sent the model straight back to the same missing input), persists the backend
+`interactionId`, and publishes a `CLARIFICATION_REQUESTED` event. A real ingress route
+(`POST /api/agent/session/[sessionId]/clarification`) and the session GET `clarification` exposure
+give the pending ask a production consumer. Answers are authorised under the session lock, bound to the
+pending `interactionId` + proposal-revision `correlationId`, idempotent on identical repeats and
+`CLARIFICATION_CONFLICT` on changed repeats, and re-enter the bounded loop transactionally.
+`redriveStalledSessions` skips waiting sessions (`skippedWaiting`) so the reaper no longer kills a
+deliberate wait. Surviving a process restart still requires the 37.8 persistence decision.
+
+**Acceptance note (2026-10-17).** 37.6's protocol scope is now `VERIFIED`: the backend `NEEDS_USER_INPUT`
+protocol and same-session clarification continuation are accepted (real ingress + session GET exposure,
+`interactionId`/`correlationId` binding, idempotent/conflicting continuation, reaper `skippedWaiting`). The
+accepted scope is backend-only; no external UI is claimed. **F4 remains open** - the durable
+proposal-lifecycle persistence and restart-survival criteria that keep it open are owned by 37.8.
+
+**Documented limitation (distinct from F4).** Independent verification cannot establish whether a value the
+human had already supplied was actually present in the prior conversation: the continuation path proves an
+answer corresponds to a genuinely missing required input, but no durable record proves the model omitted a
+value the human had already provided. This is a limitation of the current evidence, not the F4 persistence
+fork, and 37.8's schema decision does not by itself resolve it.
+
 ---
 
 ### I5 — Workflow maintenance schedule uncertainty
@@ -943,7 +975,7 @@ execution. Conditional routing is **not** claimed to work end-to-end. See
 | **I4** runtime/UI registry mismatch | **P1** | **37.1** | Reliable output contracts; absence of phantom actions | No — **CLOSED 2026-10-01, with 37.1** |
 | **F6** no reference / data-dependency validation | **P1** | **37.3** | Deterministic step generation; `MISSING_DATA_DEPENDENCY` | No — **CLOSED 2026-10-12** |
 | **F5** schema is not the production semantic gate | **P1** | **37.4** | Deterministic, structured proposal compilation; AD-P4 | No — **CLOSED 2026-10-12** |
-| **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | Not yet — decision at 37.6/37.7 |
+| **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7 / 37.8** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | **Open** — protocol scope VERIFIED 37.6 (2026-10-17, AD-18); persistence deferred to 37.8 |
 | **I5** maintenance schedule unknown | **P1-CHECK** | **37.16** | Capstone recovery verification; only if confirmed absent | Only if confirmed absent |
 | **F1** canvas-first persistence | **P2** | **37.10 / 37.11** | Materialization ordering; layout strategy | No |
 | **F2** definition id/name are placeholders | **P2** | **37.11** | Provenance; correct human-facing name placement | No |
