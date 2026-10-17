@@ -215,7 +215,7 @@ Always use the smallest applicable status.
 | 37.3 | Reference grammar + validator | **VERIFIED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | 2026-10-12 — 44-case suite + full run 33/579 + tsc clean; resolver diff empty | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`, `UNKNOWN_REFERENCE_SOURCE`, `UNKNOWN_OUTPUT`, `MALFORMED_REFERENCE`, `UNAVAILABLE_REFERENCE_SCOPE`, `UNSAFE_REFERENCE_PATH`, `SELF_REFERENCE`. **No new syntax; resolver unchanged.** Trigger fields fail closed. |
 | 37.4 | Proposal compiler / semantic validation adapter | **IMPLEMENTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | 2026-10-12 — 25-case suite + workflow 13 suites / 287 tests + tsc clean; resolver diff empty | Resolves F5 (AD-P4). Now consumed in production by 37.5. Not independently `VERIFIED`. |
 | 37.5 | `generateWorkflow` agent tool | **IMPLEMENTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | 2026-10-12 — 24-case suite + full 35/628 + tsc clean; resolver/canvas/runtime diff empty | **Gate E: I1 VERIFIED.** Policy `READ_ONLY` (AD-17). Propose-only, no workflow-domain writes. **Real-model-path parse clause (carried from 37.2) not yet satisfied — hence not `VERIFIED`.** Prompt enumeration deferred to 37.13. |
-| 37.6 | Missing-input state | **NOT_STARTED** | P1 | 37.5 | 37.7, 37.8 | Durable `NEEDS_USER_INPUT` state | Model error and missing user info are distinguishable in the protocol | — | F4 part 1. No preemptive migration. |
+| 37.6 | Missing-input state | **VERIFIED** | P1 | 37.5 | 37.7, 37.8 | Durable `NEEDS_USER_INPUT` state | Model error and missing user info are distinguishable in the protocol | 2026-10-17 — 28-case suite + durability reaper exemption + generate-workflow 24; 36 suites / 672 tests; full suite 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched | F4 part 1. No preemptive migration. Worker halts (no `AGENT_LOOP_REQUESTED`), publishes `CLARIFICATION_REQUESTED`; `POST .../clarification` ingress; `interactionId`+`correlationId` binding; idempotent continuation under lock; reaper `skippedWaiting`. **VERIFIED (2026-10-17)** for backend protocol + same-session continuation; external UI not claimed. Durability/restart survival deferred to 37.8; F4 open. |
 | 37.7 | Human criticality state | **NOT_STARTED** | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | — | F4 part 2. |
 | 37.8 | Durable proposal persistence | **NOT_STARTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | — | **PENDING DECISION** — reuse vs new model. |
 | 37.9 | Existing confirmation integration | **NOT_STARTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | — | Mechanism already exists. Surface is the work. |
@@ -1545,12 +1545,12 @@ proposal time. The confirmer is therefore unused (presentation only).
 
 ### Status
 
-**NOT_STARTED** · Priority: P1 · F4 part 1
+**VERIFIED** · Priority: P1 · F4 part 1 (Verified 2026-10-17 for backend protocol + same-session continuation; durable proposal persistence deferred to 37.8; F4 open)
 
 ### Objective
 
-Make "the user never supplied this" a first-class, durable, distinguishable
-outcome — distinct from "the model made a mistake".
+Make "the user never supplied this" a first-class, distinguishable outcome — distinct
+from "the model made a mistake".
 
 ### Architectural Role
 
@@ -1559,96 +1559,147 @@ the model either guesses or produces prose that nothing can act on.
 
 ### Inputs / Dependencies
 
-- 37.5
+- 37.5 IMPLEMENTED (`generateWorkflow` tool)
 - **F4 part 1** — `AgentToolExecution` has no `result` column and no
   `NEEDS_INPUT` status (`prisma/schema.prisma`)
 - Existing self-correction path via `AGENT_LOOP_REQUESTED`
 
-### Required semantic distinction
+### Required semantic distinction & naming contract
 
-| Condition | Who resolves it |
-|---|---|
-| `UNKNOWN_DEPENDENCY` | Model self-corrects |
-| `INVALID_INPUT` | Model self-corrects |
-| `CYCLE` | Model self-corrects |
-| `MISSING_USER_INPUT` | **Human is asked** |
+- `MISSING_REQUIRED_INPUT`: Validator diagnostic indicating an action input required by capability schema is absent from the generated proposal.
+- `NEEDS_USER_INPUT`: Control-flow state and top-level protocol discriminator indicating genuine missing user information that requires human clarification.
+- `INVALID_INPUT`: Model-correctable validation error (unknown action, wrong type, cycle, unknown dependency, or unrequested omission).
 
-### Scope
+| Condition | Who resolves it | Protocol Envelope |
+|---|---|---|
+| `UNKNOWN_ACTION` | Model self-corrects | `INVALID_INPUT` (compiler issue) |
+| `INVALID_INPUT` (type/format) | Model self-corrects | `INVALID_INPUT` (compiler issue) |
+| `UNKNOWN_DEPENDENCY` | Model self-corrects | `INVALID_INPUT` (compiler issue) |
+| `CYCLE` | Model self-corrects | `INVALID_INPUT` (compiler issue) |
+| Required field absent, but unrequested | Model self-corrects | `INVALID_INPUT` (`MISSING_REQUIRED_INPUT` issue) |
+| Required field genuinely absent from context | **Human is asked** | `NEEDS_USER_INPUT` (clarification outcome) |
+| Human approval / rejection | Human decides | Existing confirmation path (`PENDING_CONFIRMATION`) |
 
-- Durable representation of the missing-input state
-- `field`, `reason`, `question`, optional `candidateValues?`
-- Continuation after the user answers
-- Distinguishing the two failure classes in the protocol
+### Scope (implemented)
 
-### Out of Scope
+- Protocol representation of `NEEDS_USER_INPUT` (`fields`, `reason`, `question`, optional `candidateValues`, `correlationId`, `proposal`).
+- Clarification-intent validation in `generateWorkflowTool` / `executeGenerateWorkflow`:
+  * Validates that clarification requests match genuinely missing required inputs.
+  * Rejects clarification requests on valid proposals, supplied fields, or invalid/malformed inputs as model errors (`INVALID_INPUT`).
+  * Prevents false `NEEDS_USER_INPUT` classification: cycles, unknown actions, and syntax errors remain model-correctable.
+- Machine-readable continuation (`submitClarificationAnswer` in `clarification-service.ts`):
+  * Auth and session ownership checks; runs under `withAgentSessionLock`.
+  * Binds to the pending ask by backend `interactionId` (= `AgentToolExecution.id`) **and** proposal-revision `correlationId`; mismatch is `STALE_CLARIFICATION`.
+  * Idempotent duplicate answers (same content) and `CLARIFICATION_CONFLICT` on changed repeats.
+  * Re-enters the bounded agent loop via `AGENT_LOOP_REQUESTED` (answer message + outbox event commit together).
+- **Lifecycle wiring (remediation):** the tool worker halts on `NEEDS_USER_INPUT` (no `AGENT_LOOP_REQUESTED`), persists the tool-result with the `interactionId`, and publishes a `CLARIFICATION_REQUESTED` status event; a real ingress route `POST /api/agent/session/[sessionId]/clarification` accepts answers; the session GET route exposes the derived pending `clarification`; `redriveStalledSessions` exempts waiting sessions (`skippedWaiting`).
+- Bounded model self-correction preserved for ordinary omissions.
 
-**Do not invent the final persistence model.** Do not create a migration here.
+### Explicit Persistence-Boundary Decision (37.6 vs 37.8)
 
-- No `WorkflowProposal` table
-- No schema change until the 37.6/37.7 design decision is made
-- No criticality state (37.7)
+- **37.6 owns:** the semantic distinction between model error and missing user information, the `NEEDS_USER_INPUT` protocol contract, the clarification result envelope, and the safe continuation design.
+- **37.8 owns:** the final durable proposal-lifecycle storage decision, including reuse of `AgentToolExecution` versus a dedicated `WorkflowProposal` model and any associated schema migration.
+- **37.6 must not create a new persistence model or Prisma migration.** (Honored: zero migrations, zero Prisma edits).
+- **Full lifecycle durability and restart-survival verification are deferred to 37.8.** They are relocated, not waived.
+- **F4 remains open** until its relevant persistence acceptance criteria have actually been satisfied.
+- 37.6's protocol and same-session continuation scope is marked `VERIFIED` (2026-10-17); the durability/restart-survival criteria that keep F4 open are owned by 37.8.
+- **Documented limitation (not F4):** independent verification cannot establish whether a value the human had
+  already supplied was actually present in the prior conversation - the continuation path proves the answer
+  matches a genuinely missing required input, but no durable record proves the model omitted a value the human
+  had already provided. This is a limitation of the current evidence and is not resolved by 37.8's schema decision.
+
+### Out of Scope (honoured)
+
+- No `WorkflowProposal` table or Prisma migration (deferred to 37.8).
+- No schema change to `AgentSessionStatus` or `AgentToolExecutionStatus`.
+- No criticality state (37.7).
+- No modification to 37.2 `WorkflowProposalSchema`.
 
 ### Expected Implementation
 
-A structured `NEEDS_USER_INPUT` result that the agent can render as a
-user-facing question, and that survives the process boundary. The question text
-is presentation; the state must be machine-readable.
+A structured `NEEDS_USER_INPUT` result that the agent renders as a user-facing
+question. The question text is presentation; the state and fields are machine-readable.
 
 ### Deliverables
 
-- Missing-input state representation — location **UNKNOWN**
-- Continuation path after user answer
-- Tests
-- F4 part-1 design decision recorded
+- Missing-input protocol state: `src/lib/ai/agent/tools/generate-workflow/{types,schema,execute,describe,tool}.ts`
+- Shared output helper: `src/lib/ai/agent/tools/shared-output.ts` (`MissingUserInputField`, `ClarificationFailure`, `buildClarificationFailure`, `isClarificationFailure`, `withClarificationBinding`, `readClarificationInteraction`)
+- Continuation service: `src/lib/ai/agent/services/clarification-service.ts` (`findPendingClarification`, `getPendingClarification`, `hasPendingClarification`, `submitClarificationAnswer`)
+- Ingress route: `src/app/api/agent/session/[sessionId]/clarification/route.ts`; session GET exposes `clarification`
+- Worker halt: `src/lib/ai/agent/tool-worker.ts`; status event: `CLARIFICATION_REQUESTED` (`src/lib/ai/agent/types.ts`)
+- Reaper exemption: `src/lib/ai/agent/reaper.ts` (`skippedWaiting`)
+- Tests: `src/tests/agent/missing-input-protocol.test.ts` (28 tests across Groups A–D), `src/tests/agent/durability.test.ts` (reaper exemption)
+- F4 persistence decision recorded in tracker, plan, and issue register.
 
 ### Acceptance Gate
 
 Model error and missing user information are distinguishable in the protocol, and
-the missing-input state is durable.
+the missing-input state has a machine-readable protocol identity. Full lifecycle
+durability across process restart is deferred to 37.8.
 
 ### Test Gate
 
-- One missing required input → `NEEDS_USER_INPUT`
-- Multiple missing inputs → all reported
-- Model error → self-correction, **not** a user question
-- State survives process restart
-- Continuation after user answer
-- Regenerated proposal remains valid
+- One missing required input → `NEEDS_USER_INPUT` (when clarification requested)
+- Multiple missing inputs → all reported with structured questions and reasons
+- Model error → self-correction (`INVALID_INPUT`), **not** a user question
+- Template references in required fields accepted as deferred (no missing input issue)
+- Null, empty, wrong-type values classified as `INVALID_INPUT`, not missing user input
+- Candidate values included only when grounded; omitted when absent
+- Clarification state cannot be mistaken for `PENDING_CONFIRMATION`
+- Continuation answers validated for auth, correlation, and non-emptiness
+- Re-entry through `AGENT_LOOP_REQUESTED` and re-validation via `compileWorkflowProposal`
+- No workflow execution or materialization during clarification
 
 ### Verification Gate
 
-Integration test: a real missing-input case produces a human question rather than
-a hallucinated value.
+Integration test: a real missing-input case produces a human question (`NEEDS_USER_INPUT`) rather than
+a hallucinated value or false model correction. Full restart-durability verification is deferred to 37.8.
 
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation:  src/lib/ai/agent/tools/generate-workflow/{schema,types,execute,describe,tool}.ts;
+                 src/lib/ai/agent/tools/shared-output.ts;
+                 src/lib/ai/agent/services/clarification-service.ts
+Tests:           npx jest src/tests/agent/missing-input-protocol.test.ts -> 28/28 passed
+                 npx jest src/tests/agent/session-step-claim.test.ts -> 5/5 passed (CAS regression)
+                 npx jest <4 clarification suites> -> 4 suites / 57 tests passed
+                 npx jest durability maintenance -> 2 suites / 59 tests passed
+                 npx jest src/tests/agent src/tests/workflow -> 36 suites / 672 tests passed
+                 npx jest (full suite) -> 40 suites / 692 tests passed
+                 npx tsc --noEmit -> exit 0
+                 npx eslint (changed files) -> 0 errors / 0 warnings
+                 git diff --check -> clean
+                 Prisma schema diff -> empty (no migration)
+Verification:    Protocol discrimination + same-session continuation correlation verified; backend scope accepted 2026-10-17. Durability/restart survival deferred to 37.8 (F4 open).
+Commit/PR:       not committed (working tree)
+Relevant files:  docs/architecture/workflows/assignments-37-{tracker,plan,issue-register}.md;
+                 docs/architecture/workflows/assignments-37-phase-37.6-missing-input-protocol.md
 ```
 
 ### Known Risks / Findings
 
-**F4.** `AgentToolExecution` columns: `id`, `sessionId`, `toolCallId`,
-`toolName`, `input`, `error`, `status`, `confirmedAt`, `cancelledAt`, `expiresAt`,
-`expiredAt`. No `result`. Status enum has no `NEEDS_INPUT`.
-
-**I3.** A session awaiting input would remain `RUNNING` — the session-level pause
-state is unwired (see Decision Log).
+- **F4.** `AgentToolExecution` has no `result` column and no `NEEDS_INPUT` status.
+  Durable proposal lifecycle storage decision deferred to 37.8. F4 remains open.
+- **I3.** Session-level pause state (`WAITING_INPUT`) does not exist in schema.
+  A session waiting for user input relies on client-side answer flow until 37.8.
 
 ### Decisions
 
-Pending: **F4 — how the missing-input state is persisted.** Three options
-identified in the register: encode in `input` and carry through confirmation; grow
-the execution state machine; dedicated model. **Not decided here.**
+- **AD-18 — Missing-Input Protocol and Persistence Boundary Decision:**
+  1. Naming: `MISSING_REQUIRED_INPUT` is a validator diagnostic; `NEEDS_USER_INPUT` is the control-flow clarification state; `INVALID_INPUT` is model self-correction.
+  2. Protocol: Top-level `status: "NEEDS_USER_INPUT"` and `code: "NEEDS_USER_INPUT"` with structured `fields: MissingUserInputField[]`.
+  3. Clarification intent: Model explicitly requests clarification for genuinely missing required inputs. Unrequested omissions remain model-correctable.
+  4. Durability deferral: Full proposal-lifecycle durability and migration belong to 37.8. No migration in 37.6. F4 remains open.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-14 | IMPLEMENTED | Structured clarification protocol (`NEEDS_USER_INPUT`), clarification-intent validation, continuation service; no migration; durability deferred to 37.8 (AD-18; F4 open) | 21/21 focused; 32 suites / 629 tests; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
+| 2026-10-14 | IMPLEMENTED (remediated) | Worker halt + `CLARIFICATION_REQUESTED`; real `POST .../clarification` ingress + session GET exposure; `interactionId`+`correlationId` binding; idempotent/conflict continuation under lock; reaper `skippedWaiting`; canonical `computeProposalCorrelationId` | 28/28 focused + durability reaper tests; 32 suites / 638 tests; full suite 658; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
+| 2026-10-17 | IMPLEMENTED (cleanup) | Enforce `currentStep` compare-and-set predicate in the in-memory prisma double; add `claimNextAgentStep` regression suite (`session-step-claim.test.ts`); correct stale verification totals; correct mocked-boundary comment | 5/5 CAS focused; 3 suites / 87 (`missing-input-protocol durability maintenance`); 3 suites / 83 (`durability maintenance generate-workflow`); 2 suites / 59 (`durability maintenance`); 4 suites / 57 (clarification focused); 36 suites / 672 (agent + workflow); 40 suites / 692 (full); tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
+| 2026-10-17 | VERIFIED | Final acceptance of the backend missing-input protocol and same-session clarification continuation (accepted scope; external UI not claimed); durability/restart survival still OPEN and owned by 37.8; F4 open | `missing-input-protocol` 28/28; `session-step-claim` 5/5; clarification focused 4 suites / 57; agent + workflow 36 suites / 672; full suite 40 suites / 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
 
 ---
 
@@ -3013,18 +3064,21 @@ decision is fabricated.**
 | AD-15 (AD-P1) | Where does planner-facing action metadata live? | On `WorkflowAction` / Separate client-safe catalog keyed by action id | **Separate client-safe catalog keyed by action id** (`action-capabilities.ts`). Executable actions import the extended Prisma client and must not enter the browser bundle; the registry stays the execution authority and membership source of truth; UI presentation stays in `registry.ts`. | 2026-10-01 | 37.1 | `action-capabilities.ts`; `action-registry.ts` (`RegisteredActionId`); §12 of the phase record |
 | AD-16 (AD-P4) | Which validation gate is canonical — `WorkflowDefinitionSchema` or the issue collector? | Schema superRefine / issue collector | **The issue collector** (`collectWorkflowDefinitionIssues`) is the canonical graph-semantic gate. The schema's `superRefine` collapses every `code` to `z.ZodIssueCode.custom` and drops the cycle `path`, so the schema stays the runtime read-boundary validator (invoked at `evaluator.ts:223`) and is unchanged. | 2026-10-12 | 37.4 | `workflow-proposal-compiler.ts`; tracker §37.4 Test Gate; `workflow.ts:243-250` |
 | AD-17 | What access classification does `generateWorkflow` carry? | `READ_ONLY` / `WRITE` (`WRITE` gates a pre-execution confirmation) | **`READ_ONLY`.** The tool performs no workflow-domain write, so a pre-execution confirmation would suppress the compilation and the structured `INVALID_INPUT` feedback the model needs to self-correct. The human approval boundary lives downstream (37.8/37.9), not at proposal time. The proposal describer is therefore presentation-only. | 2026-10-12 | 37.5 | `src/lib/ai/agent/tools/generate-workflow/`; `registry.ts`; `policy.ts:17,52-56` |
+| AD-18 (AD-P2) | How is the missing-input state handled and persisted? | Schema migration now / Protocol in 37.6, durability in 37.8 | **Protocol in 37.6, durability in 37.8.** 37.6 implements the `NEEDS_USER_INPUT` protocol contract, clarification-intent validation, and safe continuation design without adding Prisma models or migrations. Full proposal-lifecycle persistence and restart durability are owned by 37.8. F4 remains OPEN until 37.8 satisfies its criteria. | 2026-10-14 | 37.6 | `src/lib/ai/agent/tools/generate-workflow/`; `clarification-service.ts`; `src/tests/agent/missing-input-protocol.test.ts` |
 
 ### Pending decisions — PENDING DECISION
 
 | Ref | Question | Blocks | Where decided |
 |---|---|---|---|
-| **AD-P2** | How is the missing-input state persisted? | 37.7, 37.8 | 37.6 / 37.7 |
+| **AD-P2** | How is the missing-input state persisted? | 37.7, 37.8 | **Resolved 2026-10-14 by 37.6 (AD-18)**; durable store decided at 37.8 |
 | **AD-P3** | Reuse `AgentToolExecution` or add a `WorkflowProposal` model? | 37.9, 37.11 | 37.8 |
 | **AD-P5** | Synthesize layout before persistence, or add a definition-first write path? | 37.11 | 37.10 |
 | **AD-P6** | Where does proposal provenance live, given `definition.id` is a placeholder? | 37.11 | 37.11 |
 | **AD-P7** | Does a durable pause use the unused session-status enum slot? | 37.14 | 37.6 / 37.7 |
 
 **AD-P1 resolved 2026-10-01** (recorded above as AD-15). It is no longer pending.
+
+**AD-P2 resolved 2026-10-14** (recorded above as AD-18). Protocol contract and continuation design resolved; storage model and restart durability deferred to 37.8.
 
 **AD-P4 resolved 2026-10-12** by 37.4: `collectWorkflowDefinitionIssues` is the
 canonical graph-semantic gate. The compiler calls it directly; the schema's
@@ -3095,12 +3149,29 @@ no second dialect.
 | 2026-10-12 | 37.5 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.5 |
 | 2026-10-12 | 37.5 | Lint of the touched files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.5 |
 | 2026-10-12 | 37.5 | Resolver/canvas/runtime integrity — source unchanged | Local — `git diff` on those paths | **PASS** | empty diff | 37.5 |
+| 2026-10-14 | 37.6 | Missing-input protocol suite — classification (Groups A/B), answer rejection matrix, idempotency/conflict, worker halt vs continuation | Local — `npx jest src/tests/agent/missing-input-protocol.test.ts` | **PASS** | 28/28 tests (was 21) | 37.6 |
+| 2026-10-14 | 37.6 | Reaper exemption for waiting sessions | Local — `npx jest durability maintenance` | **PASS** | `skippedWaiting` exemption + re-drive-after-answer green; 2 suites / 59 tests | 37.6 |
+| 2026-10-14 | 37.6 | Agent + workflow regression suites | Local — `npx jest src/tests/agent src/tests/workflow` | **PASS** | 32 suites, 638 tests (was 629) | 37.6 |
+| 2026-10-14 | 37.6 | Full repository suite | Local — `npx jest` | **PASS** | 36 suites, 658 tests | 37.6 |
+| 2026-10-14 | 37.6 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.6 |
+| 2026-10-14 | 37.6 | Lint of changed files | Local — `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.6 |
+| 2026-10-14 | 37.6 | Whitespace integrity | Local — `git diff --check` | **PASS** | clean | 37.6 |
+| 2026-10-17 | 37.6 | Step-claim CAS regression suite - valid claim advances once, stale/mismatched expected step rejected, duplicate claim is a no-op, unrelated session untouched | Local - `npx jest src/tests/agent/session-step-claim.test.ts` | **PASS** | 5/5 tests | 37.6 |
+| 2026-10-17 | 37.6 | Missing-input + reaper triplet | Local - `npx jest missing-input-protocol durability maintenance` | **PASS** | 3 suites / 87 tests | 37.6 |
+| 2026-10-17 | 37.6 | Reaper + generate-workflow triplet | Local - `npx jest durability maintenance generate-workflow` | **PASS** | 3 suites / 83 tests | 37.6 |
+| 2026-10-17 | 37.6 | Reaper exemption (ground truth) | Local - `npx jest durability maintenance` | **PASS** | 2 suites / 59 tests | 37.6 |
+| 2026-10-17 | 37.6 | Focused clarification suites | Local - `npx jest <4 clarification suites>` | **PASS** | 4 suites / 57 tests | 37.6 |
+| 2026-10-17 | 37.6 | Agent + workflow regression suites | Local - `npx jest src/tests/agent src/tests/workflow` | **PASS** | 36 suites, 672 tests (was 638) | 37.6 |
+| 2026-10-17 | 37.6 | Full repository suite | Local - `npx jest` | **PASS** | 40 suites, 692 tests (was 658) | 37.6 |
+| 2026-10-17 | 37.6 | Type check | Local - `npx tsc --noEmit` | **PASS** | exit 0 | 37.6 |
+| 2026-10-17 | 37.6 | Lint of changed files | Local - `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.6 |
+| 2026-10-17 | 37.6 | Whitespace integrity | Local - `git diff --check` | **PASS** | clean | 37.6 |
 
 ### Coverage summary
 
 | Category | Events recorded |
 |---|---|
-| unit | 20 |
+| unit | 27 |
 | integration | 0 |
 | database | 0 |
 | Redis | 0 |
@@ -3252,7 +3323,7 @@ regardless of intent.
 - [x] 37.3 complete — **VERIFIED 2026-10-12** — reference validator over the existing `{{…}}` grammar; 44 cases green; `MISSING_DATA_DEPENDENCY` enforced; resolver unmodified; F6 closed — evidence: `src/tests/workflow/proposal-references.test.ts`
 - [ ] 37.4 complete
 - [ ] 37.5 complete
-- [ ] 37.6 complete
+- [ ] 37.6 complete — **IMPLEMENTED 2026-10-14 (remediated)** — missing-input protocol + clarification lifecycle; worker halt + `CLARIFICATION_REQUESTED`; `POST .../clarification` ingress; `interactionId`+`correlationId` binding; reaper `skippedWaiting`; 28 cases green; F4 open; durability deferred to 37.8 — evidence: `src/tests/agent/missing-input-protocol.test.ts`, `src/tests/agent/durability.test.ts`
 - [ ] 37.7 complete
 - [ ] 37.8 complete
 - [ ] 37.9 complete

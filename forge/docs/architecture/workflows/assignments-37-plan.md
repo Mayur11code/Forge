@@ -394,10 +394,23 @@ NEEDS_USER_INPUT
 }
 ```
 
-> **[REVISED — F4]** There is nowhere to put this state durably. `AgentToolExecution`
-> has no `result` column and no `NEEDS_INPUT` status, and the only wired gate is
-> `PENDING_CONFIRMATION`. The fork is taken at 37.6, with the consumer known.
-> **No preemptive migration.**
+> **[REVISED — F4 / AD-18, 2026-10-14]** Phase 37.6 implements the `NEEDS_USER_INPUT` protocol
+> envelope, clarification-intent validation, and safe continuation helper (`submitClarificationAnswer`).
+> Final proposal-lifecycle persistence (storage model decision, migration, restart durability) is owned
+> by 37.8. No preemptive migration was created in 37.6. F4 remains open until 37.8 satisfies its criteria.
+>
+> **[REMEDIATED — 2026-10-14]** The lifecycle half is now wired without a schema change: the tool worker
+> halts on `NEEDS_USER_INPUT` (no `AGENT_LOOP_REQUESTED`) and publishes `CLARIFICATION_REQUESTED`;
+> `POST /api/agent/session/[sessionId]/clarification` is the production ingress and the session GET route
+> exposes the derived pending `clarification`; answers bind by `interactionId` + `correlationId` and
+> duplicate/stale answers are idempotent/conflicting; `redriveStalledSessions` exempts waiting sessions
+> (`skippedWaiting`); `computeProposalCorrelationId` is canonical. 28 focused cases green.
+>
+> **[ACCEPTED — 2026-10-17]** Phase 37.6 is `VERIFIED` for the backend missing-input protocol and
+> same-session clarification continuation (real ingress + GET exposure, `interactionId`/`correlationId`
+> binding, idempotent/conflicting continuation, reaper exemption). Accepted scope is backend-only; no
+> external UI is claimed. Durable proposal-lifecycle persistence and restart-survival remain OPEN and owned
+> by 37.8. **F4 remains open.**
 
 ---
 
@@ -1037,6 +1050,10 @@ Phase 37.0A: **VERIFIED 2026-09-30** — I1 closed; the update predicate in
 Phase 37.0B: **VERIFIED 2026-09-30** — I2 closed; node `data` is validated against
 `TriggerNodeDataSchema` / `ActionNodeDataSchema` on both save paths and its
 23-case suite is green. Gate F satisfied.
+Phase 37.6: **VERIFIED 2026-10-17** — backend missing-input protocol (`NEEDS_USER_INPUT`
+vs `INVALID_INPUT`) and same-session clarification continuation accepted; accepted scope is
+backend-only (external UI not claimed). Durable proposal-lifecycle persistence and
+restart-survival remain OPEN and owned by 37.8 (F4 open).
 Current blockers: **I6** — the one remaining P0.
 Current implementation target: **37.1 — Action capability registry**.
 Later architectural decisions: **F1**, **F2**, **F4**. (F5 resolved at 37.4.)
