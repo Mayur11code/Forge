@@ -13,6 +13,7 @@
 import { auth } from "@/lib/auth/auth";
 import { getAgentSessionForUser } from "@/lib/ai/agent/session-service";
 import { getMessages } from "@/lib/ai/agent/services/message-service";
+import { findPendingClarification } from "@/lib/ai/agent/services/clarification-service";
 import { getToolExecutionsForSession } from "@/lib/ai/agent/services/tool-execution-service";
 import { describeToolProposal } from "@/lib/ai/agent/tools/registry";
 import { AgentToolExecutionStatus } from "@prisma/client";
@@ -56,6 +57,11 @@ export async function GET(
       getToolExecutionsForSession(session.id),
     ]);
 
+    // Derived from the transcript, not stored separately. This is what lets a
+    // client rebuild a "we asked for this" card after a refresh, with the exact
+    // interactionId it must answer.
+    const clarification = findPendingClarification(messages);
+
     return Response.json(
       {
         sessionId: session.id,
@@ -68,6 +74,15 @@ export async function GET(
         promptVersion: session.promptVersion,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
+        clarification: clarification
+          ? {
+              interactionId: clarification.interactionId,
+              correlationId: clarification.correlationId,
+              toolName: clarification.toolName,
+              step: clarification.step,
+              fields: clarification.fields,
+            }
+          : null,
         messages: messages.map((message) => ({
           id: message.id,
           step: message.step,

@@ -1,6 +1,6 @@
 import type { JsonValue } from "@/lib/workflow-types/type";
 
-import type { ToolValidationIssue } from "../shared-output";
+import type { MissingUserInputField, ToolValidationIssue } from "../shared-output";
 
 /**
  * A proposal as it crosses the tool boundary.
@@ -50,6 +50,27 @@ export type GenerateWorkflowFailure = {
   issues: ToolValidationIssue[];
 };
 
+/**
+ * Assignment 37.6: Structured clarification outcome.
+ *
+ * Returned when one or more required inputs are genuinely absent from user
+ * context and human clarification is needed. Top-level status and code are
+ * "NEEDS_USER_INPUT", distinguishing this immediately from model-correctable
+ * "INVALID_INPUT" and human approval "PENDING_CONFIRMATION".
+ */
+export type GenerateWorkflowClarification = {
+  ok: false;
+  status: "NEEDS_USER_INPUT";
+  code: "NEEDS_USER_INPUT";
+  error: string;
+  fields: MissingUserInputField[];
+  correlationId: string;
+  proposal?: GeneratedProposal;
+};
+
 export type GenerateWorkflowOutput =
   | GenerateWorkflowSuccess
-  | GenerateWorkflowFailure;
+  | GenerateWorkflowFailure
+  | GenerateWorkflowClarification;
+
+export type { MissingUserInputField };

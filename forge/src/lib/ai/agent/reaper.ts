@@ -54,6 +54,7 @@ import {
   getToolExecutionForWorker,
 } from "./services/tool-execution-service";
 import { getAgentSessionForWorker } from "./session-service";
+import { hasPendingClarification } from "./services/clarification-service";
 
 export type ReapResult = {
   swept: number;
@@ -396,6 +397,15 @@ export type RedriveStalledSessionsResult = {
   skippedLocked: number;
   /** Candidates skipped because the re-read under the lock disagreed. */
   skippedStale: number;
+  /**
+   * Candidates skipped because they are parked waiting on a human answer.
+   *
+   * A session parked on a clarification is not stalled: it is exactly where the
+   * protocol put it, and no timer should advance or fail it. Reported separately
+   * from `skippedStale` so a genuinely stuck session is not disguised as a
+   * deliberate wait.
+   */
+  skippedWaiting: number;
   scanned: number;
   durationMs: number;
   sessionIds: string[];
@@ -508,6 +518,7 @@ export async function redriveStalledSessions({
   let exhausted = 0;
   let skippedLocked = 0;
   let skippedStale = 0;
+  let skippedWaiting = 0;
 
   for (const candidate of candidates) {
     // A null return is the lock telling us a worker is mid-turn. That is the
@@ -540,6 +551,16 @@ export async function redriveStalledSessions({
 
       if (inFlight > 0) {
         return "stale" as const;
+      }
+
+      // A session parked on a clarification is not stalled: it is waiting on a
+      // human, and its "staleness" is the whole point. Re-driving it would send
+      // the model back with the same missing input, and the attempt cap would
+      // eventually fail a session that is behaving exactly as designed. This is
+      // the session-level counterpart to PENDING_CONFIRMATION in the in-flight
+      // execution set.
+      if (await hasPendingClarification(candidate.id)) {
+        return "waiting" as const;
       }
 
       const redriveId = buildStalledSessionRedriveId(
@@ -621,6 +642,11 @@ export async function redriveStalledSessions({
       continue;
     }
 
+    if (outcome === "waiting") {
+      skippedWaiting += 1;
+      continue;
+    }
+
     if (outcome === "exhausted") {
       exhausted += 1;
       failedSessionIds.push(candidate.id);
@@ -643,6 +669,7 @@ export async function redriveStalledSessions({
     exhausted,
     skippedLocked,
     skippedStale,
+    skippedWaiting,
     scanned: candidates.length,
     durationMs: Date.now() - startedAt,
     sessionIds,

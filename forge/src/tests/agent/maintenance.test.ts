@@ -97,6 +97,7 @@ beforeEach(() => {
     exhausted: 0,
     skippedLocked: 0,
     skippedStale: 0,
+    skippedWaiting: 0,
     scanned: 0,
     durationMs: 1,
     sessionIds: [],
@@ -153,9 +154,10 @@ describe("work performed", () => {
       exhausted: 0,
       skippedLocked: 1,
       skippedStale: 1,
+      skippedWaiting: 0,
       scanned: 3,
-      durationMs: 4,
-      sessionIds: ["sess_2"],
+      durationMs: 1,
+      sessionIds: [],
       failedSessionIds: [],
     });
     dispatchMock.mockResolvedValue({

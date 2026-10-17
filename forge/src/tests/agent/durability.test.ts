@@ -506,6 +506,59 @@ function stageRedriveRow({
   });
 }
 
+// A persisted clarification request in the transcript, as the worker writes it.
+// The recovery sweep must treat a session holding one as deliberately parked,
+// not stalled.
+function stageClarificationMessage(interactionId: string) {
+  const toolCallId = `call_${store.messages.length + 1}`;
+  store.messages.push({
+    id: `msg_${store.messages.length + 1}`,
+    sessionId: "sess_1",
+    step: 0,
+    toolCallId,
+    createdAt: new Date(store.messages.length + 1),
+    message: {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId,
+          toolName: "generateWorkflow",
+          output: {
+            type: "json",
+            value: {
+              ok: false,
+              status: "NEEDS_USER_INPUT",
+              code: "NEEDS_USER_INPUT",
+              error: "Clarification required.",
+              interactionId,
+              correlationId: "prop_corr_1234567890abcdef",
+              fields: [
+                {
+                  field: "steps.s1.inputs.projectId",
+                  reason: "r",
+                  question: "q",
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+}
+
+function stageClarificationAnswer(interactionId: string) {
+  store.messages.push({
+    id: `msg_${store.messages.length + 1}`,
+    sessionId: "sess_1",
+    step: 0,
+    toolCallId: interactionId,
+    createdAt: new Date(store.messages.length + 1),
+    message: { role: "user", content: "answered" },
+  });
+}
+
 describe("stalled session recovery", () => {
   beforeEach(() => {
     restorePrismaDouble();
@@ -760,6 +813,37 @@ describe("stalled session recovery", () => {
     expect(result.sessionIds).toEqual(["sess_old"]);
   });
 
+  it("does not re-drive a session that is waiting on a clarification answer", async () => {
+    // The session is stale and has no in-flight execution, so the ordinary
+    // predicate would re-drive it - and the attempt cap would eventually FAIL a
+    // session that is behaving exactly as the protocol designed. A pending
+    // clarification is a deliberate park, not a stall.
+    stageSession();
+    stageClarificationMessage("exec_1");
+
+    const result = await redriveStalledSessions({ now: STALE_AT });
+
+    expect(result.redriven).toBe(0);
+    expect(result.skippedWaiting).toBe(1);
+    expect(result.skippedStale).toBe(0);
+    expect(store.outbox).toHaveLength(0);
+    expect(store.sessions[0].status).toBe("RUNNING");
+  });
+
+  it("re-drives a session once its clarification has been answered", async () => {
+    // The answer retires the pending request, so the session is no longer
+    // waiting and a genuinely stalled continuation is repaired again.
+    stageSession();
+    stageClarificationMessage("exec_1");
+    stageClarificationAnswer("exec_1");
+
+    const result = await redriveStalledSessions({ now: STALE_AT });
+
+    expect(result.redriven).toBe(1);
+    expect(result.skippedWaiting).toBe(0);
+    expect(store.outbox).toHaveLength(1);
+  });
+
   it("returns the same shape as the other duties so the pass can report it", async () => {
     stageSession();
 
@@ -776,6 +860,7 @@ describe("stalled session recovery", () => {
       "sessionIds",
       "skippedLocked",
       "skippedStale",
+      "skippedWaiting",
     ]);
   });
 });
