@@ -23,6 +23,27 @@ export function resetStore() {
   store.outbox = [];
 }
 
+// Applies an update `data` payload to a row, honouring Prisma's atomic
+// `{ increment: n }` operator. The agent loop's durable step claim writes
+// `currentStep: { increment: 1 }`; a double that assigned the operator object
+// verbatim would leave `currentStep` as `{ increment: 1 }` and silently corrupt
+// every later read that treats it as a number.
+function applyUpdate(row: Row, data: Row): void {
+  for (const [key, value] of Object.entries(data)) {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      "increment" in (value as Row) &&
+      typeof (value as { increment: unknown }).increment === "number"
+    ) {
+      row[key] = ((row[key] as number) ?? 0) + (value as { increment: number }).increment;
+      continue;
+    }
+
+    row[key] = value;
+  }
+}
+
 function matches(row: Row, where: Row): boolean {
   if (where.id !== undefined && row.id !== where.id) {
     return false;
@@ -36,6 +57,20 @@ function matches(row: Row, where: Row): boolean {
   }
 
   if (where.userId !== undefined && row.userId !== where.userId) {
+    return false;
+  }
+
+  // Equality predicate on `currentStep`. This is the column the agent loop's
+  // durable step claim uses as its compare-and-set: `claimNextAgentStep` writes
+  // `currentStep: { increment: 1 }` only WHERE `currentStep === expectedStep`.
+  // A double that ignored the predicate would advance a session for ANY expected
+  // step, so a stale or duplicate loop event would be accepted as a real claim
+  // and the CAS would never be exercised. Only the equality form is modelled,
+  // because that is the only shape the agent queries use.
+  if (
+    where.currentStep !== undefined &&
+    row.currentStep !== where.currentStep
+  ) {
     return false;
   }
 
@@ -116,7 +151,7 @@ const updateManySessions = async ({
   const hits = store.sessions.filter((row) => matches(row, where));
 
   for (const row of hits) {
-    Object.assign(row, data);
+    applyUpdate(row, data);
   }
 
   return { count: hits.length };
@@ -151,7 +186,7 @@ const updateManyExecutions = async ({
   const hits = store.executions.filter((row) => matches(row, where));
 
   for (const row of hits) {
-    Object.assign(row, data);
+    applyUpdate(row, data);
   }
 
   return { count: hits.length };
@@ -169,12 +204,40 @@ const findManyExecutions = async ({ where }: { where?: Row } = {}) => {
 const createMessageRow = async ({ data }: { data: Row }) => {
   const message = {
     id: `msg_${store.messages.length + 1}`,
+    // Schema default (`AgentMessage.createdAt @default(now())`). Modelled here
+    // because the transcript read orders by `createdAt`; a row without one makes
+    // that comparison throw, and a connected test that actually re-reads the
+    // transcript it wrote needs the ordering to be real.
+    createdAt: new Date(),
     ...data,
   };
 
   store.messages.push(message);
 
   return message;
+};
+
+// The transcript read the clarification scan depends on. Filtered by the same
+// `matches` helper as everything else (so `sessionId` actually scopes the read)
+// and ordered oldest-first, because "pending" is defined by the ORDER of the
+// request and its answer - a scan with arbitrary order could report an answered
+// request as still pending or vice versa.
+const findManyMessages = async ({
+  where = {},
+  orderBy,
+}: { where?: Row; orderBy?: Row } = {}) => {
+  let rows = store.messages.filter((row) => matches(row, where));
+
+  if (orderBy?.createdAt) {
+    const direction = orderBy.createdAt === "desc" ? -1 : 1;
+    rows = [...rows].sort(
+      (a, b) =>
+        direction *
+        ((a.createdAt as Date).getTime() - (b.createdAt as Date).getTime()),
+    );
+  }
+
+  return rows;
 };
 
 const findFirstTask = async () => null as Row | null;
@@ -459,6 +522,7 @@ export const prismaDouble = {
 
   agentMessage: {
     create: jest.fn(createMessageRow),
+    findMany: jest.fn(findManyMessages),
   },
 
   /**
@@ -521,6 +585,7 @@ export function restorePrismaDouble(): void {
   );
   prismaDouble.agentToolExecution.count.mockImplementation(countExecutions);
   prismaDouble.agentMessage.create.mockImplementation(createMessageRow);
+  prismaDouble.agentMessage.findMany.mockImplementation(findManyMessages);
   prismaDouble.task.findMany.mockImplementation(findManyExecutions);
   prismaDouble.task.findFirst.mockImplementation(findFirstTask);
   prismaDouble.task.update.mockImplementation(findFirstTask);

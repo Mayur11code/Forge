@@ -8,6 +8,30 @@ import type { ToolProposalSummary } from "../policy";
  */
 const MAX_DESCRIBED_STEPS = 8;
 
+function extractProposalInput(input: unknown): {
+  proposal: unknown;
+  clarificationCount: number;
+} {
+  if (typeof input !== "object" || input === null) {
+    return { proposal: input, clarificationCount: 0 };
+  }
+  const obj = input as Record<string, unknown>;
+  if ("proposal" in obj) {
+    const clarificationCount = Array.isArray(obj.clarifications)
+      ? obj.clarifications.length
+      : 0;
+    return { proposal: obj.proposal, clarificationCount };
+  }
+  if ("clarifications" in obj) {
+    const { clarifications, ...rest } = obj;
+    const clarificationCount = Array.isArray(clarifications)
+      ? clarifications.length
+      : 0;
+    return { proposal: rest, clarificationCount };
+  }
+  return { proposal: input, clarificationCount: 0 };
+}
+
 /**
  * Render a persisted proposal for the confirmation surface.
  *
@@ -17,18 +41,12 @@ const MAX_DESCRIBED_STEPS = 8;
  * tool exposes the same optional describer contract through
  * `describeToolProposal`; today that generic resolver is its only caller. This
  * is presentation only and must not be relied on to decide what executes.
- *
- * It parses with the same model-facing schema the tool registers, so the summary
- * describes exactly the input the executor will compile. Input that does not
- * parse has nothing meaningful to show, so the caller falls back to a generic
- * prompt rather than throwing. Action membership is not checked here (the schema
- * does not check it), so an unknown action still renders and is reported by the
- * compiler at execution time, where the error belongs to the model.
  */
 export function describeGenerateWorkflowProposal(
   input: unknown,
 ): ToolProposalSummary | null {
-  const parsed = WorkflowProposalSchema.safeParse(input);
+  const { proposal, clarificationCount } = extractProposalInput(input);
+  const parsed = WorkflowProposalSchema.safeParse(proposal);
 
   if (!parsed.success) {
     return null;
@@ -44,6 +62,13 @@ export function describeGenerateWorkflowProposal(
 
   if (description) {
     fields.push({ label: "Description", value: description });
+  }
+
+  if (clarificationCount > 0) {
+    fields.push({
+      label: "Clarifications",
+      value: `${clarificationCount} requested`,
+    });
   }
 
   for (const [localRef, step] of entries.slice(0, MAX_DESCRIBED_STEPS)) {

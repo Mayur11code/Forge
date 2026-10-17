@@ -1,5 +1,7 @@
 import type { ModelMessage } from "ai";
 
+import type { MissingUserInputField } from "./tools/shared-output";
+
 
 
 
@@ -108,6 +110,28 @@ export type AgentStatusEvent =
         executionId: string;
         toolName: string;
       }
+  | {
+      /**
+       * Assignment 37.6: a tool halted the loop to ask the user for a missing
+       * required input.
+       *
+       * Deliberately distinct from the confirmation events: no action was
+       * proposed, so there is nothing to approve or reject. The loop is parked
+       * - no execution is dispatched and no further model call happens - until
+       * an authenticated answer re-drives it through the outbox.
+       *
+       * `interactionId` is the durable `AgentToolExecution.id` the answer must
+       * be bound to; `correlationId` fingerprints the proposal revision the
+       * question is about. `fields` are the questions, derived server-side from
+       * the persisted tool result like TOOL_PROPOSED's `fields`.
+       */
+      type: "CLARIFICATION_REQUESTED";
+      executionId: string;
+      toolName: string;
+      interactionId: string;
+      correlationId: string;
+      fields: MissingUserInputField[];
+    }
     | {
         /**
          * The approval window closed before the user decided.
