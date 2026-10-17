@@ -1,14 +1,29 @@
+import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import type { ToolResultPart } from "ai";
 
 import type { JsonValue } from "@/lib/workflow-types/type";
-import { compileWorkflowProposal } from "@/lib/workflow-types/workflow-proposal-compiler";
-import type { WorkflowProposal } from "@/lib/workflow-types/workflow-proposal";
+import {
+  compileWorkflowProposal,
+  mapProposalToDefinition,
+  toProposalIssues,
+} from "@/lib/workflow-types/workflow-proposal-compiler";
+import {
+  WorkflowProposalSchema,
+  type WorkflowProposal,
+} from "@/lib/workflow-types/workflow-proposal";
+import { validateProposalReferences } from "@/lib/workflow-types/workflow-proposal-references";
+import { collectWorkflowDefinitionIssues } from "@/lib/workflow-types/workflow";
 
 import {
   buildStructuredValidationFailure,
+  type MissingUserInputField,
   type ToolValidationIssue,
 } from "../shared-output";
+import {
+  ClarificationRequestItemSchema,
+  type ClarificationRequestItem,
+} from "./schema";
 import type {
   GeneratedProposal,
   GeneratedProposalStep,
@@ -16,6 +31,50 @@ import type {
 } from "./types";
 
 type ToolOutput = ToolResultPart["output"];
+
+/**
+ * Canonical JSON with sorted object keys, so the fingerprint depends on the
+ * proposal's CONTENT and not on the key insertion order a provider or transport
+ * happened to produce. Two byte-different-but-equal payloads must correlate to
+ * the same revision, otherwise a resubmitted answer would be rejected as stale.
+ */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(",")}]`;
+  }
+
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
+
+/**
+ * Compute a deterministic correlation ID binding a clarification request
+ * to the exact proposal revision.
+ *
+ * This is a fingerprint, not proof: two revisions that differ only in a field
+ * that does not affect the missing inputs can share it. The authoritative
+ * handle is the worker-stamped `interactionId`; this value is a secondary check
+ * and a human-recognisable revision label.
+ */
+export function computeProposalCorrelationId(proposal: unknown): string {
+  try {
+    const hash = createHash("sha256")
+      .update(stableStringify(proposal))
+      .digest("hex")
+      .slice(0, 16);
+    return `prop_corr_${hash}`;
+  } catch {
+    return `prop_corr_${Date.now()}`;
+  }
+}
 
 /**
  * Bound an arbitrary value to the JSON the tool result will be serialized as.
@@ -85,27 +144,105 @@ function toGeneratedProposal(proposal: WorkflowProposal): GeneratedProposal {
 }
 
 /**
+ * Safely project an uncompiled or partially-valid proposal object for
+ * inclusion in a clarification response.
+ */
+function safeToGeneratedProposal(
+  proposal: unknown,
+): GeneratedProposal | undefined {
+  if (
+    typeof proposal !== "object" ||
+    proposal === null ||
+    !("name" in proposal) ||
+    !("steps" in proposal)
+  ) {
+    return undefined;
+  }
+
+  const p = proposal as {
+    name: string;
+    description?: string;
+    steps: Record<
+      string,
+      {
+        action: string;
+        inputs?: Record<string, unknown>;
+        dependsOn?: string[];
+      }
+    >;
+  };
+
+  const steps: Record<string, GeneratedProposalStep> = {};
+  for (const [localRef, step] of Object.entries(p.steps)) {
+    steps[localRef] = {
+      action: step.action,
+      inputs: toJsonObject(step.inputs ?? {}),
+      dependsOn: Array.isArray(step.dependsOn) ? [...step.dependsOn] : [],
+    };
+  }
+
+  return {
+    name: p.name,
+    ...(p.description !== undefined ? { description: p.description } : {}),
+    steps,
+  };
+}
+
+/**
+ * Dissect input into proposal payload and optional clarification requests.
+ */
+function extractProposalAndClarifications(input: unknown): {
+  proposalInput: unknown;
+  clarifications?: ClarificationRequestItem[];
+} {
+  if (typeof input !== "object" || input === null) {
+    return { proposalInput: input };
+  }
+
+  const obj = input as Record<string, unknown>;
+
+  // Form A: { proposal: { ... }, clarifications: [ ... ] }
+  if ("proposal" in obj && "clarifications" in obj) {
+    return {
+      proposalInput: obj.proposal,
+      clarifications: Array.isArray(obj.clarifications)
+        ? (obj.clarifications as ClarificationRequestItem[])
+        : undefined,
+    };
+  }
+
+  // Form B: { name, description?, steps, clarifications: [ ... ] }
+  if ("clarifications" in obj) {
+    const { clarifications, ...proposalOnly } = obj;
+    return {
+      proposalInput: proposalOnly,
+      clarifications: Array.isArray(clarifications)
+        ? (clarifications as ClarificationRequestItem[])
+        : undefined,
+    };
+  }
+
+  // Standard proposal without clarifications
+  return { proposalInput: input };
+}
+
+/**
  * Executor for the generateWorkflow agent tool.
  *
  * Responsibilities:
- *  1. Reject a null payload. The model-facing schema is an object schema, so a
- *     null can only come from a caller bug, not from the model; that is treated
- *     as an unexpected error rather than as model input.
- *  2. Delegate the entire validation boundary to `compileWorkflowProposal`. It is
- *     the single authority for structure, action membership, reference integrity
- *     and graph semantics. This executor adds no rules and repairs nothing.
- *  3. Return the validated proposal, or the compiler's issues in the shared
- *     failure envelope.
+ *  1. Reject a null payload.
+ *  2. Dissect input to determine if the caller requested clarification for missing user input.
+ *  3. In standard proposal mode:
+ *     Delegate to `compileWorkflowProposal`. If compilation fails, return `INVALID_INPUT`
+ *     so the model self-corrects in the existing bounded agent loop (even for missing inputs).
+ *  4. In clarification mode:
+ *     - Validate that any model errors (unknown action, cycle, malformed input, invalid reference)
+ *       short-circuit to `INVALID_INPUT` for model correction.
+ *     - Validate that every requested clarification field corresponds to a genuinely missing
+ *       required input in the proposal (preventing false clarification claims).
+ *     - If valid, return structured `NEEDS_USER_INPUT` with field questions and correlation ID.
  *
- * READ_ONLY by policy: it reads nothing and writes nothing. The candidate
- * `WorkflowDefinition` the compiler also produces is deliberately not returned:
- * no workflow is created, saved, scheduled or run here. Expected validation
- * failures are returned, never thrown; unexpected programming errors remain
- * unexpected.
- *
- * No `ToolExecutionContext` is taken because no trusted identity is needed or
- * used: a proposal carries no organization, user or database id, and compilation
- * never touches the database.
+ * READ_ONLY by policy: reads and writes nothing in the workflow domain.
  */
 export async function executeGenerateWorkflow(
   input: Prisma.JsonValue,
@@ -114,9 +251,87 @@ export async function executeGenerateWorkflow(
     throw new Error("Tool input cannot be null.");
   }
 
-  const result = compileWorkflowProposal(input);
+  const { proposalInput, clarifications } =
+    extractProposalAndClarifications(input);
 
-  if (!result.success) {
+  const result = compileWorkflowProposal(proposalInput);
+
+  // Path 1: Standard proposal without clarification requests.
+  if (!clarifications || clarifications.length === 0) {
+    if (!result.success) {
+      const issues: ToolValidationIssue[] = result.issues.map((issue) => ({
+        path: issue.path,
+        code: issue.code,
+        message: issue.message,
+      }));
+
+      const value: GenerateWorkflowOutput = buildStructuredValidationFailure(
+        issues,
+        "generateWorkflow",
+      );
+
+      return { type: "json", value };
+    }
+
+    const value: GenerateWorkflowOutput = {
+      ok: true,
+      proposal: toGeneratedProposal(result.proposal),
+    };
+
+    return { type: "json", value };
+  }
+
+  // Path 2: Proposal with clarification requests.
+  // Validate clarification items schema
+  const validationIssues: ToolValidationIssue[] = [];
+  const validRequests: ClarificationRequestItem[] = [];
+
+  for (let i = 0; i < clarifications.length; i++) {
+    const parsed = ClarificationRequestItemSchema.safeParse(clarifications[i]);
+    if (!parsed.success) {
+      for (const err of parsed.error.issues) {
+        validationIssues.push({
+          path: `clarifications.${i}.${err.path.join(".")}`,
+          code: "INVALID_INPUT",
+          message: err.message,
+        });
+      }
+    } else {
+      validRequests.push(parsed.data);
+    }
+  }
+
+  if (validationIssues.length > 0) {
+    const value: GenerateWorkflowOutput = buildStructuredValidationFailure(
+      validationIssues,
+      "generateWorkflow",
+    );
+    return { type: "json", value };
+  }
+
+  // If the proposal is already valid with no issues, no clarification is needed
+  if (result.success) {
+    const value: GenerateWorkflowOutput = buildStructuredValidationFailure(
+      [
+        {
+          path: "clarifications",
+          code: "INVALID_INPUT",
+          message:
+            "Clarification requested for a workflow proposal that is already valid and complete with no missing required inputs.",
+        },
+      ],
+      "generateWorkflow",
+    );
+    return { type: "json", value };
+  }
+
+  // Check if there are any compiler issues that are NOT MISSING_REQUIRED_INPUT.
+  // Model-correctable errors (UNKNOWN_ACTION, UNKNOWN_DEPENDENCY, CYCLE, MALFORMED_REFERENCE, etc.)
+  // must be corrected by the model in the bounded loop, NOT sent to the human as questions.
+  const modelErrors = result.issues.filter(
+    (issue) => issue.code !== "MISSING_REQUIRED_INPUT",
+  );
+  if (modelErrors.length > 0) {
     const issues: ToolValidationIssue[] = result.issues.map((issue) => ({
       path: issue.path,
       code: issue.code,
@@ -127,13 +342,105 @@ export async function executeGenerateWorkflow(
       issues,
       "generateWorkflow",
     );
-
     return { type: "json", value };
   }
 
+  // The only compiler issues are MISSING_REQUIRED_INPUT.
+  // Verify that every clarification request corresponds to a real missing required input.
+  const missingPaths = new Set(result.issues.map((i) => i.path));
+  const requestedPaths = new Set(validRequests.map((r) => r.field));
+
+  const clarificationErrors: ToolValidationIssue[] = [];
+
+  for (const req of validRequests) {
+    if (!missingPaths.has(req.field)) {
+      clarificationErrors.push({
+        path: req.field,
+        code: "INVALID_INPUT",
+        message: `Field "${req.field}" is not a missing required input in the workflow proposal.`,
+      });
+    }
+  }
+
+  // Also check if any required inputs were omitted without being covered by clarification requests
+  for (const issue of result.issues) {
+    if (!requestedPaths.has(issue.path)) {
+      clarificationErrors.push({
+        path: issue.path,
+        code: "MISSING_REQUIRED_INPUT",
+        message: issue.message,
+      });
+    }
+  }
+
+  if (clarificationErrors.length > 0) {
+    const value: GenerateWorkflowOutput = buildStructuredValidationFailure(
+      clarificationErrors,
+      "generateWorkflow",
+    );
+    return { type: "json", value };
+  }
+
+  // Ensure downstream graph and reference semantics have no model-correctable errors
+  // (cycles, dangling dependencies, invalid {{...}} paths) before asking the human.
+  const parsedProposal = WorkflowProposalSchema.safeParse(proposalInput);
+  if (parsedProposal.success) {
+    const proposal = parsedProposal.data;
+    const refIssues = validateProposalReferences(proposal);
+    if (refIssues.length > 0) {
+      const issues: ToolValidationIssue[] = refIssues.map((issue) => ({
+        path: issue.path,
+        code: issue.code,
+        message: issue.message,
+      }));
+      return {
+        type: "json",
+        value: buildStructuredValidationFailure(issues, "generateWorkflow"),
+      };
+    }
+
+    const definition = mapProposalToDefinition(proposal);
+    const graphIssues = collectWorkflowDefinitionIssues(definition);
+    if (graphIssues.length > 0) {
+      const issues: ToolValidationIssue[] = toProposalIssues(graphIssues).map(
+        (issue) => ({
+          path: issue.path,
+          code: issue.code,
+          message: issue.message,
+        }),
+      );
+      return {
+        type: "json",
+        value: buildStructuredValidationFailure(issues, "generateWorkflow"),
+      };
+    }
+  }
+
+  // All missing inputs are verified as genuine user omissions with valid clarification requests.
+  const correlationId = computeProposalCorrelationId(proposalInput);
+
+  const fields: MissingUserInputField[] = validRequests.map((req) => {
+    const fieldEntry: MissingUserInputField = {
+      field: req.field,
+      reason: req.reason,
+      question: req.question,
+    };
+    if (req.candidateValues && req.candidateValues.length > 0) {
+      fieldEntry.candidateValues = toJsonValue(
+        req.candidateValues,
+      ) as JsonValue[];
+    }
+    return fieldEntry;
+  });
+
   const value: GenerateWorkflowOutput = {
-    ok: true,
-    proposal: toGeneratedProposal(result.proposal),
+    ok: false,
+    status: "NEEDS_USER_INPUT",
+    code: "NEEDS_USER_INPUT",
+    error: `Clarification required: missing user information for ${fields.map((f) => f.field).join(", ")}.`,
+    fields,
+    correlationId,
+    proposal: safeToGeneratedProposal(proposalInput),
   };
 
   return { type: "json", value };
