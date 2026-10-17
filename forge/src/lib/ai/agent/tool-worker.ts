@@ -9,6 +9,7 @@ import {
   markToolExecutionRunning,
 } from "./services/tool-execution-service";
 import { getToolExecutor } from "./tools/registry";
+import { withClarificationBinding } from "./tools/shared-output";
 import type { ToolExecutionWorkerEvent } from "./worker-types";
 import { recordAgentEvent } from "./outbox";
 // The RAW client, for the transactional tool-result + outbox path below. The
@@ -139,6 +140,14 @@ export async function handleToolExecution({
             },
           );
 
+        // A clarification result is a HALT, not a continuation. Attaching the
+        // backend-owned interaction id here is what makes the pending request
+        // answerable: the executor is pure and never sees the execution row, so
+        // this is the only point that can bind the ask to a durable handle.
+        const { output, clarification } = withClarificationBinding(
+          result,
+          execution.id,
+        );
 
         // The tool result and the intent to continue the conversation are
         // written in ONE transaction.
@@ -148,6 +157,13 @@ export async function handleToolExecution({
         // requested left a complete tool result with nothing to consume it, and
         // the session sat silent until the reaper eventually killed it. The
         // result is now durable together with the reason to re-drive the loop.
+        //
+        // A clarification is the exception to the continuation half: asking the
+        // human is not a reason to re-drive the model. Recording
+        // AGENT_LOOP_REQUESTED here would send the loop straight back to the
+        // model with the same missing input, which is the exact spin the
+        // missing-input protocol exists to stop. The result still commits
+        // durably - it is the request the human will answer.
         await db.$transaction(async (tx) => {
           await createMessage({
             sessionId: execution.sessionId,
@@ -159,34 +175,50 @@ export async function handleToolExecution({
                 type: "tool-result",
                 toolCallId: execution.toolCallId,
                 toolName: execution.toolName,
-                output: result,
+                output,
               }],
             },
             tx,
           });
 
-          await recordAgentEvent({
-            tx,
-            eventType: "AGENT_LOOP_REQUESTED",
-            sessionId: execution.sessionId,
-            aggregateId: `${execution.sessionId}:${expectedStep}`,
-            payload: {
+          if (!clarification) {
+            await recordAgentEvent({
+              tx,
+              eventType: "AGENT_LOOP_REQUESTED",
               sessionId: execution.sessionId,
-              expectedStep,
-              orgId: execution.session.orgId,
-            },
-          });
+              aggregateId: `${execution.sessionId}:${expectedStep}`,
+              payload: {
+                sessionId: execution.sessionId,
+                expectedStep,
+                orgId: execution.session.orgId,
+              },
+            });
+          }
         });
 
         // CAS-guarded: a duplicate delivery that lost the race cannot stamp
-        // COMPLETED over a row another worker already advanced.
+        // COMPLETED over a row another worker already advanced. The execution
+        // finished either way; only the continuation differs.
         await completeToolExecution(execution.id);
 
-        await publishAgentStatus(execution.sessionId, {
-          type: "TOOL_COMPLETED",
-          executionId: execution.id,
-          toolName: execution.toolName,
-        });
+        if (clarification) {
+          // The loop is parked. Status is a UI signal, not domain state: the
+          // durable request is the persisted tool result above.
+          await publishAgentStatus(execution.sessionId, {
+            type: "CLARIFICATION_REQUESTED",
+            executionId: execution.id,
+            toolName: execution.toolName,
+            interactionId: clarification.interactionId ?? execution.id,
+            correlationId: clarification.correlationId ?? "",
+            fields: clarification.fields,
+          });
+        } else {
+          await publishAgentStatus(execution.sessionId, {
+            type: "TOOL_COMPLETED",
+            executionId: execution.id,
+            toolName: execution.toolName,
+          });
+        }
       } catch (error) {
         const message =
           error instanceof Error
