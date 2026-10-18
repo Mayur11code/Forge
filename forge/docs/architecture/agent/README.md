@@ -174,7 +174,9 @@ executor + policy with the model-facing map derived from it, one read tool, two
 write tools, durable user confirmation **with an expiry**, trusted context,
 canonical task create/update/read operations, Pusher transport, session
 recovery, prompt provenance, a **transactional outbox**, and a **scheduled
-maintenance pass**. The UI is still the only missing piece of this diagram.
+maintenance pass**. A workflow-builder session client now exists (37.9.1,
+`/org/[orgId]/ai`); the general conversational UI is still the missing piece of
+this diagram.
 
 ### Target
 
@@ -195,7 +197,8 @@ flowchart TD
     EV --> UI[UI]
 ```
 
-Still missing: the **UI** and **destructive** tools. The **outbox** and the
+Still missing: the **general conversational UI** (a workflow-builder session
+client exists as of 37.9.1) and **destructive** tools. The **outbox** and the
 recovery **scheduler** are now implemented — see
 [`runtime.md`](./runtime.md#transactional-outbox) and
 [`roadmap.md`](./roadmap.md#phase-4--durability--crash-recovery).
@@ -222,11 +225,13 @@ exercised end to end. It has not.
   decision, not a code change.
 - **Pusher, NextAuth, Prisma, Redis and QStash are unit-tested or statically
   reviewed only.** No live integration test exists.
-- **There is no client.** Nothing in the app calls `POST /api/agent/init`,
-  `GET /api/agent/session/[sessionId]`, or the confirm/cancel endpoints, and
-  nothing subscribes to a `private-agent-*` channel. The entire agent subsystem
-  currently has no UI. The server-side contract is complete; the client is not
-  written.
+- **The agent subsystem has no *general* client.** *Updated 2026-10-19:* a
+  workflow-builder session client now exists (`WorkflowProposalPanel` at
+  `/org/[orgId]/ai`, from 37.9.1), which calls `POST /api/agent/init` and
+  `GET /api/agent/session/[sessionId]`. Still absent: a general conversational
+  client, any subscriber to a `private-agent-*` channel, and any caller of the
+  tool confirm/cancel endpoints. The server-side contract is complete; the
+  general client is not written.
 - **The maintenance schedule runs, but only through a temporary tunnel.** The
   handler is implemented, registered on `/api/worker`, and driven by schedule
   `scd_6x2LU8qSUyNjxuveHoyM8tPo4ykj` every five minutes; real signed ticks have

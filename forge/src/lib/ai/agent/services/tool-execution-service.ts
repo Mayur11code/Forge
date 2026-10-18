@@ -149,6 +149,19 @@ const executionSelect = {
   cancelledAt: true,
   expiresAt: true,
   expiredAt: true,
+  // Assignment 37.8: the durable proposal lifecycle, so a reader can tell a
+  // parked proposal (a human decision is pending) from an in-flight tool.
+  proposalState: true,
+  proposalFingerprint: true,
+  proposalRevision: true,
+  // Assignment 37.9: the read route renders the pending review and the settled
+  // outcome from the SAME rows it already fetched, so the proposal result and the
+  // recorded human inputs are included here rather than behind a second query.
+  // The route's response mapping decides what is exposed; this is the internal
+  // read surface.
+  result: true,
+  criticalityDecisions: true,
+  clarificationAnswer: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.AgentToolExecutionSelect;
@@ -611,24 +624,6 @@ export async function heartbeatToolExecution(
       },
       data: {
         updatedAt: new Date(),
-      },
-    });
-
-  return count === 1;
-}
-
-export async function completeToolExecution(
-  executionId: string,
-) {
-  const { count } =
-    await prisma.agentToolExecution.updateMany({
-      where: {
-        id: executionId,
-        status: AgentToolExecutionStatus.RUNNING,
-      },
-      data: {
-        status: AgentToolExecutionStatus.COMPLETED,
-        error: null,
       },
     });
 

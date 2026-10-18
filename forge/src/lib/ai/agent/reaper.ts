@@ -55,6 +55,12 @@ import {
 } from "./services/tool-execution-service";
 import { getAgentSessionForWorker } from "./session-service";
 import { hasPendingClarification } from "./services/clarification-service";
+import {
+  expireProposalReview,
+  findDueProposalReviewCandidates,
+  hasPendingProposal,
+  hasSettledProposal,
+} from "./services/proposal-service";
 
 export type ReapResult = {
   swept: number;
@@ -204,6 +210,85 @@ export async function expireStaleApprovals({
   return {
     expired,
     continued,
+    skipped,
+    scanned: candidates.length,
+    durationMs: Date.now() - startedAt,
+    errors,
+  };
+}
+
+export type ExpireProposalReviewsResult = {
+  /** Proposals actually transitioned to EXPIRED by the CAS. */
+  expired: number;
+  /** Due, but the human decided first or the CAS lost - nothing to do. */
+  skipped: number;
+  scanned: number;
+  durationMs: number;
+  errors: string[];
+};
+
+/**
+ * AWAITING_APPROVAL -> EXPIRED for every proposal review whose window closed.
+ *
+ * Assignment 37.9, owner decision C. This is the proposal-lifecycle counterpart
+ * to `expireStaleApprovals`, and it is deliberately NOT the same sweep: a tool
+ * approval is PENDING_CONFIRMATION (the tool has not run) and an expiry there
+ * continues the loop so the model can report the timeout. A proposal review is
+ * AWAITING_APPROVAL (the tool already ran) and an expiry is a silent terminal
+ * transition - the model is not re-entered, because the deferred-trigger
+ * decision rules that out and a decided proposal is not a turn to continue.
+ *
+ * Idempotent and bounded: candidates are capped and ordered by deadline, and
+ * every transition is a CAS (`state = AWAITING_APPROVAL AND expiresAt <= now`),
+ * so overlapping passes and a partially completed pass both behave correctly.
+ * A race with a human who approves just as the timeout fires resolves in the
+ * human's favour, because the CAS no longer matches AWAITING_APPROVAL.
+ */
+export async function expireStaleProposalReviews({
+  limit = AGENT_MAINTENANCE_BATCH_SIZE,
+  now = new Date(),
+}: {
+  limit?: number;
+  now?: Date;
+} = {}): Promise<ExpireProposalReviewsResult> {
+  const startedAt = Date.now();
+
+  const candidates = await findDueProposalReviewCandidates(limit, now);
+
+  let expired = 0;
+  let skipped = 0;
+  const errors: string[] = [];
+
+  for (const candidate of candidates) {
+    try {
+      // The CAS and (nothing else) commit together. There is no transcript write
+      // and no outbox intent: the durable proposal state IS the record, and the
+      // session read route surfaces EXPIRED from it after a restart.
+      const didExpire = await db.$transaction((tx) =>
+        expireProposalReview(tx, {
+          executionId: candidate.id,
+          sessionId: candidate.sessionId,
+          now,
+        }),
+      );
+
+      if (didExpire) {
+        expired += 1;
+      } else {
+        skipped += 1;
+      }
+    } catch (error) {
+      // One bad candidate must not abandon the rest of the batch. Because the
+      // expiry is a CAS, a failure leaves the proposal AWAITING_APPROVAL and it is
+      // retried on the next tick.
+      errors.push(
+        `${candidate.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  return {
+    expired,
     skipped,
     scanned: candidates.length,
     durationMs: Date.now() - startedAt,
@@ -560,6 +645,27 @@ export async function redriveStalledSessions({
       // the session-level counterpart to PENDING_CONFIRMATION in the in-flight
       // execution set.
       if (await hasPendingClarification(candidate.id)) {
+        return "waiting" as const;
+      }
+
+      // Assignment 37.8: the same exemption for a proposal parked on a human
+      // decision (AWAITING_CRITICALITY, then AWAITING_APPROVAL). The execution
+      // row is COMPLETED - the tool ran - so the in-flight filter above cannot
+      // see it, and without this check the reaper would re-drive the model and
+      // regenerate the very proposal the human is deciding on.
+      if (await hasPendingProposal(candidate.id)) {
+        return "waiting" as const;
+      }
+
+      // Assignment 37.9: a session whose proposal has been APPROVED, DECLINED or
+      // EXPIRED is also not stalled. The execution is COMPLETED and no proposal
+      // is "pending" anymore, so nothing above sees it - but the model must not
+      // be re-driven either: an approved proposal awaits materialization (37.11),
+      // and a decided or expired one is a finished turn that no timer may
+      // restart. Without this the reaper would regenerate work a human already
+      // ruled on. Grouped with `waiting` because the outcome (do not touch) is
+      // identical; the distinction is only in why.
+      if (await hasSettledProposal(candidate.id)) {
         return "waiting" as const;
       }
 

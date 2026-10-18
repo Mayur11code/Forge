@@ -48,6 +48,9 @@ jest.mock("@/lib/workflow/execution/trigger", () => ({
 jest.mock("@/lib/ai/agent/status", () => ({ publishAgentStatus: jest.fn() }));
 
 jest.mock("@/lib/ai/agent/locks", () => ({
+  withAgentSessionLock: jest.fn(
+    async (_id: string, fn: () => Promise<void>) => fn(),
+  ),
   withToolExecutionLock: jest.fn(
     async (_id: string, fn: () => Promise<void>) => fn(),
   ),
@@ -68,15 +71,21 @@ jest.mock("@/lib/ai/agent/outbox", () => ({
 jest.mock("@/lib/ai/agent/services/tool-execution-service", () => ({
   getToolExecutionForWorker: jest.fn(),
   markToolExecutionRunning: jest.fn(),
-  completeToolExecution: jest.fn(),
   failToolExecution: jest.fn(),
   abandonToolExecution: jest.fn(),
   heartbeatToolExecution: jest.fn(async () => true),
 }));
 
+import { z } from "zod";
+
 import type { Prisma } from "@prisma/client";
 
-import { prismaDouble } from "./helpers/prisma-double";
+import {
+  prismaDouble,
+  resetStore,
+  restorePrismaDouble,
+  store,
+} from "./helpers/prisma-double";
 
 import { createTaskAction } from "@/lib/workflow/actions/core/create-task";
 import {
@@ -97,13 +106,14 @@ import {
 import {
   describeGenerateWorkflowProposal,
   executeGenerateWorkflow,
+  generateWorkflowAcceptedInputSchema,
+  generateWorkflowModelInputSchema,
   generateWorkflowSchema,
   generateWorkflowTool,
 } from "@/lib/ai/agent/tools/generate-workflow";
 import { createMessage } from "@/lib/ai/agent/services/message-service";
 import { recordAgentEvent } from "@/lib/ai/agent/outbox";
 import {
-  completeToolExecution,
   getToolExecutionForWorker,
   heartbeatToolExecution,
   markToolExecutionRunning,
@@ -216,9 +226,10 @@ describe("generateWorkflow registration and policy", () => {
     expect(smuggled.success).toBe(false);
   });
 
-  it("reuses the 37.2 proposal contract as its model-facing schema", () => {
+  it("keeps the 37.2 proposal contract as the parser/compat schema", () => {
     // One schema, not a copy: a proposal the model was told is well-formed
-    // cannot be rejected by a drifting duplicate.
+    // cannot be rejected by a drifting duplicate. The model-facing schema is
+    // DERIVED from it (see the suite below), so the two cannot drift either.
     expect(generateWorkflowSchema).toBe(WorkflowProposalSchema);
   });
 
@@ -226,6 +237,176 @@ describe("generateWorkflow registration and policy", () => {
     expect(isRegisteredTool("deleteEverything")).toBe(false);
     expect(getToolPolicy("deleteEverything")).toBeNull();
     expect(requiresToolConfirmation("deleteEverything")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A2. The model-facing schema: one canonical flat object, never a root union
+// ---------------------------------------------------------------------------
+
+describe("generateWorkflow model-facing schema", () => {
+  type LooseJsonSchema = {
+    type?: string;
+    anyOf?: unknown;
+    oneOf?: unknown;
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
+
+  it("serializes to a single object, not a root union or anyOf", () => {
+    // The regression this fixes: a root `z.union` becomes a root `anyOf` in the
+    // tool's JSON Schema, which function-calling handles unreliably - the model
+    // must both choose a branch and populate it, and a near-miss matches none.
+    const jsonSchema = z.toJSONSchema(
+      generateWorkflowModelInputSchema,
+    ) as LooseJsonSchema;
+
+    expect(jsonSchema.anyOf).toBeUndefined();
+    expect(jsonSchema.oneOf).toBeUndefined();
+    expect(jsonSchema.type).toBe("object");
+
+    expect(Object.keys(jsonSchema.properties ?? {}).sort()).toEqual([
+      "clarifications",
+      "description",
+      "name",
+      "steps",
+    ]);
+    // `clarifications` is optional, so it must not be required.
+    expect([...(jsonSchema.required ?? [])].sort()).toEqual(["name", "steps"]);
+  });
+
+  it("is the exact schema wired into the AI SDK tool", () => {
+    // Identity, not equality: the model must be handed this schema and no other.
+    expect(
+      (generateWorkflowTool as { inputSchema: unknown }).inputSchema,
+    ).toBe(generateWorkflowModelInputSchema);
+  });
+
+  it("accepts a valid flat proposal", () => {
+    expect(
+      generateWorkflowModelInputSchema.safeParse(validProposal()).success,
+    ).toBe(true);
+  });
+
+  it("accepts a non-empty clarifications array alongside the proposal", () => {
+    const parsed = generateWorkflowModelInputSchema.safeParse({
+      name: "Onboard a client",
+      steps: { kickoff: step() },
+      clarifications: [
+        {
+          field: "steps.kickoff.inputs.projectId",
+          reason: "task.create requires a project id",
+          question: "Which project?",
+        },
+      ],
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("rejects an empty clarifications array rather than silently ignoring it", () => {
+    // An empty array is neither an omission nor a real request; it is a
+    // malformed call and must fail loudly instead of passing as a plain proposal.
+    expect(
+      generateWorkflowModelInputSchema.safeParse({
+        name: "Onboard a client",
+        steps: { kickoff: step() },
+        clarifications: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("still rejects structurally malformed proposals, before any executor", () => {
+    expect(
+      generateWorkflowModelInputSchema.safeParse({ name: "Empty", steps: {} })
+        .success,
+    ).toBe(false);
+    expect(
+      generateWorkflowModelInputSchema.safeParse({
+        name: "Unknown step field",
+        steps: { a: { ...step(), id: "backend-owned" } },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("offers no policy or identity field the model can supply or relax", () => {
+    expect(
+      generateWorkflowModelInputSchema.safeParse({
+        name: "x",
+        steps: { a: step() },
+        access: "READ_ONLY",
+        orgId: "other_org",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A3. Executor input compatibility: all three historical shapes still work
+// ---------------------------------------------------------------------------
+
+describe("generateWorkflow executor accepts every historical input shape", () => {
+  const missingProjectStep = {
+    action: "task.create",
+    inputs: { title: "Do work" },
+    dependsOn: [] as string[],
+  };
+  const clarification = {
+    field: "steps.kickoff.inputs.projectId",
+    reason: "task.create requires a project id",
+    question: "Which project?",
+  };
+
+  it("accepts the plain proposal (no clarifications)", async () => {
+    const value = jsonValue(await executeGenerateWorkflow(validProposal()));
+    expect(value.ok).toBe(true);
+  });
+
+  it("accepts the nested Form A proposal with clarifications", async () => {
+    const value = jsonValue(
+      await executeGenerateWorkflow({
+        proposal: { name: "Onboard", steps: { kickoff: missingProjectStep } },
+        clarifications: [clarification],
+      }),
+    );
+
+    expect(value.ok).toBe(false);
+    expect(value.code).toBe("NEEDS_USER_INPUT");
+  });
+
+  it("accepts the flat Form B proposal with clarifications", async () => {
+    const value = jsonValue(
+      await executeGenerateWorkflow({
+        name: "Onboard",
+        steps: { kickoff: missingProjectStep },
+        clarifications: [clarification],
+      }),
+    );
+
+    expect(value.ok).toBe(false);
+    expect(value.code).toBe("NEEDS_USER_INPUT");
+  });
+
+  it("validates all three shapes against the accepted-input schema", () => {
+    expect(
+      generateWorkflowAcceptedInputSchema.safeParse({
+        name: "x",
+        steps: { a: step() },
+      }).success,
+    ).toBe(true);
+    expect(
+      generateWorkflowAcceptedInputSchema.safeParse({
+        proposal: { name: "x", steps: { a: step() } },
+        clarifications: [clarification],
+      }).success,
+    ).toBe(true);
+    expect(
+      generateWorkflowAcceptedInputSchema.safeParse({
+        name: "x",
+        steps: { a: step() },
+        clarifications: [clarification],
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -490,6 +671,21 @@ describe("generateWorkflow through the durable tool-result path", () => {
   const TOOL_CALL_ID = "call_gw_0001";
 
   beforeEach(() => {
+    restorePrismaDouble();
+    resetStore();
+    // The worker's outcome CAS runs against the double, so the claimed row must
+    // exist and be RUNNING. Its terminal status is now written by that same CAS.
+    store.executions = [
+      {
+        id: EXECUTION_ID,
+        sessionId: SESSION_ID,
+        toolCallId: TOOL_CALL_ID,
+        toolName: "generateWorkflow",
+        status: "RUNNING",
+        input: cycleProposal(),
+        error: null,
+      },
+    ];
     (getToolExecutionForWorker as jest.Mock).mockResolvedValue({
       id: EXECUTION_ID,
       sessionId: SESSION_ID,
@@ -505,7 +701,6 @@ describe("generateWorkflow through the durable tool-result path", () => {
       },
     });
     (markToolExecutionRunning as jest.Mock).mockResolvedValue(true);
-    (completeToolExecution as jest.Mock).mockResolvedValue(true);
     (heartbeatToolExecution as jest.Mock).mockResolvedValue(true);
   });
 
@@ -541,6 +736,8 @@ describe("generateWorkflow through the durable tool-result path", () => {
         payload: expect.objectContaining({ sessionId: SESSION_ID }),
       }),
     );
-    expect(completeToolExecution).toHaveBeenCalledWith(EXECUTION_ID);
+    // F-1: the terminal status commits with the result in the worker's own
+    // transaction, not in a separate post-transaction write.
+    expect(store.executions[0]!.status).toBe("COMPLETED");
   });
 });

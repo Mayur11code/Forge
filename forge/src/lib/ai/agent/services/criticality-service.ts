@@ -34,6 +34,7 @@
 
 import { AgentToolExecutionStatus } from "@prisma/client";
 
+import { db } from "@/lib/prisma/db";
 import {
   WorkflowProposalSchema,
   type WorkflowProposal,
@@ -48,6 +49,7 @@ import { getAgentSessionForUser } from "../session-service";
 import { computeProposalCorrelationId } from "../tools/generate-workflow/execute";
 import { createMessage, getMessages } from "./message-service";
 import { getToolExecutionsForSession } from "./tool-execution-service";
+import { recordCriticalityDecision } from "./proposal-service";
 
 export type CriticalityDecisionRequest = {
   sessionId: string;
@@ -535,15 +537,48 @@ export async function submitCriticalityDecision({
       };
     }
 
-    // One durable write, tagged with the interaction id so the record retires
-    // exactly this interaction and nothing else. No companion outbox event:
-    // recording a decision does not re-enter the model (deferred trigger).
-    await createMessage({
-      sessionId,
-      step: session.currentStep,
-      toolCallId: interactionId,
-      message: { role: "user", content },
+    // Assignment 37.8: the durable decision on the proposal row and the
+    // transcript record commit together. The proposal advances to
+    // AWAITING_APPROVAL (still parked: approval is 37.9). No companion outbox
+    // event: recording a decision does not re-enter the model (deferred trigger).
+    //
+    // The compare-and-set runs FIRST, and its result is honoured. Writing the
+    // transcript first (the pre-fix order) let a lost CAS leave a user turn that
+    // claims a decision the proposal row never took - a transcript and a
+    // lifecycle state that disagree. Ordering the CAS first means a lost race
+    // commits no transcript record at all.
+    const applied = await db.$transaction(async (tx) => {
+      const recorded = await recordCriticalityDecision(tx, {
+        executionId: interactionId,
+        sessionId,
+        decisions: validation.approved.decisions,
+      });
+
+      if (!recorded) {
+        return false;
+      }
+
+      await createMessage({
+        sessionId,
+        step: session.currentStep,
+        toolCallId: interactionId,
+        message: { role: "user", content },
+        tx,
+      });
+
+      return true;
     });
+
+    if (!applied) {
+      return {
+        ok: false as const,
+        httpStatus: 409 as const,
+        code: "CRITICALITY_NOT_APPLIED",
+        error:
+          "The proposal is no longer awaiting a criticality decision; " +
+          "reload the session and decide on the current proposal.",
+      };
+    }
 
     return { ok: true as const, sessionId, step: session.currentStep };
   });
