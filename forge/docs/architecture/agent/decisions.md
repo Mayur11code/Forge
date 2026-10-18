@@ -779,3 +779,82 @@ in `agent-loop/al.ts` still acknowledges deliveries it refuses. Re-arm bounds it
 to 3 attempts for re-drive traffic only; an ordinary tool→loop handoff that loses
 the race is still dropped silently. Changing consumer semantics is a different
 decision from adding a reaper and should be reviewed on its own.
+
+## Decision 22: Reuse `AgentToolExecution` for the durable proposal lifecycle (F4)
+
+**Status:** `IMPLEMENTED` (Assignment 37.8) — `proposal-service.ts`, schema +
+migration, `tool-worker.ts`. **F4 remains OPEN** until independent acceptance.
+
+**Decision.** The workflow-proposal lifecycle lives on `AgentToolExecution`. No
+dedicated `WorkflowProposal` model is introduced. A new, **separate**
+`AgentProposalState` enum carries the proposal lifecycle alongside the existing
+`AgentToolExecutionStatus`.
+
+### Why extend rather than introduce a table (F4, Option A)
+
+The row the human acts on is already identified by the session-scoped execution
+identity: clarification binds to `interactionId`, criticality to the same
+`AgentToolExecution` id, and the immutable proposal already sits in `input`. A
+dedicated `WorkflowProposal` model would therefore be a second object describing
+the same proposal, with its own state machine, its own id, and a foreign key back
+to the row it shadows. Two state machines that must agree is the failure mode
+[Decision 11](#decision-11-derive-confirmation-from-policy-never-store-it) refuses
+for confirmation flags, and there is no operation here that the second table
+makes simpler. The rejected alternative is recorded in the plan as the Option B
+fork.
+
+### Why proposal state is a separate enum, not a new execution status
+
+`AgentToolExecutionStatus` answers *"did the tool run?"*. `AgentProposalState`
+answers *"where is the human decision about the proposal?"*. A valid
+`generateWorkflow` is **`COMPLETED`** — the tool ran and produced a proposal —
+**and** parked at `AWAITING_CRITICALITY`. A single enum cannot hold both
+truthfully: adding proposal states to the execution enum would make
+"the execution completed" and "the proposal awaits a human" the same value and
+erase the honest state "ran successfully, parked". Keeping them separate is why
+`persistExecutionOutcome` records a proposal state together with the row's own
+terminal `COMPLETED` status in one compare-and-set: the status answers "the tool
+ran" and the proposal state answers "the human decision is still pending".
+
+### Why the loop PARKS, and does not re-enter the model
+
+On a valid proposal the worker persists the result, state, fingerprint and
+revision, then deliberately does **not** record `AGENT_LOOP_REQUESTED`. Marking a
+clarification as a halt was 37.6's decision for the same reason: re-entering the
+model on a proposal it just made regenerates the proposal, defeating the human
+decision the system exists to obtain. Approval and materialization are later
+phases (37.9/37.11); until then a parked proposal is the intended terminal state
+of the turn.
+
+### Why supersession is by revision, not by timestamp
+
+`proposalRevision` is the 1-based rank of a proposal among its session's proposals
+in deterministic `(createdAt, id)` order. Two proposals created in the same
+millisecond must still order totally, or a restart could compute a different
+winner. The revision makes supersession reproducible: a newer proposal retires
+every pending proposal whose revision is lower, and the predicate is a plain
+`proposalRevision < n` rather than a wall-clock comparison.
+
+### Why the state must survive a restart
+
+The lifecycle lives in the database row, not in live transport. A cold restart
+can ask "is this session parked, and on what?" with one indexed query
+(`@@index([sessionId, proposalState])`) and never parse the transcript. This is
+the durability half of F4 that 37.6 explicitly deferred. `findPendingProposal`
+and the session read endpoint are the recovery path
+([Decision 8](#decision-8-pusher-is-transport-only)).
+
+### Honest limitations
+
+- **No live-database evidence.** The first migration attempt during 37.8 failed
+  with `P1001`, so the migration was generated offline; a later `prisma migrate
+  status` did connect and confirmed the migration is still *unapplied*. The
+  lifecycle is therefore proven against an in-memory double, not Postgres, and the
+  migration has not been applied to any database. A cold-restart-against-Postgres
+  test remains owed and is named in the Phase 2 report.
+- **Supersession ordering under true concurrency is not proven.** The revision
+  ordering is deterministic given a read, but two simultaneous writers in one
+  session are serialised by the existing session lock, not by a new advisory lock
+  in this module. No new lock order was introduced.
+- **F4 is not closed.** This decision and its implementation are evidence for
+  acceptance; they are not acceptance.

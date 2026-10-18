@@ -14,9 +14,10 @@ import { auth } from "@/lib/auth/auth";
 import { getAgentSessionForUser } from "@/lib/ai/agent/session-service";
 import { getMessages } from "@/lib/ai/agent/services/message-service";
 import { findPendingClarification } from "@/lib/ai/agent/services/clarification-service";
+import { comparePendingProposalRecency } from "@/lib/ai/agent/services/proposal-service";
 import { getToolExecutionsForSession } from "@/lib/ai/agent/services/tool-execution-service";
 import { describeToolProposal } from "@/lib/ai/agent/tools/registry";
-import { AgentToolExecutionStatus } from "@prisma/client";
+import { AgentToolExecutionStatus, AgentProposalState } from "@prisma/client";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
@@ -62,6 +63,24 @@ export async function GET(
     // interactionId it must answer.
     const clarification = findPendingClarification(messages);
 
+    // Assignment 37.8: the durable proposal lifecycle, derived from the already
+    // fetched execution rows rather than a second query. A proposal parked on a
+    // human decision (criticality, then approval) is what tells a refreshed
+    // client the session is waiting on it. It is read from persisted state, so
+    // it is correct after a restart and does not depend on live Pusher traffic.
+    //
+    // Ordering is `comparePendingProposalRecency`, the same newest-first,
+    // NULL-revisions-last rule `getPendingProposal` pushes into SQL. Sorting by
+    // revision alone would let a legacy row that carries no revision surface as
+    // the pending proposal instead of the one that superseded it.
+    const pendingProposalExecution = toolExecutions
+      .filter(
+        (execution) =>
+          execution.proposalState === AgentProposalState.AWAITING_CRITICALITY ||
+          execution.proposalState === AgentProposalState.AWAITING_APPROVAL,
+      )
+      .sort(comparePendingProposalRecency)[0];
+
     return Response.json(
       {
         sessionId: session.id,
@@ -83,6 +102,19 @@ export async function GET(
               fields: clarification.fields,
             }
           : null,
+        /**
+         * The proposal a human still has to act on, if any. `state` says which
+         * decision is pending; the durable row is the source of truth.
+         */
+        pendingProposal: pendingProposalExecution
+          ? {
+              interactionId: pendingProposalExecution.id,
+              toolName: pendingProposalExecution.toolName,
+              state: pendingProposalExecution.proposalState,
+              fingerprint: pendingProposalExecution.proposalFingerprint,
+              revision: pendingProposalExecution.proposalRevision,
+            }
+          : null,
         messages: messages.map((message) => ({
           id: message.id,
           step: message.step,
@@ -99,6 +131,9 @@ export async function GET(
           error: execution.error,
           confirmedAt: execution.confirmedAt,
           cancelledAt: execution.cancelledAt,
+          proposalState: execution.proposalState,
+          proposalFingerprint: execution.proposalFingerprint,
+          proposalRevision: execution.proposalRevision,
           createdAt: execution.createdAt,
           updatedAt: execution.updatedAt,
           /**

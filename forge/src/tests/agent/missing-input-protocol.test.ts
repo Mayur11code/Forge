@@ -60,10 +60,9 @@ jest.mock("@/lib/ai/agent/locks", () => {
 jest.mock("@/lib/ai/agent/services/tool-execution-service", () => ({
   getToolExecutionForWorker: jest.fn(),
   markToolExecutionRunning: jest.fn(),
-  completeToolExecution: jest.fn(),
   failToolExecution: jest.fn(),
   abandonToolExecution: jest.fn(),
-  heartbeatToolExecution: jest.fn(),
+  heartbeatToolExecution: jest.fn(async () => true),
 }));
 
 // Real policy, one stubbed seam: `requiresToolConfirmation` must stay the
@@ -94,8 +93,8 @@ import { getToolExecutor } from "@/lib/ai/agent/tools/registry";
 import {
   getToolExecutionForWorker,
   markToolExecutionRunning,
-  completeToolExecution,
 } from "@/lib/ai/agent/services/tool-execution-service";
+import { resetStore, restorePrismaDouble, store } from "./helpers/prisma-double";
 import { submitClarificationAnswer } from "@/lib/ai/agent/services/clarification-service";
 import { startWorkflow } from "@/lib/workflow/execution/trigger";
 import { createTaskAction } from "@/lib/workflow/actions/core/create-task";
@@ -203,7 +202,6 @@ const getToolExecutionForWorkerMock =
   getToolExecutionForWorker as unknown as jest.Mock;
 const markToolExecutionRunningMock =
   markToolExecutionRunning as unknown as jest.Mock;
-const completeToolExecutionMock = completeToolExecution as unknown as jest.Mock;
 
 describe("Assignment 37.6 — Group A: Classification and Issue Contract", () => {
   it("1. One required field absent from the proposal produces a MISSING_REQUIRED_INPUT validation issue at the correct field path", () => {
@@ -731,6 +729,18 @@ describe("Assignment 37.6 — Group B: Three-Loop Separation", () => {
 describe("Assignment 37.6 — Group C: Continuation", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    restorePrismaDouble();
+    resetStore();
+    // The proposal row the worker would have parked. The answer's CAS targets
+    // `proposalState = NEEDS_CLARIFICATION` on this row, so a service test that
+    // does not seed it would exercise a lost CAS rather than the accept path.
+    store.executions.push({
+      id: INTERACTION_ID,
+      sessionId: "sess_1",
+      status: "COMPLETED",
+      proposalState: "NEEDS_CLARIFICATION",
+      error: null,
+    });
   });
 
   it("16. Verify same-session answer path is authenticated and organization-scoped", async () => {
@@ -1034,11 +1044,144 @@ describe("Assignment 37.6 — Group C: Continuation", () => {
 
     executeSpy.mockRestore();
   });
+
+  it("22. A successful CAS commits the answer, the lifecycle update and the continuation together", async () => {
+    getAgentSessionForUserMock.mockResolvedValueOnce(runningSession(2));
+    getMessagesMock.mockResolvedValue([clarificationRow()]);
+
+    const result = await submitClarificationAnswer({
+      sessionId: "sess_1",
+      userId: "user_1",
+      interactionId: INTERACTION_ID,
+      correlationId: CORRELATION_ID,
+      answers: { [MISSING_FIELD]: PROJECT_ID },
+    });
+
+    expect(result.ok).toBe(true);
+    const row = store.executions[0]!;
+    expect(row.proposalState).toBe("CLARIFICATION_ACCEPTED");
+    expect(row.clarificationAnswer).toEqual({ [MISSING_FIELD]: PROJECT_ID });
+    expect(createMessageMock).toHaveBeenCalledTimes(1);
+    expect(recordAgentEventMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("23. A lost CAS returns 409 and writes neither the message nor the continuation", async () => {
+    // The row is not awaiting a clarification (e.g. a concurrent criticality
+    // decision already advanced it), even though the transcript still exposes a
+    // pending request. The CAS must gate the write.
+    store.executions[0]!.proposalState = "AWAITING_CRITICALITY";
+    getAgentSessionForUserMock.mockResolvedValueOnce(runningSession(2));
+    getMessagesMock.mockResolvedValue([clarificationRow()]);
+
+    const result = await submitClarificationAnswer({
+      sessionId: "sess_1",
+      userId: "user_1",
+      interactionId: INTERACTION_ID,
+      correlationId: CORRELATION_ID,
+      answers: { [MISSING_FIELD]: PROJECT_ID },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("CLARIFICATION_NOT_APPLIED");
+      expect(result.httpStatus).toBe(409);
+    }
+    expect(createMessageMock).not.toHaveBeenCalled();
+    expect(recordAgentEventMock).not.toHaveBeenCalled();
+    const row = store.executions[0]!;
+    expect(row.proposalState).toBe("AWAITING_CRITICALITY");
+    expect(row.clarificationAnswer).toBeUndefined();
+  });
+
+  it("23b. A resolved proposal cannot be resurrected by replaying the transcript", async () => {
+    // The durable row already advanced to CLARIFICATION_ACCEPTED...
+    const row = store.executions[0]!;
+    row.proposalState = "CLARIFICATION_ACCEPTED";
+    row.clarificationAnswer = { [MISSING_FIELD]: PROJECT_ID };
+    getAgentSessionForUserMock.mockResolvedValueOnce(runningSession(2));
+    // ...but the transcript no longer shows the answer, so the pending request
+    // is still discoverable. Only the CAS prevents the resurrect.
+    getMessagesMock.mockResolvedValue([clarificationRow()]);
+
+    const result = await submitClarificationAnswer({
+      sessionId: "sess_1",
+      userId: "user_1",
+      interactionId: INTERACTION_ID,
+      correlationId: CORRELATION_ID,
+      answers: { [MISSING_FIELD]: PROJECT_ID },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("CLARIFICATION_NOT_APPLIED");
+    }
+    expect(createMessageMock).not.toHaveBeenCalled();
+    expect(recordAgentEventMock).not.toHaveBeenCalled();
+    expect(store.executions[0]!.proposalState).toBe("CLARIFICATION_ACCEPTED");
+  });
+
+  it("24. An identical repeat is idempotent and writes nothing further", async () => {
+    const transcript: TranscriptRow[] = [clarificationRow()];
+    getMessagesMock.mockImplementation(async () => transcript);
+    createMessageMock.mockImplementation(
+      async (args: {
+        step: number;
+        toolCallId?: string;
+        message: unknown;
+      }) => {
+        transcript.push({
+          step: args.step,
+          toolCallId: args.toolCallId ?? null,
+          message: args.message,
+          createdAt: new Date(transcript.length),
+        });
+      },
+    );
+    getAgentSessionForUserMock.mockResolvedValue(runningSession(2));
+
+    const first = await submitClarificationAnswer({
+      sessionId: "sess_1",
+      userId: "user_1",
+      interactionId: INTERACTION_ID,
+      correlationId: CORRELATION_ID,
+      answers: { [MISSING_FIELD]: PROJECT_ID },
+    });
+    expect(first.ok).toBe(true);
+
+    const repeat = await submitClarificationAnswer({
+      sessionId: "sess_1",
+      userId: "user_1",
+      interactionId: INTERACTION_ID,
+      correlationId: CORRELATION_ID,
+      answers: { [MISSING_FIELD]: PROJECT_ID },
+    });
+    expect(repeat.ok).toBe(true);
+    if (repeat.ok) {
+      expect(repeat.idempotent).toBe(true);
+    }
+    expect(createMessageMock).toHaveBeenCalledTimes(1);
+    expect(recordAgentEventMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("Assignment 37.6 — Group D: Worker Halt vs Continuation", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    restorePrismaDouble();
+    resetStore();
+    // The claimed row must exist and be RUNNING: its terminal COMPLETED status
+    // is written by the worker's own outcome compare-and-set.
+    store.executions = [
+      {
+        id: INTERACTION_ID,
+        sessionId: "sess_1",
+        toolName: "generateWorkflow",
+        toolCallId: TOOL_CALL_ID,
+        status: "RUNNING",
+        input: {},
+        error: null,
+      },
+    ];
     getToolExecutionForWorkerMock.mockResolvedValue({
       id: INTERACTION_ID,
       sessionId: "sess_1",
@@ -1097,7 +1240,7 @@ describe("Assignment 37.6 — Group D: Worker Halt vs Continuation", () => {
     // The loop is NOT re-driven. This is the whole bug: continuing here spins
     // the model on the same missing input.
     expect(recordAgentEventMock).not.toHaveBeenCalled();
-    expect(completeToolExecutionMock).toHaveBeenCalledWith(INTERACTION_ID);
+    expect(store.executions[0]!.status).toBe("COMPLETED");
     expect(publishAgentStatusMock).toHaveBeenCalledWith(
       "sess_1",
       expect.objectContaining({

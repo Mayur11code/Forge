@@ -33,6 +33,7 @@ import {
   readClarificationInteraction,
   type MissingUserInputField,
 } from "../tools/shared-output";
+import { recordClarificationAnswer } from "./proposal-service";
 
 /**
  * The pending question, as reconstructed from the durable transcript.
@@ -445,10 +446,23 @@ export async function submitClarificationAnswer({
         }
       }
 
-      // Message and continuation intent commit together: an answer that is
-      // recorded without the intent to consume it would strand the session
-      // exactly like the tool-result gap this outbox exists to close.
-      await db.$transaction(async (tx) => {
+      // The authoritative lifecycle compare-and-set runs FIRST, and its result
+      // is honoured. The transcript answer and the continuation intent are the
+      // projection of that transition; committing them when the CAS lost would
+      // leave a user turn and an `AGENT_LOOP_REQUESTED` in the record for a
+      // lifecycle step the proposal row never took. Ordering the CAS first means
+      // a lost race commits no accepted-answer message and no continuation.
+      const applied = await db.$transaction(async (tx) => {
+        const recorded = await recordClarificationAnswer(tx, {
+          executionId: interactionId,
+          sessionId,
+          answers,
+        });
+
+        if (!recorded) {
+          return false;
+        }
+
         await createMessage({
           sessionId,
           step: session.currentStep,
@@ -470,7 +484,20 @@ export async function submitClarificationAnswer({
             expectedStep: session.currentStep,
           },
         });
+
+        return true;
       });
+
+      if (!applied) {
+        return {
+          ok: false,
+          httpStatus: 409,
+          code: "CLARIFICATION_NOT_APPLIED",
+          error:
+            "This clarification is no longer awaiting an answer; reload the " +
+            "session and answer the current request.",
+        };
+      }
 
       return { ok: true, sessionId, step: session.currentStep };
     },

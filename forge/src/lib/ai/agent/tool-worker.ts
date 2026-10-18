@@ -1,8 +1,7 @@
-import { withToolExecutionLock } from "./locks";
+import { withAgentSessionLock, withToolExecutionLock } from "./locks";
 import { AGENT_EXECUTION_HEARTBEAT_INTERVAL_MS } from "./constants";
 import {
   abandonToolExecution,
-  completeToolExecution,
   failToolExecution,
   getToolExecutionForWorker,
   heartbeatToolExecution,
@@ -19,15 +18,36 @@ import { db } from "@/lib/prisma/db";
 import { createMessage } from "./services/message-service";
 import { failAgentSession } from "./session-service";
 import { publishAgentStatus } from "./status";
+import { AgentProposalState } from "@prisma/client";
+import {
+  computeProposalRevision,
+  deriveProposalLifecycle,
+  findProposalIdentities,
+  persistExecutionOutcome,
+  reconcileActiveProposal,
+} from "./services/proposal-service";
+import type { JsonValue } from "./types";
 
 export async function handleToolExecution({
   event,
 }: ToolExecutionWorkerEvent): Promise<void> {
-  const { executionId, expectedStep } = event.data;
+  const { sessionId, executionId, expectedStep } = event.data;
 
-  const acquired = await withToolExecutionLock(
-    executionId,
-    async () => {
+  // Session lock OUTSIDE, execution lock INSIDE.
+  //
+  // The session lock is what serialises the proposal lifecycle: the loop, the
+  // clarification and criticality services, the reaper and this worker all take
+  // it, so a tool execution can never park or supersede a proposal while another
+  // execution in the same session is mid-completion. That serialisation is what
+  // makes the single-pending invariant ("at most one proposal awaits a human")
+  // hold even when two executions of one session finish out of order - the
+  // revision is computed from a table no other writer can change underneath it.
+  //
+  // The execution lock then keeps the per-execution claim exactly-once. Only
+  // this worker ever takes the execution lock, and nothing takes it before the
+  // session lock, so the fixed session -> execution order cannot deadlock.
+  const acquired = await withAgentSessionLock(sessionId, () =>
+    withToolExecutionLock(executionId, async () => {
       const execution =
         await getToolExecutionForWorker(
           executionId,
@@ -121,6 +141,14 @@ export async function handleToolExecution({
         heartbeat.unref();
       }
 
+      // Deferred best-effort UI notification. It is deliberately NOT part of the
+      // authoritative transaction and NOT inside the failure boundary below: by
+      // the time it runs the outcome is already durable, so a transport failure
+      // must never fail the execution or a deliberately parked session.
+      // Capturing the intent here and awaiting it AFTER the `finally` is what
+      // keeps it out of the catch that would otherwise call `failAgentSession`.
+      let notify: (() => Promise<void>) | null = null;
+
       try {
         const executor =
           getToolExecutor(
@@ -149,14 +177,43 @@ export async function handleToolExecution({
           execution.id,
         );
 
+        // Assignment 37.8: classify a `generateWorkflow` result into a durable
+        // proposal state. A valid proposal PARKS the loop at AWAITING_CRITICALITY
+        // until a human decides per-step criticality (37.8) and approves (37.9);
+        // it must NOT re-enter the model, or the loop would regenerate the
+        // proposal it just made. Every other outcome is unaffected.
+        const outputValue = output.type === "json" ? output.value : null;
+
+        const lifecycle = deriveProposalLifecycle(
+          execution.toolName,
+          outputValue,
+        );
+
+        const parksProposal =
+          lifecycle?.state === AgentProposalState.AWAITING_CRITICALITY;
+
+        // The revision is the 1-based rank of this proposal in deterministic
+        // (createdAt, id) order, so supersession is reproducible after a restart.
+        // Computed while holding the session lock, so no other writer can park a
+        // proposal between this read and the transaction below.
+        const revision =
+          parksProposal && lifecycle
+            ? computeProposalRevision(
+                await findProposalIdentities(execution.sessionId),
+                execution.id,
+              )
+            : null;
+
         // The tool result and the intent to continue the conversation are
-        // written in ONE transaction.
+        // written in ONE transaction, and the execution's TERMINAL status lands
+        // in the same compare-and-set as its result.
         //
-        // These used to be four separate writes ending in a publish. A crash
-        // after the result was persisted but before the continuation was
-        // requested left a complete tool result with nothing to consume it, and
-        // the session sat silent until the reaper eventually killed it. The
-        // result is now durable together with the reason to re-drive the loop.
+        // These used to be four separate writes ending in a publish, and the
+        // COMPLETED status was stamped by a fifth write AFTER the transaction.
+        // A crash in that gap left a finished execution - and, for a proposal,
+        // a parked lifecycle - still RUNNING, which had no honest recovery: the
+        // reaper would treat it as a dead worker. Folding the status into the
+        // result CAS removes the gap entirely.
         //
         // A clarification is the exception to the continuation half: asking the
         // human is not a reason to re-drive the model. Recording
@@ -164,7 +221,22 @@ export async function handleToolExecution({
         // model with the same missing input, which is the exact spin the
         // missing-input protocol exists to stop. The result still commits
         // durably - it is the request the human will answer.
-        await db.$transaction(async (tx) => {
+        const persisted = await db.$transaction(async (tx) => {
+          // The outcome CAS runs FIRST and short-circuits. If it loses, this
+          // delivery is a duplicate that no longer owns the claim: committing
+          // nothing else means no second transcript entry and no second
+          // continuation intent.
+          const wrote = await persistExecutionOutcome(tx, {
+            executionId: execution.id,
+            result: outputValue as JsonValue,
+            lifecycle,
+            revision,
+          });
+
+          if (!wrote) {
+            return false;
+          }
+
           await createMessage({
             sessionId: execution.sessionId,
             step: execution.session.currentStep,
@@ -181,7 +253,22 @@ export async function handleToolExecution({
             tx,
           });
 
-          if (!clarification) {
+          // Assignment 37.8: keep the single-pending invariant. A newer proposal
+          // retires every older one, and an out-of-order older proposal retires
+          // itself when a newer one has already parked.
+          if (parksProposal && revision !== null) {
+            await reconcileActiveProposal(tx, {
+              sessionId: execution.sessionId,
+              executionId: execution.id,
+              revision,
+            });
+          }
+
+          // A clarification and a parked proposal are both HALTS, not
+          // continuations. Re-driving the loop for either would send the model
+          // straight back to the input it is already waiting on. Every other
+          // completion records the intent to continue.
+          if (!clarification && !parksProposal) {
             await recordAgentEvent({
               tx,
               eventType: "AGENT_LOOP_REQUESTED",
@@ -194,30 +281,44 @@ export async function handleToolExecution({
               },
             });
           }
+
+          return true;
         });
 
-        // CAS-guarded: a duplicate delivery that lost the race cannot stamp
-        // COMPLETED over a row another worker already advanced. The execution
-        // finished either way; only the continuation differs.
-        await completeToolExecution(execution.id);
+        if (!persisted) {
+          // A duplicate delivery that lost the outcome CAS. The winning
+          // delivery already recorded the result and published its status; this
+          // one must do nothing at all.
+          console.info(
+            `[AGENT] Tool execution ${execution.id} outcome already ` +
+              `persisted by another delivery.`,
+          );
+          return;
+        }
 
+        // The outcome is durable. Only now build the notification intent, to be
+        // delivered after this error boundary has closed.
         if (clarification) {
           // The loop is parked. Status is a UI signal, not domain state: the
           // durable request is the persisted tool result above.
-          await publishAgentStatus(execution.sessionId, {
-            type: "CLARIFICATION_REQUESTED",
-            executionId: execution.id,
-            toolName: execution.toolName,
-            interactionId: clarification.interactionId ?? execution.id,
-            correlationId: clarification.correlationId ?? "",
-            fields: clarification.fields,
-          });
+          notify = async () => {
+            await publishAgentStatus(execution.sessionId, {
+              type: "CLARIFICATION_REQUESTED",
+              executionId: execution.id,
+              toolName: execution.toolName,
+              interactionId: clarification.interactionId ?? execution.id,
+              correlationId: clarification.correlationId ?? "",
+              fields: clarification.fields,
+            });
+          };
         } else {
-          await publishAgentStatus(execution.sessionId, {
-            type: "TOOL_COMPLETED",
-            executionId: execution.id,
-            toolName: execution.toolName,
-          });
+          notify = async () => {
+            await publishAgentStatus(execution.sessionId, {
+              type: "TOOL_COMPLETED",
+              executionId: execution.id,
+              toolName: execution.toolName,
+            });
+          };
         }
       } catch (error) {
         const message =
@@ -263,12 +364,33 @@ export async function handleToolExecution({
       } finally {
         clearInterval(heartbeat);
       }
-    },
+
+      // Post-commit, best-effort. The transaction above is the source of truth;
+      // a notification that fails here is logged and otherwise ignored, never
+      // routed into the failure path (which would mark a durable COMPLETED
+      // execution - and a parked proposal session - as FAILED).
+      if (notify) {
+        try {
+          await notify();
+        } catch (error) {
+          console.warn(
+            `[AGENT] Tool execution ${execution.id} is committed, but its ` +
+              `status notification failed; the outcome is durable.`,
+            error,
+          );
+        }
+      }
+    }),
   );
 
   if (acquired === null) {
+    // Either a live worker is mid-turn on this session or another delivery owns
+    // this execution. Nothing is claimed, so the row stays PENDING and the
+    // recovery sweep re-records the delivery intent rather than this pass
+    // half-doing the work.
     console.info(
-      `[AGENT] Tool execution ${executionId} is already being processed.`,
+      `[AGENT] Tool execution ${executionId} left for redelivery: the ` +
+        `session or execution lock is held.`,
     );
   }
 }

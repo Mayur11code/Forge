@@ -61,7 +61,6 @@ jest.mock("@/lib/ai/agent/services/tool-execution-service", () => ({
   confirmToolExecution: jest.fn(),
   cancelToolExecution: jest.fn(),
   abandonToolExecution: jest.fn(),
-  completeToolExecution: jest.fn(),
   failToolExecution: jest.fn(),
   markToolExecutionRunning: jest.fn(),
   heartbeatToolExecution: jest.fn(async () => true),
@@ -79,7 +78,6 @@ import {
 import { createMessage } from "@/lib/ai/agent/services/message-service";
 import {
   abandonToolExecution,
-  completeToolExecution,
   createToolExecution,
   getToolExecutionForWorker,
   markToolExecutionRunning,
@@ -112,9 +110,6 @@ const markRunningMock = markToolExecutionRunning as jest.MockedFunction<
 >;
 const abandonMock = abandonToolExecution as jest.MockedFunction<
   typeof abandonToolExecution
->;
-const completeMock = completeToolExecution as jest.MockedFunction<
-  typeof completeToolExecution
 >;
 const getExecutionMock =
   getToolExecutionForWorker as jest.MockedFunction<
@@ -255,7 +250,6 @@ describe("tool worker: execution gating", () => {
     await handleToolExecution(toolExecutionEvent());
 
     expect(createMessageMock).not.toHaveBeenCalled();
-    expect(completeMock).not.toHaveBeenCalled();
     expect(publishEventMock).not.toHaveBeenCalled();
   });
 
@@ -277,7 +271,6 @@ describe("tool worker: execution gating", () => {
     await handleToolExecution(toolExecutionEvent());
 
     expect(createMessageMock).not.toHaveBeenCalled();
-    expect(completeMock).not.toHaveBeenCalled();
   });
 
   it("abandons an execution whose session is no longer running", async () => {
@@ -307,6 +300,5 @@ describe("tool worker: execution gating", () => {
       expect.stringContaining("COMPLETED"),
     );
     expect(createMessageMock).toHaveBeenCalled();
-    expect(completeMock).not.toHaveBeenCalled();
   });
 });

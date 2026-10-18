@@ -149,6 +149,11 @@ const executionSelect = {
   cancelledAt: true,
   expiresAt: true,
   expiredAt: true,
+  // Assignment 37.8: the durable proposal lifecycle, so a reader can tell a
+  // parked proposal (a human decision is pending) from an in-flight tool.
+  proposalState: true,
+  proposalFingerprint: true,
+  proposalRevision: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.AgentToolExecutionSelect;
@@ -611,24 +616,6 @@ export async function heartbeatToolExecution(
       },
       data: {
         updatedAt: new Date(),
-      },
-    });
-
-  return count === 1;
-}
-
-export async function completeToolExecution(
-  executionId: string,
-) {
-  const { count } =
-    await prisma.agentToolExecution.updateMany({
-      where: {
-        id: executionId,
-        status: AgentToolExecutionStatus.RUNNING,
-      },
-      data: {
-        status: AgentToolExecutionStatus.COMPLETED,
-        error: null,
       },
     });
 

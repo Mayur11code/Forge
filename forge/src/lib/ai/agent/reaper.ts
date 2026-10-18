@@ -55,6 +55,7 @@ import {
 } from "./services/tool-execution-service";
 import { getAgentSessionForWorker } from "./session-service";
 import { hasPendingClarification } from "./services/clarification-service";
+import { hasPendingProposal } from "./services/proposal-service";
 
 export type ReapResult = {
   swept: number;
@@ -560,6 +561,15 @@ export async function redriveStalledSessions({
       // the session-level counterpart to PENDING_CONFIRMATION in the in-flight
       // execution set.
       if (await hasPendingClarification(candidate.id)) {
+        return "waiting" as const;
+      }
+
+      // Assignment 37.8: the same exemption for a proposal parked on a human
+      // decision (AWAITING_CRITICALITY, then AWAITING_APPROVAL). The execution
+      // row is COMPLETED - the tool ran - so the in-flight filter above cannot
+      // see it, and without this check the reaper would re-drive the model and
+      // regenerate the very proposal the human is deciding on.
+      if (await hasPendingProposal(candidate.id)) {
         return "waiting" as const;
       }
 

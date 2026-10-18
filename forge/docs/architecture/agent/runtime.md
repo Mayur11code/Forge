@@ -243,9 +243,8 @@ flowchart TD
     LIVE -->|no| AB[abandonToolExecution → CANCELLED]
     LIVE -->|yes| EX[getToolExecutor + execute input, ctx]
     EX --> DOM[canonical domain operation]
-    DOM --> MSG[(tool-result AgentMessage<br/>+ re-arm intent, one tx)]
-    MSG --> DONE[completeToolExecution]
-    DONE --> EV2[publishAgentStatus TOOL_COMPLETED]
+    DOM --> MSG[(one tx: outcome CAS<br/>+ tool-result AgentMessage<br/>+ status COMPLETED<br/>+ re-arm intent)]
+    MSG --> EV2[publishAgentStatus<br/>post-commit, best-effort]
     EV2 --> D
     D --> L
     CC --> D
@@ -273,25 +272,32 @@ Sequence:
    left in flight.
 5. `getToolExecutor(execution.toolName)`.
 6. `executor(execution.input, { orgId, userId, executionId })`.
-7. `createMessage(..., { role: "tool", … })` **and**
-   `recordAgentEvent("AGENT_LOOP_REQUESTED")` in **one transaction** — the
-   transcript must not contain a tool result whose continuation was never
-   recorded. Previously these were separate, and a crash between them left a
-   dangling tool call with nothing to close it.
-8. `completeToolExecution(executionId)` — **CAS from `RUNNING`**, so a losing
-   duplicate delivery cannot stamp `COMPLETED` over a row another worker
-   advanced.
-9. `publishAgentStatus(TOOL_COMPLETED)`.
+7. `persistExecutionOutcome` — **CAS from `RUNNING`** — plus the tool-result
+   `AgentMessage`, the proposal lifecycle, and `recordAgentEvent(
+   "AGENT_LOOP_REQUESTED")` all commit in **one transaction**. The CAS runs
+   **first** and short-circuits: a losing duplicate commits nothing else, so the
+   transcript never gains a second entry and the loop never gains a second
+   continuation. The execution's terminal `COMPLETED` status lands in the same
+   CAS as its result, so there is no post-transaction window where a finished
+   execution is still `RUNNING` and looks like a dead worker. A clarification or
+   a parked proposal commits the result **without** the continuation; every other
+   completion records it. Previously these were separate writes, and a crash
+   between them left a dangling tool call with nothing to close it.
+8. `publishAgentStatus(TOOL_COMPLETED | CLARIFICATION_REQUESTED)` — a
+   **post-commit, best-effort** UI signal, awaited *outside* the failure
+   boundary. A transport failure here is logged and otherwise ignored: the
+   transaction above is authoritative, so it must not fail the execution or a
+   deliberately parked session.
 
-> The `AGENT_LOOP_REQUESTED` intent is recorded in step 7, before the
-> `completeToolExecution` CAS in step 8. This ordering is deliberate: the CAS can
-> legitimately lose to another worker, and the continuation is idempotent by step
-> CAS at the consumer. Recording it first means a lost CAS never costs the
-> transcript its answer.
+> The `AGENT_LOOP_REQUESTED` intent is recorded in the same transaction as the
+> outcome CAS, and only after the CAS is won. This ordering is deliberate: the
+> CAS can legitimately lose to another worker, and a losing delivery must leave
+> no continuation behind.
 
-On failure: `failToolExecution` (which stores the **stack**), then
-`failAgentSession(..., "ERROR")`, and a `FAILED` Pusher event **only if** the
-session update affected a row.
+On a failure **before** the transaction commits: `failToolExecution` (which
+stores the **stack**), then `failAgentSession(..., "ERROR")`, and a `FAILED`
+Pusher event **only if** the session update affected a row. A notification
+failure after a committed outcome does **not** take this path.
 
 ### Why step 3 is the whole security story
 
@@ -1079,7 +1085,8 @@ actual arrival. An explicit `id` still wins, so an outbox retry keeps its identi
 | Lock TTL flat and never renewed | Token-guarded heartbeat at `ttl / 3` |
 | A `RUNNING` row looked identical whether the worker was alive or dead | `heartbeatToolExecution` refreshes it every 30 s, and the reaper re-checks staleness inside its CAS |
 | Executions orphaned in `RUNNING` forever | `reapOrphanedToolExecutions` (now scheduled — see Assignment 36) |
-| Confirmed executions never picked up | `redeliverStalledConfirmedExecutions` (now scheduled — see Assignment 36) || `completeToolExecution` could overwrite a newer state | CAS from `RUNNING` |
+| Confirmed executions never picked up | `redeliverStalledConfirmedExecutions` (now scheduled — see Assignment 36) |
+| A finished execution could be overwritten by a late duplicate, or left `RUNNING` after a crash | Terminal status and result land in one CAS from `RUNNING` |
 | Tool worker ignored session liveness | Abandons the claimed row and writes a `SESSION_NOT_RUNNING` result |
 | A repeat confirm after the session ended reported a phantom `SESSION_NOT_RUNNING` | Execution state is decided before liveness; the real state is returned |
 | Tool worker discarded its lock-contention result | Logs contention, like the loop worker |

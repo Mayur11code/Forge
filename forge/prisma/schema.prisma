@@ -96,6 +96,34 @@ enum AgentToolExecutionStatus {
   EXPIRED
 }
 
+// Assignment 37.8 (F4) — durable proposal lifecycle.
+//
+// The proposal's OWN state machine, deliberately separate from
+// `AgentToolExecutionStatus`. `status` answers "did the tool run?"; this answers
+// "where is the human decision about the proposal?". Conflating them would make
+// "the execution completed" and "the proposal is awaiting a human" the same
+// value, and there would be no honest state for "ran successfully, parked".
+enum AgentProposalState {
+  // The proposal compiled and passed every backend validation gate.
+  VALIDATED
+  // The worker returned NEEDS_USER_INPUT; the loop is parked on a human answer.
+  NEEDS_CLARIFICATION
+  // The human answered the clarification; the loop may re-enter to regenerate.
+  CLARIFICATION_ACCEPTED
+  // A valid proposal is parked until the human decides per-step criticality.
+  AWAITING_CRITICALITY
+  // Criticality was decided; the proposal is parked until approval (37.9).
+  AWAITING_APPROVAL
+  // The human approved the proposal. Written by 37.9.
+  APPROVED
+  // A newer proposal for the same session replaced this one.
+  SUPERSEDED
+  // The model produced an invalid proposal (INVALID_INPUT); it self-corrects.
+  INVALID
+  // The proposal was turned into a `Workflow`. Written by 37.11.
+  MATERIALIZED
+}
+
 enum AgentMessageRole {
     USER
     ASSISTANT
@@ -167,16 +195,48 @@ model AgentToolExecution {
   expiresAt DateTime?
   expiredAt DateTime?
 
+  // Assignment 37.8 — durable outcome and proposal lifecycle.
+  //
+  // `input` is the immutable proposal; `result` is what executing it actually
+  // produced. Persisting the result means a cold restart no longer has to parse
+  // the transcript to learn how a step ended, and it makes the execution row a
+  // self-contained record of the outcome.
+  result Json?
+
+  // Proposal identity and lifecycle. Null for every non-`generateWorkflow` tool.
+  //
+  // `proposalFingerprint` is the backend-owned content fingerprint of the exact
+  // proposal revision (see `computeProposalCorrelationId`). It is a revision
+  // label and an idempotency key, never a client-supplied value.
+  // `proposalRevision` is the 1-based rank of this proposal among the session's
+  // proposals in deterministic `(createdAt, id)` order, which is what makes
+  // supersession total and reproducible across a restart.
+  // `proposalState` is the proposal's own state machine, kept separate from
+  // `status`; see `AgentProposalState`.
+  proposalFingerprint String?
+  proposalRevision    Int?
+  proposalState       AgentProposalState?
+
+  // The human's durable decision set. Written when the human answers a
+  // clarification or records a per-step criticality decision, so the lifecycle
+  // survives a restart without re-deriving the decision from the transcript.
+  clarificationAnswer  Json?
+  criticalityDecisions Json?
+
   createdAt   DateTime                 @default(now())
   updatedAt   DateTime                 @updatedAt
 
   session     AgentSession             @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  materializedWorkflows Workflow[]     @relation("WorkflowSourceProposal")
 
   @@index([sessionId, createdAt])
   @@index([sessionId, status])
   // Backs the bounded maintenance scan for due approvals:
   // WHERE status = PENDING_CONFIRMATION AND expiresAt <= now() ORDER BY expiresAt
   @@index([status, expiresAt])
+  // Backs the "is this session parked on a pending proposal?" predicate used by
+  // recovery, so a deliberately-parked session is never re-driven or failed.
+  @@index([sessionId, proposalState])
 }
 
 model AgentMessage {
@@ -451,6 +511,16 @@ model Workflow {
   // event    Event?  @relation(fields: [eventId], references: [id], onDelete: Restrict)
   
   runs        WorkflowRun[] // Excellent addition for observability
+
+  // Assignment 37.8 — provenance back-link to the proposal this workflow was
+  // materialized from (written by 37.11). `@unique` makes materialization
+  // idempotent: a retried materialization cannot create a second workflow for
+  // the same proposal. `onDelete: SetNull` means deleting the source execution
+  // (e.g. its session cascades) does NOT delete a workflow the user already has;
+  // Postgres permits many NULLs under a unique index, so hand-authored workflows
+  // are unaffected.
+  sourceProposalId String?  @unique
+  sourceProposal   AgentToolExecution? @relation("WorkflowSourceProposal", fields: [sourceProposalId], references: [id], onDelete: SetNull)
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
