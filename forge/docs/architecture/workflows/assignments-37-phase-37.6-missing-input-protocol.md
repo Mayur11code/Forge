@@ -22,7 +22,16 @@ accepted at final review for the scope 37.6 owns: the `NEEDS_USER_INPUT` protoco
 clarification-intent validation, the real `POST /api/agent/session/[sessionId]/clarification` ingress with
 session GET exposure, `interactionId` + proposal-revision `correlationId` binding, idempotent/conflicting
 continuation under the session lock, and the reaper `skippedWaiting` exemption. The scope is the **backend**
-protocol and same-session continuation only - **no external user-facing UI is implemented or claimed.**
+protocol and same-session continuation only - **no external user-facing UI is implemented or claimed by 37.6.**
+
+> **Addendum 2026-10-19 — the answer surface now exists (owned by 37.9.1, not
+> 37.6).** The client that answers this protocol is
+> `ClarificationRequestCard.tsx`, mounted by `WorkflowProposalPanel.tsx` (see the
+> 37.9.1 addendum in `assignments-37-phase-37.9-proposal-review.md` §14). It
+> consumes the session GET's projected `clarification` verbatim and POSTs the
+> exact `{ interactionId, correlationId, answers }` shape documented below; it
+> adds no second clarification service and changes no service, route, schema, or
+> migration. The 37.6 backend status and its evidence are unchanged.
 
 Acceptance evidence: `src/tests/agent/missing-input-protocol.test.ts` 28/28; `session-step-claim.test.ts` 5/5;
 focused clarification 4 suites / 57 tests; agent + workflow 36 suites / 672 tests; full suite 40 suites / 692
@@ -177,14 +186,30 @@ export const ClarificationRequestItemSchema = z
   })
   .strict();
 
-export const generateWorkflowToolInputSchema = z.union([
+// What the MODEL is handed as the tool's `inputSchema`: ONE flat object.
+export const generateWorkflowModelInputSchema = WorkflowProposalSchema.extend({
+  clarifications: ClarificationRequestItemSchema.array().min(1).optional(),
+});
+
+// What the EXECUTOR still accepts (parser/compat): three historical shapes.
+export const generateWorkflowAcceptedInputSchema = z.union([
   WorkflowProposalSchema,
   ProposalWithClarificationsFormASchema,
   ProposalWithClarificationsFormBSchema,
 ]);
 ```
 
-- Ordinary proposal generation passes directly against `WorkflowProposalSchema`.
+- **Model-facing contract:** the schema passed to the AI SDK/Gemini is
+  `generateWorkflowModelInputSchema` — a single flat object (`name`, `description?`,
+  `steps`, `clarifications?`). A root `z.union` serializes to a root `anyOf` in the
+  tool's JSON Schema, which function-calling handles unreliably (the model must both
+  choose a branch and populate it, and a near-miss matches no branch), so the union is
+  deliberately NOT exposed to the model.
+- **Executor compatibility (legacy):** the executor still accepts all three historical
+  input shapes — plain proposal, nested Form A (`{ proposal, clarifications }`), and flat
+  Form B (`{ name, description?, steps, clarifications }`) — via
+  `extractProposalAndClarifications`. `generateWorkflowAcceptedInputSchema` documents and
+  validates that boundary; it is not sent to the model.
 - `generateWorkflowSchema` continues to export `WorkflowProposalSchema` by reference, preserving backward compatibility.
 - Proposals with clarification requests specify which missing inputs need human clarification.
 
@@ -341,3 +366,4 @@ behavior, continuing the F4 fork before durable persistence lands at Phase 37.8.
 | 2026-10-14 | IMPLEMENTED (remediated) | Worker halts on clarification (no `AGENT_LOOP_REQUESTED`, publishes `CLARIFICATION_REQUESTED`); real `POST .../clarification` ingress + session GET exposure; `interactionId`+`correlationId` binding; idempotent/conflict continuation under lock; reaper `skippedWaiting` exemption; canonical `computeProposalCorrelationId` | 28/28 focused + durability reaper tests; 32 suites / 638 tests; full suite 658; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
 | 2026-10-17 | IMPLEMENTED (cleanup) | `currentStep` compare-and-set predicate enforced in the in-memory prisma double; new `claimNextAgentStep` regression suite (`session-step-claim.test.ts`, 5 cases); stale verification totals corrected; mocked-boundary comment corrected | 5/5 CAS focused; 3 suites / 87 (`missing-input-protocol durability maintenance`); 3 suites / 83 (`durability maintenance generate-workflow`); 2 suites / 59 (`durability maintenance`); 4 suites / 57 (clarification focused); 36 suites / 672 (agent + workflow); 40 suites / 692 (full); tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
 | 2026-10-17 | VERIFIED | Final acceptance of the backend missing-input protocol and same-session clarification continuation (accepted scope; external UI not claimed); durability/restart survival still OPEN and owned by 37.8; F4 remains open | `missing-input-protocol` 28/28; `session-step-claim` 5/5; clarification focused 4 suites / 57; agent + workflow 36 suites / 672; full suite 40 suites / 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
+| 2026-10-19 | VERIFIED (unchanged) | Addendum only: recorded that the client answer surface (`ClarificationRequestCard`) was added by 37.9.1 over this unchanged protocol. 37.6 itself was not modified; no service, route, schema, or migration changed. | `clarification-request-card.test.tsx` 11; `workflow-proposal-panel.test.tsx` 15; full suite 51 suites / 954; tsc exit 0; Prisma schema untouched |

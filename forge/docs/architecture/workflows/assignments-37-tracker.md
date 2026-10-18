@@ -1,10 +1,10 @@
 # Assignment 37 — Master Phase Tracker
 
 ```text
-Last Updated:     2026-10-12
-Current Phase:    37.5  (37.0A, 37.0B, 37.1, 37.2, 37.3 VERIFIED; 37.4, 37.5 IMPLEMENTED)
-Overall Status:   BLOCKED
-Next Action:      Verify 37.5 — real-model-path parse clause still open (Gate on 37.6 readiness)
+Last Updated:     2026-10-19
+Current Phase:    37.10  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9 IMPLEMENTED)
+Overall Status:   BLOCKED  (I6 gates 37.12 only; every phase through 37.11 is actionable)
+Next Action:      Implement 37.10 — UI graph projection / deterministic layout (deps 37.9 + 37.0B satisfied)
 ```
 
 > **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
@@ -56,6 +56,40 @@ Next Action:      Verify 37.5 — real-model-path parse clause still open (Gate 
 > is discharged only on the mocked/scripted path, so the phase is not `VERIFIED`.
 > The stale "three tools" prompt enumeration is deferred to 37.13. See
 > `assignments-37-phase-37.5-generate-workflow.md`.
+
+> **37.6 VERIFIED 2026-10-17.** The backend missing-input protocol
+> (`NEEDS_USER_INPUT` vs `INVALID_INPUT`) and same-session clarification
+> continuation are accepted: the real `POST .../clarification` ingress plus
+> session GET exposure, `interactionId` + proposal-revision `correlationId`
+> binding, idempotent/conflicting continuation under the session lock, the worker
+> halt (no `AGENT_LOOP_REQUESTED`), and the reaper `skippedWaiting` exemption. The
+> accepted scope is backend-only; durable proposal persistence and restart
+> survival remain OPEN under 37.8 (F4 open). 28/28 focused plus durability /
+> step-claim suites; `tsc` exit 0; Prisma untouched. See
+> `assignments-37-phase-37.6-missing-input-protocol.md`.
+
+> **37.9 / 37.9.1 IMPLEMENTED 2026-10-19 — not VERIFIED.** The proposal lifecycle
+> is implemented end-to-end (approve / decline / expiry backend in 37.9; human
+> criticality controls and the human-input UI in 37.9.1). New client surface:
+> `WorkflowProposalPanel.tsx` (starts one session, polls authoritative state,
+> mounts the cards), `ClarificationRequestCard.tsx` (answers the 37.6
+> clarification contract), and per-step criticality controls added to
+> `ProposalReviewCard.tsx`. It consumes the existing 37.6/37.7/37.9 contracts
+> unchanged and fabricates no state: a 2xx only triggers an authoritative reread.
+> No service, route, schema, migration or lifecycle rule changed; no Workflow or
+> Task is created on approval (that is 37.11); the model is not re-entered on any
+> decision. 3 focused suites 19/11/15; agent 34 suites / 647 tests; full suite 51
+> suites / 954 tests; `tsc` clean; eslint 0 on changed files; `prisma validate`
+> valid; `git diff --check` clean. **F4 and the durability/restart gate remain
+> open.** See `assignments-37-phase-37.9-proposal-review.md` §14.
+
+> **Future assignment recorded 2026-10-19 — this does not change any 37 status.**
+> **Assignment 38 — Organization Data Ingestion & RAG Operational Awareness** is
+> recorded as `PLANNED` (backlog, not prioritized) in the agent roadmap:
+> [`../agent/roadmap.md`](../agent/roadmap.md#backlog--future-assignments). It is a
+> separate future assignment, **not** a phase of 37. Its workflow-indexing work
+> attaches to the **37.11** materialization boundary; no 37 phase status, gate, or
+> sequence is affected.
 
 > **Third P0 recorded 2026-09-30.** **I6 — cross-tenant workflow execution** was
 > added after Phase 0 closed. The P0 set is now **three** issues: I1 (gated 37.5),
@@ -115,22 +149,21 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ```text
 ASSIGNMENT 37 STATUS
 
-Overall:                     BLOCKED
-Current Phase:               37.4   (Proposal compiler / semantic validation adapter)
-Previous Completed Phase:    37.3   (Reference grammar + validator — VERIFIED)
-Next Phase:                  37.4   (Proposal compiler / semantic validation adapter)
+Overall:                     BLOCKED (I6 gates 37.12 only)
+Current Phase:               37.10  (UI graph projection / deterministic layout)
+Previous Completed Phase:    37.9   (Human proposal review — IMPLEMENTED, incl. 37.9.1 UI)
+Next Phase:                  37.10  (UI graph projection / deterministic layout)
 Blocking Issue:              I6     (the only open P0)
 Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 NOT_STARTED
-Architecture Decision Pending: F1, F2, F4, F5
+Architecture Decision Pending: F1, F2, F4   (F5 resolved at 37.4)
 Recorded scope decisions:    I7     (conditional routing — non-blocking)
-Last Verification:           2026-10-12 — 37.3 reference-validator suite green
-                             (44 cases); full run 33 suites / 579 tests passed;
-                             tsc --noEmit clean; scoped eslint clean;
-                             resolver.ts unmodified
-Last Updated:                2026-10-12
+Verification debt:           37.4, 37.5, 37.7, 37.8, 37.9 (IMPLEMENTED, not VERIFIED)
+Last Verification:           2026-10-17 — 37.6 missing-input protocol VERIFIED
+                             (28/28 focused; agent + workflow 36 suites / 672)
+Last Updated:                2026-10-19
 
 Progress:
-[██████░░░░░░░░░░░░░░] 30%   (6 of 20 tracked phases VERIFIED)
+[███████░░░░░░░░░░░░░] 35%   (7 of 20 tracked phases VERIFIED)
 ```
 
 ### Why `BLOCKED` and not `IN_PROGRESS`
@@ -145,10 +178,15 @@ the paragraph above describes defects that no longer exist. Gate E's predicate
 requirement is met. The separate persistence-layer requirement in Gate A is
 covered by I2.
 
-One P0, **I6**, remains and gates a later boundary. It did not stop 37.2 and does
-not stop 37.3/37.4, but the assignment cannot reach 37.12 until a tenant-scoped
-execution entrypoint exists. **I7** is recorded as a scope decision, not a
-blocker; it likewise does not stop 37.3/37.4.
+One P0, **I6**, remains and gates a later boundary. It does not stop any phase
+through 37.11; the assignment cannot reach 37.12 (execution handoff) until a
+tenant-scoped execution entrypoint exists. **I7** is recorded as a scope decision,
+not a blocker; it likewise does not stop 37.10/37.11.
+
+Separately, five phases are `IMPLEMENTED` but not `VERIFIED` — **37.4, 37.5, 37.7,
+37.8, 37.9**. They are complete and tested at the mocked boundary, but their
+documented Verification Gates are not yet satisfied, so they do not advance the
+progress figure below. This is verification debt, not a blocker.
 
 ### Progress calculation
 
@@ -216,9 +254,9 @@ Always use the smallest applicable status.
 | 37.4 | Proposal compiler / semantic validation adapter | **IMPLEMENTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | 2026-10-12 — 25-case suite + workflow 13 suites / 287 tests + tsc clean; resolver diff empty | Resolves F5 (AD-P4). Now consumed in production by 37.5. Not independently `VERIFIED`. |
 | 37.5 | `generateWorkflow` agent tool | **IMPLEMENTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | 2026-10-12 — 24-case suite + full 35/628 + tsc clean; resolver/canvas/runtime diff empty | **Gate E: I1 VERIFIED.** Policy `READ_ONLY` (AD-17). Propose-only, no workflow-domain writes. **Real-model-path parse clause (carried from 37.2) not yet satisfied — hence not `VERIFIED`.** Prompt enumeration deferred to 37.13. |
 | 37.6 | Missing-input state | **VERIFIED** | P1 | 37.5 | 37.7, 37.8 | Durable `NEEDS_USER_INPUT` state | Model error and missing user info are distinguishable in the protocol | 2026-10-17 — 28-case suite + durability reaper exemption + generate-workflow 24; 36 suites / 672 tests; full suite 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched | F4 part 1. No preemptive migration. Worker halts (no `AGENT_LOOP_REQUESTED`), publishes `CLARIFICATION_REQUESTED`; `POST .../clarification` ingress; `interactionId`+`correlationId` binding; idempotent continuation under lock; reaper `skippedWaiting`. **VERIFIED (2026-10-17)** for backend protocol + same-session continuation; external UI not claimed. Durability/restart survival deferred to 37.8; F4 open. |
-| 37.7 | Human criticality state | **NOT_STARTED** | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | — | F4 part 2. |
-| 37.8 | Durable proposal persistence | **NOT_STARTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | — | **PENDING DECISION** — reuse vs new model. |
-| 37.9 | Existing confirmation integration | **NOT_STARTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | — | Mechanism already exists. Surface is the work. |
+| 37.7 | Human criticality state | **IMPLEMENTED** | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | 2026-10-18 — backend criticality service + routes; UI controls added by 37.9.1 | F4 part 2. Not `VERIFIED`. Consumed unchanged by 37.9.1's `ProposalReviewCard` criticality controls. |
+| 37.8 | Durable proposal persistence | **IMPLEMENTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | 2026-10-18 — durable lifecycle on amended (unapplied) migration | **NOT VERIFIED; durability/restart survival OPEN (F4).** Migration amended in place, applied to no database. See `assignments-37-phase-37.8-proposal-lifecycle.md`. |
+| 37.9 | Existing confirmation integration | **IMPLEMENTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | 2026-10-19 — 37.9 backend + 37.9.1 UI; 3 focused suites 19/11/15; agent 34/647; full 51/954; tsc clean; eslint 0 changed; prisma valid | Proposal-specific approve/decline/expiry ingress (37.9); human-criticality controls + workflow-builder panel + clarification answer card (37.9.1). Not `VERIFIED`; F4 open. See `assignments-37-phase-37.9-proposal-review.md` §14. |
 | 37.10 | UI graph projection / deterministic layout | **NOT_STARTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout | Projection is deterministic and Gemini-free | — | **F1.** Moved ahead of materialization. |
 | 37.11 | Workflow materialization | **NOT_STARTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | — | F1 + F2. Canvas-first path. |
 | 37.12 | Execution handoff | **NOT_STARTED** | P1 | 37.11, **I6 VERIFIED (Gate G)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | — | No new executor, lock, or queue runner. **Cannot be VERIFIED unless I6 is.** |
@@ -1707,7 +1745,7 @@ Relevant files:  docs/architecture/workflows/assignments-37-{tracker,plan,issue-
 
 ### Status
 
-**NOT_STARTED** · Priority: P1 · F4 part 2
+**IMPLEMENTED** · Priority: P1 · F4 part 2 · Implemented 2026-10-18
 
 ### Objective
 
@@ -1800,6 +1838,7 @@ Pending: persistence representation — shares the F4 fork with 37.6.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-18 | IMPLEMENTED | Durable backend criticality service + ingress route (`POST .../criticality`); human-criticality UI controls added by 37.9.1; F4 part 2 not VERIFIED | Consumed unchanged by `ProposalReviewCard` (37.9.1); see the 37.7 summary row above |
 
 ---
 
@@ -1807,7 +1846,7 @@ Pending: persistence representation — shares the F4 fork with 37.6.
 
 ### Status
 
-**NOT_STARTED** · Priority: P1 · **F4**
+**IMPLEMENTED** · Priority: P1 · **F4** · Implemented 2026-10-18
 
 ### Objective
 
@@ -1916,6 +1955,7 @@ Explicit instruction from the plan: do not create the migration preemptively.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-18 | IMPLEMENTED | Durable proposal lifecycle on an amended, unapplied migration; durability/restart survival OPEN (F4) | `assignments-37-phase-37.8-proposal-lifecycle.md`; migration applied to no database |
 
 ---
 
@@ -1923,7 +1963,7 @@ Explicit instruction from the plan: do not create the migration preemptively.
 
 ### Status
 
-**NOT_STARTED** · Priority: P1
+**IMPLEMENTED** · Priority: P1 · Implemented 2026-10-19 (incl. 37.9.1 UI)
 
 ### Objective
 
@@ -1964,15 +2004,40 @@ already correct; the surface is the work.
 - No new approval endpoint
 - No regeneration of arguments at approval time
 
+> **[CORRECTED — Phase 1 audit + owner decision, 2026-10-18]** Two of these are
+> wrong for a proposal:
+>
+> - **"No new approval endpoint" is false.** The 35/36 confirm endpoint is bound
+>   to `PENDING_CONFIRMATION`; a proposal's `generateWorkflow` execution is
+>   `COMPLETED`. Approving through it would queue a second execution of a tool
+>   that already ran. 37.9 adds `proposal-approval` and `proposal-decline`
+>   endpoints (body strictly `{ interactionId }`).
+> - **"No confirmation mechanism" is refined, not violated.** The 35/36
+>   *mechanism* (auth, ownership, lock, CAS, idempotency, audit) is reused as a
+>   pattern; it is not changed. The existing 35/36 tests are untouched and still
+>   pass. Cancel and tool-approval expiry semantics are unchanged.
+>
+> Also revised: **decline** is now a first-class terminal state (`DECLINED`), and
+> an unanswered review is closed to `EXPIRED` by the maintenance reaper. See
+> [Decision 23](../agent/decisions.md).
+
 ### Expected Implementation
 
 Render the persisted proposal. Nothing about the approval mechanism changes.
 
 ### Deliverables
 
-- Review surface — component paths **UNKNOWN**
+- Review surface — `src/features/organizations/components/ai/ProposalReviewCard.tsx`
+  (over the pure projection `src/lib/ai/agent/services/proposal-review.ts`)
 - Surface tests
 - Documentation that approval binds the exact proposal
+
+> **[UPDATED — 37.9, 2026-10-18]** The component path is no longer UNKNOWN, and
+> the mechanism deliverables are now known:
+> `src/lib/ai/agent/services/proposal-decision-service.ts`;
+> `src/app/api/agent/session/[sessionId]/proposal-approval/route.ts`;
+> `.../proposal-decline/route.ts`; the `expireStaleProposalReviews` sweep in
+> `src/lib/ai/agent/reaper.ts`. See the 37.9 record.
 
 ### Acceptance Gate
 
@@ -1995,12 +2060,21 @@ End-to-end review-surface test with a real pending proposal.
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: IMPLEMENTED (2026-10-18) — proposal-specific approve/decline; review expiry
+Tests:          49 suites / 911 tests PASS (new: decision 19, approval-route 44, expiry 25, model 12, card 13)
+Verification:   tsc 0; eslint 0; prisma validate OK; diff --check clean; 3 non-vacuity mutations confirmed+reverted
+Commit/PR:      — (not staged)
+Relevant files: src/lib/ai/agent/services/proposal-decision-service.ts
+                src/app/api/agent/session/[sessionId]/proposal-approval/route.ts
+                src/app/api/agent/session/[sessionId]/proposal-decline/route.ts
+                src/lib/ai/agent/services/proposal-review.ts
+                src/lib/ai/agent/reaper.ts (expireStaleProposalReviews)
+                docs/architecture/workflows/assignments-37-phase-37.9-proposal-review.md
 ```
+
+> **Status: IMPLEMENTED, not VERIFIED.** Submitted for independent acceptance;
+> F4 remains open; migration amended in place and NOT applied. See the 37.9 record
+> and [Decision 23](../agent/decisions.md).
 
 ### Known Risks / Findings
 
@@ -2015,6 +2089,7 @@ Made: reuse the 35/36 confirmation system. No special architecture.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-19 | IMPLEMENTED | Proposal-specific approve/decline/expiry ingress (37.9) plus human-criticality controls, workflow-builder panel and clarification answer card (37.9.1); not VERIFIED | 3 focused suites 19/11/15; agent 34/647; full 51/954; tsc clean; eslint 0 changed; prisma valid. `assignments-37-phase-37.9-proposal-review.md` §14 |
 
 ---
 

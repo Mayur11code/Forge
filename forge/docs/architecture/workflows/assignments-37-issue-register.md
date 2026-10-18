@@ -997,19 +997,19 @@ plan. It is reproduced in full in
 convenience.
 
 ```
-37.0    Contract reconnaissance                          COMPLETE
-37.0A   Security prerequisite — I1 tenant-scoped update   COMPLETE
-37.0B   Persistence-boundary prerequisite — I2 node validation  COMPLETE
-37.1    Action capability registry                      COMPLETE (F3, absorbed I4)
-37.2    WorkflowProposal schema
-37.3    Reference grammar + validator                   (F6, MISSING_DATA_DEPENDENCY)
-37.4    Proposal compiler / semantic validation adapter (F5)
-37.5    generateWorkflow agent tool
-37.6    Missing-input state                              (first part of F4)
-37.7    Human criticality state                          (continues F4)
-37.8    Durable proposal persistence
-37.9    Existing confirmation integration
-37.10   UI graph projection / deterministic layout       (F1)
+37.0    Contract reconnaissance                          COMPLETE (VERIFIED)
+37.0A   Security prerequisite — I1 tenant-scoped update   COMPLETE (VERIFIED)
+37.0B   Persistence-boundary prerequisite — I2 node validation  COMPLETE (VERIFIED)
+37.1    Action capability registry                      VERIFIED (F3, absorbed I4)
+37.2    WorkflowProposal schema                         VERIFIED
+37.3    Reference grammar + validator                   VERIFIED (F6, MISSING_DATA_DEPENDENCY)
+37.4    Proposal compiler / semantic validation adapter IMPLEMENTED (F5)
+37.5    generateWorkflow agent tool                     IMPLEMENTED
+37.6    Missing-input state                              VERIFIED (first part of F4)
+37.7    Human criticality state                          IMPLEMENTED (continues F4)
+37.8    Durable proposal persistence                     IMPLEMENTED
+37.9    Existing confirmation integration                IMPLEMENTED (incl. 37.9.1 UI)
+37.10   UI graph projection / deterministic layout       NEXT (F1)
 37.11   Workflow materialization                        (canvas-first, F2)
 37.12   Execution handoff                               (GATED ON I6)
 37.13   Prompt / DAG planning instructions
@@ -1211,8 +1211,12 @@ the original placed UI derivation as a side concern after materialization.
 
 **Phase 0:** COMPLETE
 
-**Phases complete:** 37.0, 37.0A, 37.0B, **37.1 (VERIFIED 2026-10-01)**,
-**37.2 (VERIFIED 2026-10-12)**, **37.3 (VERIFIED 2026-10-12)**
+**Phases VERIFIED:** 37.0, 37.0A, 37.0B, **37.1 (2026-10-01)**,
+**37.2 (2026-10-12)**, **37.3 (2026-10-12)**, **37.6 (2026-10-17)**
+
+**Phases IMPLEMENTED (not VERIFIED):** 37.4, 37.5, 37.7, 37.8, **37.9 (incl. 37.9.1
+human-input UI, 2026-10-19)** — complete and tested at the mocked boundary; their
+documented Verification Gates are not yet satisfied.
 
 **Current blockers:**
 - I6
@@ -1221,8 +1225,8 @@ the original placed UI derivation as a side concern after materialization.
 (2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0** and still
 gates 37.12. None of the three was ever satisfied by closing either of the others.
 
-**Current implementation target:** 37.4 — Proposal compiler / semantic validation
-adapter
+**Current implementation target:** 37.10 — UI graph projection / deterministic
+layout (dependencies 37.9 and 37.0B satisfied)
 
 **Closed by Phase 37.1, with evidence:**
 - **F3** — the capability contract exists and is tested
@@ -1254,7 +1258,8 @@ merely on the existence of a document.
 - F1
 - F2
 - F4
-- F5
+
+(F5 was resolved at 37.4.)
 
 **Scope note.** Phase 37.1 modified application source
 (`src/lib/workflow-types/action-registry.ts`, `registry.ts`), added

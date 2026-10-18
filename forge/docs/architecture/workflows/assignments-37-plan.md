@@ -540,6 +540,18 @@ regenerated arguments.
 > in `AgentToolExecution.input`; a modified proposal cannot reuse an approval.
 > The work here is the review *surface*, not the mechanism.
 
+> **[CORRECTED — Phase 1 audit, 2026-10-18]** This note was wrong on the mechanism.
+> The 35/36 confirm endpoint cannot approve a proposal: it is bound to
+> `AgentToolExecutionStatus.PENDING_CONFIRMATION`, and a proposal's execution is
+> already **`COMPLETED`**. Confirming it would queue a second execution of a tool
+> that already ran. 37.9 therefore adds a **proposal-specific** ingress
+> (`proposal-approval` / `proposal-decline`) that reuses the *patterns* — ownership,
+> lock, backend re-derived proposal, fingerprint binding, CAS, idempotency — but
+> not the tool-confirmation endpoint itself. The binding-to-the-persisted-proposal
+> property is preserved by re-parsing the durable `result` and comparing the
+> recomputed `proposalFingerprint`. See
+> [Decision 23](../agent/decisions.md) and the 37.9 record.
+
 ### Review surface
 
 Workflow name · number of steps · dependency structure · actions ·
@@ -860,19 +872,19 @@ The ordering below supersedes the per-phase numbering above wherever they
 conflict. It is the authoritative sequence.
 
 ```text
-37.0    Contract reconnaissance                          COMPLETE
-37.0A   Security prerequisite — I1 tenant-scoped update
-37.0B   Persistence-boundary prerequisite — I2 node validation
-37.1    Action capability registry                      (F3, absorbs I4)
-37.2    WorkflowProposal schema
-37.3    Reference grammar + validator                   (F6, MISSING_DATA_DEPENDENCY)
-37.4    Proposal compiler / semantic validation adapter (F5)
-37.5    generateWorkflow agent tool
-37.6    Missing-input state                              (first part of F4)
-37.7    Human criticality state                          (continues F4)
-37.8    Durable proposal persistence
-37.9    Existing confirmation integration
-37.10   UI graph projection / deterministic layout       (F1)
+37.0    Contract reconnaissance                          COMPLETE (VERIFIED)
+37.0A   Security prerequisite — I1 tenant-scoped update   COMPLETE (VERIFIED)
+37.0B   Persistence-boundary prerequisite — I2 node validation  COMPLETE (VERIFIED)
+37.1    Action capability registry                      VERIFIED (F3, absorbs I4)
+37.2    WorkflowProposal schema                         VERIFIED
+37.3    Reference grammar + validator                   VERIFIED (F6, MISSING_DATA_DEPENDENCY)
+37.4    Proposal compiler / semantic validation adapter IMPLEMENTED (F5)
+37.5    generateWorkflow agent tool                     IMPLEMENTED
+37.6    Missing-input state                              VERIFIED (first part of F4)
+37.7    Human criticality state                          IMPLEMENTED (continues F4)
+37.8    Durable proposal persistence                     IMPLEMENTED
+37.9    Existing confirmation integration                IMPLEMENTED (incl. 37.9.1 UI)
+37.10   UI graph projection / deterministic layout       NEXT (F1)
 37.11   Workflow materialization                        (canvas-first, F2)
 37.12   Execution handoff                               (GATED ON I6)
 37.13   Prompt / DAG planning instructions
@@ -1069,8 +1081,13 @@ Phase 37.6: **VERIFIED 2026-10-17** — backend missing-input protocol (`NEEDS_U
 vs `INVALID_INPUT`) and same-session clarification continuation accepted; accepted scope is
 backend-only (external UI not claimed). Durable proposal-lifecycle persistence and
 restart-survival remain OPEN and owned by 37.8 (F4 open).
-Current blockers: **I6** — the one remaining P0.
-Current implementation target: **37.1 — Action capability registry**.
+Phases 37.4, 37.5, 37.7, 37.8, 37.9: **IMPLEMENTED 2026-10-18/19 — not VERIFIED** —
+proposal compiler, the `generateWorkflow` tool, human criticality, durable proposal
+lifecycle, and human review (approve/decline/expiry), plus the human-input UI (37.9.1).
+Tested at the mocked boundary; their documented Verification Gates are not yet satisfied.
+Current blockers: **I6** — the one remaining P0 (gates 37.12 only).
+Current implementation target: **37.10 — UI graph projection / deterministic layout**
+(dependencies 37.9 and 37.0B are satisfied).
 Later architectural decisions: **F1**, **F2**, **F4**. (F5 resolved at 37.4.)
 
 This planning revision fixed no issue; the I6 work was documentation and gating
