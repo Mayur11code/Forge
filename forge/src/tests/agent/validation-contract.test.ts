@@ -38,6 +38,9 @@ jest.mock("@/lib/ai/agent/status", () => ({
 }));
 
 jest.mock("@/lib/ai/agent/locks", () => ({
+  withAgentSessionLock: jest.fn(
+    async (_id: string, fn: () => Promise<void>) => fn(),
+  ),
   withToolExecutionLock: jest.fn(
     async (_id: string, fn: () => Promise<void>) => fn(),
   ),
@@ -58,7 +61,6 @@ jest.mock("@/lib/ai/agent/outbox", () => ({
 jest.mock("@/lib/ai/agent/services/tool-execution-service", () => ({
   getToolExecutionForWorker: jest.fn(),
   markToolExecutionRunning: jest.fn(),
-  completeToolExecution: jest.fn(),
   failToolExecution: jest.fn(),
   abandonToolExecution: jest.fn(),
   heartbeatToolExecution: jest.fn(async () => true),
@@ -70,7 +72,12 @@ jest.mock("@/lib/ai/agent/tools/registry", () => ({
 
 import { z } from "zod";
 
-import { prismaDouble } from "./helpers/prisma-double";
+import {
+  prismaDouble,
+  resetStore,
+  restorePrismaDouble,
+  store,
+} from "./helpers/prisma-double";
 import { buildValidationFailure } from "@/lib/ai/agent/tools/shared-output";
 import { executeListTasks } from "@/lib/ai/agent/tools/list-tasks";
 import { executeUpdateTask } from "@/lib/ai/agent/tools/update-task";
@@ -83,7 +90,6 @@ import {
 import { createMessage } from "@/lib/ai/agent/services/message-service";
 import { recordAgentEvent } from "@/lib/ai/agent/outbox";
 import {
-  completeToolExecution,
   getToolExecutionForWorker,
   markToolExecutionRunning,
 } from "@/lib/ai/agent/services/tool-execution-service";
@@ -328,9 +334,23 @@ describe("tool worker: the validation observation survives the round trip", () =
   }
 
   beforeEach(() => {
+    restorePrismaDouble();
+    resetStore();
+    // The worker's outcome CAS runs against the double, so the claimed row must
+    // exist and be RUNNING; its COMPLETED status lands in that same CAS.
+    store.executions = [
+      {
+        id: EXECUTION_ID,
+        sessionId: SESSION_ID,
+        toolCallId: TOOL_CALL_ID,
+        toolName: "listTasks",
+        status: "RUNNING",
+        input: { limit: "many" },
+        error: null,
+      },
+    ];
     (getToolExecutionForWorker as jest.Mock).mockResolvedValue(workerExecution());
     (markToolExecutionRunning as jest.Mock).mockResolvedValue(true);
-    (completeToolExecution as jest.Mock).mockResolvedValue(true);
     mockRejectedInput();
   });
 

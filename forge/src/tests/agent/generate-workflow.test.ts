@@ -48,6 +48,9 @@ jest.mock("@/lib/workflow/execution/trigger", () => ({
 jest.mock("@/lib/ai/agent/status", () => ({ publishAgentStatus: jest.fn() }));
 
 jest.mock("@/lib/ai/agent/locks", () => ({
+  withAgentSessionLock: jest.fn(
+    async (_id: string, fn: () => Promise<void>) => fn(),
+  ),
   withToolExecutionLock: jest.fn(
     async (_id: string, fn: () => Promise<void>) => fn(),
   ),
@@ -68,7 +71,6 @@ jest.mock("@/lib/ai/agent/outbox", () => ({
 jest.mock("@/lib/ai/agent/services/tool-execution-service", () => ({
   getToolExecutionForWorker: jest.fn(),
   markToolExecutionRunning: jest.fn(),
-  completeToolExecution: jest.fn(),
   failToolExecution: jest.fn(),
   abandonToolExecution: jest.fn(),
   heartbeatToolExecution: jest.fn(async () => true),
@@ -76,7 +78,12 @@ jest.mock("@/lib/ai/agent/services/tool-execution-service", () => ({
 
 import type { Prisma } from "@prisma/client";
 
-import { prismaDouble } from "./helpers/prisma-double";
+import {
+  prismaDouble,
+  resetStore,
+  restorePrismaDouble,
+  store,
+} from "./helpers/prisma-double";
 
 import { createTaskAction } from "@/lib/workflow/actions/core/create-task";
 import {
@@ -103,7 +110,6 @@ import {
 import { createMessage } from "@/lib/ai/agent/services/message-service";
 import { recordAgentEvent } from "@/lib/ai/agent/outbox";
 import {
-  completeToolExecution,
   getToolExecutionForWorker,
   heartbeatToolExecution,
   markToolExecutionRunning,
@@ -490,6 +496,21 @@ describe("generateWorkflow through the durable tool-result path", () => {
   const TOOL_CALL_ID = "call_gw_0001";
 
   beforeEach(() => {
+    restorePrismaDouble();
+    resetStore();
+    // The worker's outcome CAS runs against the double, so the claimed row must
+    // exist and be RUNNING. Its terminal status is now written by that same CAS.
+    store.executions = [
+      {
+        id: EXECUTION_ID,
+        sessionId: SESSION_ID,
+        toolCallId: TOOL_CALL_ID,
+        toolName: "generateWorkflow",
+        status: "RUNNING",
+        input: cycleProposal(),
+        error: null,
+      },
+    ];
     (getToolExecutionForWorker as jest.Mock).mockResolvedValue({
       id: EXECUTION_ID,
       sessionId: SESSION_ID,
@@ -505,7 +526,6 @@ describe("generateWorkflow through the durable tool-result path", () => {
       },
     });
     (markToolExecutionRunning as jest.Mock).mockResolvedValue(true);
-    (completeToolExecution as jest.Mock).mockResolvedValue(true);
     (heartbeatToolExecution as jest.Mock).mockResolvedValue(true);
   });
 
@@ -541,6 +561,8 @@ describe("generateWorkflow through the durable tool-result path", () => {
         payload: expect.objectContaining({ sessionId: SESSION_ID }),
       }),
     );
-    expect(completeToolExecution).toHaveBeenCalledWith(EXECUTION_ID);
+    // F-1: the terminal status commits with the result in the worker's own
+    // transaction, not in a separate post-transaction write.
+    expect(store.executions[0]!.status).toBe("COMPLETED");
   });
 });

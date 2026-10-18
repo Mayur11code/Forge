@@ -45,8 +45,109 @@ function applyUpdate(row: Row, data: Row): void {
 }
 
 function matches(row: Row, where: Row): boolean {
-  if (where.id !== undefined && row.id !== where.id) {
+  // Disjunction. Assignment 37.8's criticality CAS is `(state = AWAITING_CRITICALITY
+  // OR state IS NULL)` so a proposal written before the lifecycle columns existed
+  // can still be adopted. A double that ignored `OR` would evaluate only the
+  // outer `id`/`sessionId` predicates and match every row, turning the CAS into a
+  // no-op and making the lost-CAS tests pass vacuously.
+  if (Array.isArray(where.OR)) {
+    if (!where.OR.some((branch) => matches(row, branch as Row))) {
+      return false;
+    }
+  }
+
+  if (where.id !== undefined) {
+    const condition = where.id;
+
+    if (condition !== null && typeof condition === "object") {
+      const filter = condition as { in?: unknown[]; not?: unknown };
+
+      if (filter.in !== undefined) {
+        if (!filter.in.includes(row.id)) return false;
+      } else if (filter.not !== undefined) {
+        // `id: { not: x }`. Assignment 37.8.1's supersession sweep guards
+        // itself this way so it cannot retire the very row it is about to
+        // declare active. A double that ignored the guard would match every
+        // row, including the one being reconciled, and the sweep would retire
+        // the proposal that just parked - so the invariant tests would fail for
+        // the wrong reason, or worse, pass while the guard was wrong.
+        if (row.id === filter.not) return false;
+      } else if (row.id !== condition) {
+        return false;
+      }
+    } else if (row.id !== condition) {
+      return false;
+    }
+  }
+
+  if (where.toolName !== undefined && row.toolName !== where.toolName) {
     return false;
+  }
+
+  // Assignment 37.8: the proposal lifecycle predicates. Without these the
+  // supersession sweep (`proposalRevision < n`) and the pending queries
+  // (`proposalState in [...]`) would match every execution and the lifecycle
+  // tests would pass for the wrong reason.
+  if (where.proposalState !== undefined) {
+    const condition = where.proposalState;
+
+    if (
+      condition !== null &&
+      typeof condition === "object" &&
+      "in" in (condition as Row)
+    ) {
+      const states = (condition as { in: unknown[] }).in;
+      if (!states.includes(row.proposalState)) return false;
+    } else if (row.proposalState !== condition) {
+      return false;
+    }
+  }
+
+  if (where.proposalRevision !== undefined) {
+    const condition = where.proposalRevision;
+
+    if (condition !== null && typeof condition === "object") {
+      const current = row.proposalRevision;
+      const ops = condition as {
+        lt?: number;
+        lte?: number;
+        gt?: number;
+        gte?: number;
+      };
+
+      // Every operator present must hold. `gt` is what lets the single-pending
+      // reconciliation detect an already-parked NEWER proposal; without it a
+      // proposal that lost the ordering race would park beside its successor.
+      if (
+        ops.lt !== undefined &&
+        !(typeof current === "number" && current < ops.lt)
+      ) {
+        return false;
+      }
+
+      if (
+        ops.lte !== undefined &&
+        !(typeof current === "number" && current <= ops.lte)
+      ) {
+        return false;
+      }
+
+      if (
+        ops.gt !== undefined &&
+        !(typeof current === "number" && current > ops.gt)
+      ) {
+        return false;
+      }
+
+      if (
+        ops.gte !== undefined &&
+        !(typeof current === "number" && current >= ops.gte)
+      ) {
+        return false;
+      }
+    } else if (row.proposalRevision !== condition) {
+      return false;
+    }
   }
 
   if (
@@ -157,8 +258,95 @@ const updateManySessions = async ({
   return { count: hits.length };
 };
 
-const findFirstExecution = async ({ where }: { where: Row }) =>
-  store.executions.find((row) => matches(row, where)) ?? null;
+function orderDirection(value: unknown): 1 | -1 {
+  if (value && typeof value === "object" && "sort" in (value as Row)) {
+    return (value as { sort: string }).sort === "asc" ? 1 : -1;
+  }
+
+  return value === "asc" ? 1 : -1;
+}
+
+function orderNulls(value: unknown): "first" | "last" | null {
+  if (value && typeof value === "object" && "nulls" in (value as Row)) {
+    return (value as { nulls: string }).nulls === "first" ? "first" : "last";
+  }
+
+  return null;
+}
+
+/**
+ * Generic ORDER BY over the execution rows.
+ *
+ * Supports the two shapes the agent code actually sends: a single spec and an
+ * array of specs applied left to right. A spec may name a field with a plain
+ * direction, or a nullable field with an explicit `{ sort, nulls }`.
+ *
+ * `nulls` is honoured exactly, because PostgreSQL's defaults are the trap this
+ * ordering exists to avoid: `ASC` yields NULLS LAST and `DESC` yields NULLS
+ * FIRST. `getPendingProposal` orders by `proposalRevision DESC NULLS LAST` so a
+ * legacy row with a NULL revision cannot outrank the proposal that superseded
+ * it; a double that defaulted to NULLS FIRST would reproduce precisely the bug
+ * the query was written to prevent.
+ */
+function sortExecutions(
+  rows: Row[],
+  orderBy: Row | Row[] | undefined,
+): Row[] {
+  if (!orderBy) return rows;
+
+  const specs = Array.isArray(orderBy) ? orderBy : [orderBy];
+
+  return [...rows].sort((a, b) => {
+    for (const spec of specs) {
+      for (const [field, value] of Object.entries(spec as Row)) {
+        const direction = orderDirection(value);
+        const nulls = orderNulls(value);
+        const av = a[field];
+        const bv = b[field];
+
+        if (av === bv) continue;
+
+        // With an explicit `nulls`, a NULL always ranks on that side regardless
+        // of direction: "last" means after every non-null, "first" before.
+        if (av === null || av === undefined) {
+          if (nulls === "first") return -1;
+          if (nulls === "last") return 1;
+          // PostgreSQL default: ASC -> NULLS LAST, DESC -> NULLS FIRST.
+          return direction === 1 ? 1 : -1;
+        }
+
+        if (bv === null || bv === undefined) {
+          if (nulls === "first") return 1;
+          if (nulls === "last") return -1;
+          return direction === 1 ? -1 : 1;
+        }
+
+        // Date values compare by epoch so a Date never loses to a number.
+        const at = av instanceof Date ? av.getTime() : av;
+        const bt = bv instanceof Date ? bv.getTime() : bv;
+
+        if (at === bt) continue;
+        // `direction` is 1 for ASC and -1 for DESC, so the larger value sorts
+        // first exactly when direction is negative.
+        return at > bt ? direction : -direction;
+      }
+    }
+
+    return 0;
+  });
+}
+
+const findFirstExecution = async ({
+  where,
+  orderBy,
+}: {
+  where: Row;
+  orderBy?: Row | Row[];
+}) =>
+  sortExecutions(
+    store.executions.filter((row) => matches(row, where)),
+    orderBy,
+  )[0] ?? null;
 
 // getToolExecutionForWorker resolves a single execution by id and joins the
 // session. Modelled because the expiry sweep reads the execution's toolCallId

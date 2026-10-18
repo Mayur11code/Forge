@@ -512,6 +512,21 @@ If the current model cannot represent this cleanly, introduce a dedicated
 
 **Don't create that migration preemptively.** The decision lands at 37.6/37.7.
 
+> **[RESOLVED — F4, 2026-10-17, Phase 37.8]** The fork is decided: **extend
+> `AgentToolExecution`; do not introduce a `WorkflowProposal` model.** The
+> execution row already owns the immutable proposal (`input`), the approval
+> audit trail, and the session-scoped identity that clarification and criticality
+> bind to, so a second table would duplicate a state machine and need keeping in
+> sync. 37.8 adds a `result` column, a **separate** `AgentProposalState` enum
+> (proposal lifecycle is not execution status), `proposalFingerprint` /
+> `proposalRevision` for reproducible supersession, and
+> `clarificationAnswer` / `criticalityDecisions` for the durable human decisions.
+> Rationale, rejected alternatives and the honest limitations are recorded in
+> [Decision 22](../agent/decisions.md) and the Phase 2 report
+> ([`assignments-37-phase-37.8-proposal-lifecycle.md`](./assignments-37-phase-37.8-proposal-lifecycle.md)).
+> **F4 remains open** until independent acceptance; this note records the
+> decision, it does not close the issue.
+
 ---
 
 # Phase 9 — Human review / confirmation

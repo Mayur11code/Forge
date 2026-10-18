@@ -37,6 +37,7 @@ import {
 } from "@/lib/ai/agent/reaper";
 import {
   abandonToolExecution,
+  getToolExecutionInSession,
   heartbeatToolExecution,
 } from "@/lib/ai/agent/services/tool-execution-service";
 
@@ -420,6 +421,31 @@ describe("execution liveness", () => {
     ];
 
     await expect(heartbeatToolExecution("exec_1")).resolves.toBe(false);
+  });
+
+  it("selects expiredAt so a reader can tell a timed-out proposal apart (F-3)", async () => {
+    // F-3: dropping `expiredAt` from the shared select silently hid the expiry
+    // timestamp from every reader. Pin it so the projection cannot regress.
+    store.executions = [
+      {
+        id: "exec_1",
+        sessionId: "sess_1",
+        status: "EXPIRED",
+        expiredAt: new Date(5),
+        updatedAt: new Date(5),
+      },
+    ];
+
+    await getToolExecutionInSession({
+      executionId: "exec_1",
+      sessionId: "sess_1",
+    });
+
+    expect(prismaDouble.agentToolExecution.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ expiredAt: true }),
+      }),
+    );
   });
 });
 
