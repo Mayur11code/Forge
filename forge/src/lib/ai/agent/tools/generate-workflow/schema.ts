@@ -10,20 +10,22 @@ import {
 } from "@/lib/workflow-types/workflow-proposal";
 
 /**
- * Model-facing input for `generateWorkflow`.
+ * The Assignment 37.2 proposal contract, by reference.
  *
- * This IS the Assignment 37.2 proposal contract, not a copy of it. The schema
- * the model generates against and the schema the compiler validates must not be
- * able to drift: a proposal the model was told was well-formed must not be
- * rejected by the registry for a reason it could not see. Action membership and
- * per-action input rules are enforced by the compiler, not restated here.
+ * This IS the compiler's proposal schema, not a copy: a proposal the model was
+ * told was well-formed cannot be rejected by a drifting duplicate. Action
+ * membership and per-action input rules are enforced by the compiler, not
+ * restated here.
  *
  * Structural violations (a missing `name`, a malformed step id, an empty
- * `steps`) are therefore rejected by the model-facing schema before the executor
- * runs. Semantic violations that the schema does not encode — unknown actions,
- * dangling or self dependencies, cycles, invalid `{{...}}` references — reach
- * the executor and are returned as structured issues. The two paths are
- * deliberately distinct and are asserted as such in the tests.
+ * `steps`) are rejected by this schema before the executor runs. Semantic
+ * violations that the schema does not encode — unknown actions, dangling or self
+ * dependencies, cycles, invalid `{{...}}` references — reach the executor and
+ * are returned as structured issues. The two paths are deliberately distinct and
+ * are asserted as such in the tests.
+ *
+ * It carries no `clarifications` field, so it is the parser/compat schema, not
+ * the model-facing one. See `generateWorkflowModelInputSchema` below.
  */
 export const generateWorkflowSchema = WorkflowProposalSchema;
 
@@ -148,13 +150,46 @@ export const ProposalWithClarificationsFormBSchema = z
   });
 
 /**
- * Union schema for generateWorkflow tool input: accepts either an ordinary
- * proposal or a proposal accompanied by clarification requests.
+ * The schema the model is handed as the `generateWorkflow` tool's `inputSchema`.
+ *
+ * ONE flat object, never a root `z.union`. A root union serializes to a root
+ * `anyOf` in the tool's JSON Schema, and function-calling degrades against
+ * `anyOf`: the model must choose a branch AND populate it, and a payload that is
+ * a near-miss for the branch it chose matches none of them, so the call is
+ * rejected with no usable feedback. A single canonical object gives the model
+ * exactly one target to fill.
+ *
+ * The shape is the 37.2 proposal plus an OPTIONAL `clarifications` array. An
+ * absent `clarifications` is an ordinary proposal; a non-empty array carries
+ * clarification requests, exactly as the executor already expects. Structural
+ * rules (non-empty `steps`, local-id grammar, strictness) are inherited
+ * unchanged from `WorkflowProposalSchema` via `.extend`, so the model-facing
+ * contract and the compiler contract cannot drift.
  */
-export const generateWorkflowToolInputSchema = z.union([
+export const generateWorkflowModelInputSchema = WorkflowProposalSchema.extend({
+  clarifications: ClarificationRequestItemSchema.array()
+    .min(1, "At least one clarification request is required when supplied.")
+    .optional()
+    .describe(
+      "Optional clarification requests for genuinely missing required inputs. Omit for an ordinary proposal.",
+    ),
+});
+
+/**
+ * Every input shape the executor still accepts, retained for compatibility and
+ * parsing. This is NOT sent to the model; the model sees only
+ * `generateWorkflowModelInputSchema`.
+ *
+ *   - plain proposal:          { name, description?, steps }
+ *   - nested + clarifications: { proposal: { name, description?, steps }, clarifications: [...] }
+ *   - flat + clarifications:   { name, description?, steps, clarifications: [...] }
+ *
+ * The executor dissects these itself (`extractProposalAndClarifications` in
+ * execute.ts), so this union documents and validates the legacy boundary; it is
+ * not a runtime dependency of the tool call.
+ */
+export const generateWorkflowAcceptedInputSchema = z.union([
   WorkflowProposalSchema,
   ProposalWithClarificationsFormASchema,
   ProposalWithClarificationsFormBSchema,
 ]);
-
-export const generateWorkflowInputSchema = generateWorkflowToolInputSchema;

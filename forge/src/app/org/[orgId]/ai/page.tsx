@@ -1,4 +1,5 @@
 import { ChatWorkspace } from "@/features/organizations/components/ai/ChatWorkspace";
+import { WorkflowProposalPanel } from "@/features/organizations/components/ai/WorkflowProposalPanel";
 
 export default async function DiagnosticsPage({ params }: { params: Promise<{ orgId: string }> }) {
     const resolvedParams = await params;
@@ -13,6 +14,10 @@ export default async function DiagnosticsPage({ params }: { params: Promise<{ or
       
       {/* Mount the Master Component Here */}
       <ChatWorkspace orgSlug={resolvedParams.orgId} />
+
+      <div className="mt-8">
+        <WorkflowProposalPanel orgSlug={resolvedParams.orgId} />
+      </div>
     </div>
   );
 }

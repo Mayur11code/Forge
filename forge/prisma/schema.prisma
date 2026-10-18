@@ -116,6 +116,13 @@ enum AgentProposalState {
   AWAITING_APPROVAL
   // The human approved the proposal. Written by 37.9.
   APPROVED
+  // The human explicitly declined the proposal. Terminal: no `Workflow` is
+  // materialized, no action runs, and the loop is not restarted. Written by 37.9.
+  DECLINED
+  // The approval window closed before the human decided. Terminal, and distinct
+  // from DECLINED on purpose: an expiry is the SYSTEM giving up, never a user
+  // refusing something they were never asked about. Written by 37.9.
+  EXPIRED
   // A newer proposal for the same session replaced this one.
   SUPERSEDED
   // The model produced an invalid proposal (INVALID_INPUT); it self-corrects.
@@ -192,6 +199,12 @@ model AgentToolExecution {
   // unrelated touch would reset an `updatedAt`-derived deadline and let a
   // proposal live forever. `expiredAt` records when the timeout was actually
   // observed, so the two timestamps cannot be confused for each other.
+  //
+  // Assignment 37.9: for a `generateWorkflow` proposal that reaches
+  // AWAITING_APPROVAL, `expiresAt` holds the REVIEW deadline instead. The two
+  // meanings never coexist on one row -- a row is either PENDING_CONFIRMATION (a
+  // tool awaiting confirmation) or COMPLETED with a proposal state -- so this is
+  // one column with a mutually-exclusive meaning per lifecycle, not two.
   expiresAt DateTime?
   expiredAt DateTime?
 
@@ -237,6 +250,10 @@ model AgentToolExecution {
   // Backs the "is this session parked on a pending proposal?" predicate used by
   // recovery, so a deliberately-parked session is never re-driven or failed.
   @@index([sessionId, proposalState])
+  // Backs the bounded maintenance scan for proposal reviews whose approval
+  // window has closed:
+  // WHERE proposalState = AWAITING_APPROVAL AND expiresAt <= now() ORDER BY expiresAt
+  @@index([proposalState, expiresAt])
 }
 
 model AgentMessage {

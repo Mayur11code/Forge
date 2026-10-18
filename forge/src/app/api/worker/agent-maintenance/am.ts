@@ -17,8 +17,8 @@
 // forever. Writing the sweep and never scheduling it is the same as not having
 // written it.
 //
-// One handler, five duties, deliberately. Five separate schedules would mean five
-// schedules to keep alive and five places to look when one of them silently
+// One handler, six duties, deliberately. Six separate schedules would mean six
+// schedules to keep alive and six places to look when one of them silently
 // stops - and the failure mode of a missing sweeper is a session that hangs
 // forever, which is exactly the kind of thing that goes unnoticed.
 //
@@ -29,6 +29,7 @@
 
 import {
   expireStaleApprovals,
+  expireStaleProposalReviews,
   reapOrphanedToolExecutions,
   redeliverStalledConfirmedExecutions,
   redriveStalledSessions,
@@ -51,6 +52,7 @@ export type MaintenanceSummary = {
   ok: boolean;
   durationMs: number;
   expired: unknown | null;
+  proposalReviews: unknown | null;
   orphaned: unknown | null;
   redelivered: unknown | null;
   stalled: unknown | null;
@@ -121,32 +123,39 @@ export async function runAgentMaintenance({
 } = {}): Promise<MaintenanceSummary> {
   const startedAt = Date.now();
 
-  const [expired, orphaned, redelivered, stalled, outbox] = await Promise.all([
-    settle("expireStaleApprovals", () => expireStaleApprovals({ limit })),
-    settle("reapOrphanedToolExecutions", () =>
-      reapOrphanedToolExecutions({ limit }),
-    ),
-    settle("redeliverStalledConfirmedExecutions", () =>
-      redeliverStalledConfirmedExecutions({ limit }),
-    ),
-    // Runs concurrently with the reaper on purpose. The two duties are
-    // disjoint by predicate - a session with an in-flight execution belongs to
-    // the reaper and is excluded here - so serialising them would only make the
-    // pass slower, and the outbox drain below picks up whatever both recorded
-    // in the same tick.
-    settle("redriveStalledSessions", () => redriveStalledSessions({ limit })),
-    // The outbox is drained here too, and it is not optional.
-    //
-    // Every critical agent event is written to AgentOutboxEvent instead of being
-    // published directly, precisely so that a crash cannot lose it. A row that is
-    // written and never published is not durable, it is deferred: the session is
-    // still stuck, it is just stuck in a table instead of on the floor. Without a
-    // dispatcher on a schedule the entire outbox is inert, and it would look like
-    // durability in every document and every code review.
-    settle("dispatchOutboxBatch", () => dispatchOutboxBatch(limit)),
-  ]);
+  const [expired, proposalReviews, orphaned, redelivered, stalled, outbox] =
+    await Promise.all([
+      settle("expireStaleApprovals", () => expireStaleApprovals({ limit })),
+      // Assignment 37.9: the proposal-lifecycle counterpart to the tool-approval
+      // sweep. Kept as its own duty so a broken one cannot silently take the
+      // other down - the whole point of `settle`.
+      settle("expireStaleProposalReviews", () =>
+        expireStaleProposalReviews({ limit }),
+      ),
+      settle("reapOrphanedToolExecutions", () =>
+        reapOrphanedToolExecutions({ limit }),
+      ),
+      settle("redeliverStalledConfirmedExecutions", () =>
+        redeliverStalledConfirmedExecutions({ limit }),
+      ),
+      // Runs concurrently with the reaper on purpose. The two duties are
+      // disjoint by predicate - a session with an in-flight execution belongs to
+      // the reaper and is excluded here - so serialising them would only make the
+      // pass slower, and the outbox drain below picks up whatever both recorded
+      // in the same tick.
+      settle("redriveStalledSessions", () => redriveStalledSessions({ limit })),
+      // The outbox is drained here too, and it is not optional.
+      //
+      // Every critical agent event is written to AgentOutboxEvent instead of being
+      // published directly, precisely so that a crash cannot lose it. A row that is
+      // written and never published is not durable, it is deferred: the session is
+      // still stuck, it is just stuck in a table instead of on the floor. Without a
+      // dispatcher on a schedule the entire outbox is inert, and it would look like
+      // durability in every document and every code review.
+      settle("dispatchOutboxBatch", () => dispatchOutboxBatch(limit)),
+    ]);
 
-  const errors = [expired, orphaned, redelivered, stalled, outbox]
+  const errors = [expired, proposalReviews, orphaned, redelivered, stalled, outbox]
     .filter((r): r is { ok: false; error: string } => !r.ok)
     .map((r) => r.error);
 
@@ -154,6 +163,7 @@ export async function runAgentMaintenance({
     ok: errors.length === 0,
     durationMs: Date.now() - startedAt,
     expired: expired.ok ? expired.value : null,
+    proposalReviews: proposalReviews.ok ? proposalReviews.value : null,
     orphaned: orphaned.ok ? orphaned.value : null,
     redelivered: redelivered.ok ? redelivered.value : null,
     stalled: stalled.ok ? stalled.value : null,
@@ -193,6 +203,11 @@ function toLoggableSummary(summary: MaintenanceSummary) {
       continued: count(summary.expired, "continued"),
       skipped: count(summary.expired, "skipped"),
       scanned: count(summary.expired, "scanned"),
+    },
+    proposalReviews: {
+      expired: count(summary.proposalReviews, "expired"),
+      skipped: count(summary.proposalReviews, "skipped"),
+      scanned: count(summary.proposalReviews, "scanned"),
     },
     orphaned: { swept: count(summary.orphaned, "swept") },
     redelivered: {
