@@ -21,6 +21,7 @@ jest.mock("@/lib/ai/agent/status", () => ({ publishAgentStatus: jest.fn() }));
 
 jest.mock("@/lib/ai/agent/reaper", () => ({
   expireStaleApprovals: jest.fn(),
+  expireStaleProposalReviews: jest.fn(),
   reapOrphanedToolExecutions: jest.fn(),
   redeliverStalledConfirmedExecutions: jest.fn(),
   redriveStalledSessions: jest.fn(),
@@ -32,6 +33,7 @@ jest.mock("@/lib/ai/agent/outbox", () => ({
 
 import {
   expireStaleApprovals,
+  expireStaleProposalReviews,
   reapOrphanedToolExecutions,
   redeliverStalledConfirmedExecutions,
   redriveStalledSessions,
@@ -46,6 +48,9 @@ import {
 
 const expireMock = expireStaleApprovals as jest.MockedFunction<
   typeof expireStaleApprovals
+>;
+const proposalReviewsMock = expireStaleProposalReviews as jest.MockedFunction<
+  typeof expireStaleProposalReviews
 >;
 const reapMock = reapOrphanedToolExecutions as jest.MockedFunction<
   typeof reapOrphanedToolExecutions
@@ -88,6 +93,14 @@ beforeEach(() => {
     errors: [],
   });
 
+  proposalReviewsMock.mockResolvedValue({
+    expired: 0,
+    skipped: 0,
+    scanned: 0,
+    durationMs: 1,
+    errors: [],
+  });
+
   reapMock.mockResolvedValue({ swept: 0, sessionIds: [] });
   redeliverMock.mockResolvedValue([]);
   stalledMock.mockResolvedValue({
@@ -116,10 +129,11 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("work performed", () => {
-  it("runs all five duties", async () => {
+  it("runs all six duties", async () => {
     await handleAgentMaintenance(event());
 
     expect(expireMock).toHaveBeenCalledTimes(1);
+    expect(proposalReviewsMock).toHaveBeenCalledTimes(1);
     expect(reapMock).toHaveBeenCalledTimes(1);
     expect(redeliverMock).toHaveBeenCalledTimes(1);
     expect(stalledMock).toHaveBeenCalledTimes(1);
@@ -146,6 +160,13 @@ describe("work performed", () => {
       errors: [],
     });
     reapMock.mockResolvedValue({ swept: 1, sessionIds: ["sess_1"] });
+    proposalReviewsMock.mockResolvedValue({
+      expired: 2,
+      skipped: 1,
+      scanned: 3,
+      durationMs: 4,
+      errors: [],
+    });
     redeliverMock.mockResolvedValue(["exec_1"]);
     stalledMock.mockResolvedValue({
       redriven: 1,
@@ -172,6 +193,7 @@ describe("work performed", () => {
     expect(summary.ok).toBe(true);
     expect(summary.expired).toMatchObject({ expired: 3, continued: 2 });
     expect(summary.orphaned).toMatchObject({ swept: 1 });
+    expect(summary.proposalReviews).toMatchObject({ expired: 2, scanned: 3 });
     expect(summary.redelivered).toEqual(["exec_1"]);
     expect(summary.stalled).toMatchObject({
       redriven: 1,
@@ -194,7 +216,13 @@ describe("work performed", () => {
     await handleAgentMaintenance(event());
 
     // The sweeps take a named `limit`; the dispatcher takes it positionally.
-    for (const mock of [expireMock, reapMock, redeliverMock, stalledMock]) {
+    for (const mock of [
+      expireMock,
+      proposalReviewsMock,
+      reapMock,
+      redeliverMock,
+      stalledMock,
+    ]) {
       expect(mock).toHaveBeenCalledWith(
         expect.objectContaining({ limit: expect.any(Number) }),
       );
@@ -206,7 +234,13 @@ describe("work performed", () => {
   it("passes the scheduled limit through to every duty", async () => {
     await handleAgentMaintenance(event(7));
 
-    for (const mock of [expireMock, reapMock, redeliverMock, stalledMock]) {
+    for (const mock of [
+      expireMock,
+      proposalReviewsMock,
+      reapMock,
+      redeliverMock,
+      stalledMock,
+    ]) {
       expect(mock).toHaveBeenCalledWith(expect.objectContaining({ limit: 7 }));
     }
 
@@ -216,7 +250,13 @@ describe("work performed", () => {
   it("falls back to the batch constant when called without a limit", async () => {
     await runAgentMaintenance();
 
-    for (const mock of [expireMock, reapMock, redeliverMock, stalledMock]) {
+    for (const mock of [
+      expireMock,
+      proposalReviewsMock,
+      reapMock,
+      redeliverMock,
+      stalledMock,
+    ]) {
       expect(mock).toHaveBeenCalledWith(
         expect.objectContaining({ limit: AGENT_MAINTENANCE_BATCH_SIZE }),
       );
@@ -282,6 +322,7 @@ describe("work performed", () => {
 
     for (const mock of [
       expireMock,
+      proposalReviewsMock,
       reapMock,
       redeliverMock,
       stalledMock,

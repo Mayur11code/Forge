@@ -1,6 +1,6 @@
 import { tool } from "ai";
 
-import { generateWorkflowToolInputSchema } from "./schema";
+import { generateWorkflowModelInputSchema } from "./schema";
 
 export const generateWorkflowTool = tool({
   description: [
@@ -32,5 +32,5 @@ export const generateWorkflowTool = tool({
     "was created or started: this tool only proposes one.",
   ].join(" "),
 
-  inputSchema: generateWorkflowToolInputSchema,
+  inputSchema: generateWorkflowModelInputSchema,
 });

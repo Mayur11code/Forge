@@ -19,7 +19,14 @@
 -- deliberate.
 
 -- CreateEnum
-CREATE TYPE "AgentProposalState" AS ENUM ('VALIDATED', 'NEEDS_CLARIFICATION', 'CLARIFICATION_ACCEPTED', 'AWAITING_CRITICALITY', 'AWAITING_APPROVAL', 'APPROVED', 'SUPERSEDED', 'INVALID', 'MATERIALIZED');
+--
+-- Assignment 37.9 amends this still-UNAPPLIED migration in place to add the two
+-- terminal human-decision states, rather than adding a second migration that
+-- would have to `ALTER TYPE ... ADD VALUE` against a type that does not exist
+-- yet on any database. DECLINED is a deliberate human refusal; EXPIRED is the
+-- system closing a review window nobody answered. They are separate states
+-- because conflating them would report a timeout as a user decision.
+CREATE TYPE "AgentProposalState" AS ENUM ('VALIDATED', 'NEEDS_CLARIFICATION', 'CLARIFICATION_ACCEPTED', 'AWAITING_CRITICALITY', 'AWAITING_APPROVAL', 'APPROVED', 'DECLINED', 'EXPIRED', 'SUPERSEDED', 'INVALID', 'MATERIALIZED');
 
 -- AlterTable
 ALTER TABLE "AgentToolExecution" ADD COLUMN     "clarificationAnswer" JSONB,
@@ -34,6 +41,11 @@ ALTER TABLE "Workflow" ADD COLUMN     "sourceProposalId" TEXT;
 
 -- CreateIndex
 CREATE INDEX "AgentToolExecution_sessionId_proposalState_idx" ON "AgentToolExecution"("sessionId", "proposalState");
+
+-- CreateIndex
+-- Assignment 37.9: backs the proposal-review expiry sweep
+-- (WHERE proposalState = AWAITING_APPROVAL AND expiresAt <= now()).
+CREATE INDEX "AgentToolExecution_proposalState_expiresAt_idx" ON "AgentToolExecution"("proposalState", "expiresAt");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Workflow_sourceProposalId_key" ON "Workflow"("sourceProposalId");

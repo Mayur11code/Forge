@@ -43,9 +43,11 @@ import { AgentProposalState, AgentToolExecutionStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma/extended";
 import {
   WorkflowProposalSchema,
+  type WorkflowProposal,
 } from "@/lib/workflow-types/workflow-proposal";
 
 import type { AgentOutboxTx } from "../outbox";
+import { getAgentApprovalTimeoutMs } from "../constants";
 import { computeProposalCorrelationId } from "../tools/generate-workflow/execute";
 import { isClarificationFailure } from "../tools/shared-output";
 import type { JsonValue } from "../types";
@@ -61,6 +63,22 @@ export const PROPOSAL_TOOL_NAME = "generateWorkflow";
 export const PENDING_HUMAN_PROPOSAL_STATES: readonly AgentProposalState[] = [
   AgentProposalState.AWAITING_CRITICALITY,
   AgentProposalState.AWAITING_APPROVAL,
+];
+
+/**
+ * Proposal states that mean "the human review is over".
+ *
+ * A proposal lands here once the human approves it, explicitly declines it, or
+ * the review window closes. These are NOT pending states - `getPendingProposal`
+ * and `hasPendingProposal` deliberately exclude them - but a session holding one
+ * is still not stalled: the model must not be re-driven while an approved
+ * proposal awaits materialization (37.11) or a decided/expired one is simply
+ * done. The stalled-session recovery uses this to keep such a session parked.
+ */
+export const SETTLED_PROPOSAL_STATES: readonly AgentProposalState[] = [
+  AgentProposalState.APPROVED,
+  AgentProposalState.DECLINED,
+  AgentProposalState.EXPIRED,
 ];
 
 export type ProposalLifecycle = {
@@ -460,6 +478,14 @@ export async function hasPendingProposal(sessionId: string): Promise<boolean> {
  * valid proposal undecidable. Adopting it advances it into the lifecycle
  * instead. A proposal that has already ADVANCED (AWAITING_APPROVAL, SUPERSEDED,
  * ...) is still refused: that is a genuine lost CAS, not a legacy row.
+ *
+ * Assignment 37.9: entering AWAITING_APPROVAL is the moment the approval window
+ * starts, so the deadline is written in the SAME CAS that crosses into it. Doing
+ * it in a second write would leave a window in which a proposal is parked with
+ * no deadline, and the review sweep would depend on that second write having
+ * happened rather than on the state transition itself. The TTL comes from
+ * `getAgentApprovalTimeoutMs` so review expiry and tool-approval expiry cannot
+ * drift apart. `now` is injectable for deterministic tests.
  */
 export async function recordCriticalityDecision(
   tx: AgentOutboxTx,
@@ -467,12 +493,16 @@ export async function recordCriticalityDecision(
     executionId,
     sessionId,
     decisions,
+    now = new Date(),
   }: {
     executionId: string;
     sessionId: string;
     decisions: Record<string, boolean>;
+    now?: Date;
   },
 ): Promise<boolean> {
+  const reviewExpiresAt = new Date(now.getTime() + getAgentApprovalTimeoutMs());
+
   const { count } = await tx.agentToolExecution.updateMany({
     where: {
       id: executionId,
@@ -485,6 +515,7 @@ export async function recordCriticalityDecision(
     data: {
       criticalityDecisions: decisions,
       proposalState: AgentProposalState.AWAITING_APPROVAL,
+      expiresAt: reviewExpiresAt,
     },
   });
 
@@ -522,4 +553,216 @@ export async function recordClarificationAnswer(
   });
 
   return count === 1;
+}
+
+/**
+ * The two terminal outcomes of a human review. Both are decided by the human;
+ * neither executes an action and neither re-enters the model.
+ */
+export type ProposalDecisionState =
+  | typeof AgentProposalState.APPROVED
+  | typeof AgentProposalState.DECLINED;
+
+/**
+ * Record the human's approval/decline durably, compare-and-set from
+ * AWAITING_APPROVAL.
+ *
+ * The CAS is the whole point: a proposal that has already been decided,
+ * superseded, expired, or advanced to materialization is not `AWAITING_APPROVAL`
+ * anymore, so a duplicate or stale decision writes nothing and returns false for
+ * the caller to answer as a conflict rather than a success. Because the caller
+ * holds the session lock and has already re-derived and re-verified the
+ * proposal against its stored fingerprint, this single state CAS is sufficient
+ * to bind the decision to the exact revision the human reviewed - the row cannot
+ * change revision while it is parked.
+ *
+ * Assignment 37.9: no outbox event. The deferred-trigger decision rules out an
+ * `AGENT_LOOP_REQUESTED` here, and materialization is 37.11's concern.
+ */
+export async function recordProposalDecision(
+  tx: AgentOutboxTx,
+  {
+    executionId,
+    sessionId,
+    decision,
+  }: {
+    executionId: string;
+    sessionId: string;
+    decision: ProposalDecisionState;
+  },
+): Promise<boolean> {
+  const { count } = await tx.agentToolExecution.updateMany({
+    where: {
+      id: executionId,
+      sessionId,
+      proposalState: AgentProposalState.AWAITING_APPROVAL,
+    },
+    data: {
+      proposalState: decision,
+    },
+  });
+
+  return count === 1;
+}
+
+/**
+ * Close a proposal review whose approval window has elapsed, compare-and-set
+ * from AWAITING_APPROVAL AND `expiresAt <= now`.
+ *
+ * Both predicates matter, exactly as they do for tool-approval expiry:
+ *   - the state predicate makes it a CAS, so two maintenance passes cannot both
+ *     claim one proposal;
+ *   - the `expiresAt` predicate means a proposal is never expired early, no
+ *     matter what the caller believed, and a proposal with no deadline is never
+ *     expired at all.
+ *
+ * Returns false when the human decided first, or when the deadline has not
+ * passed. That race is resolved in the human's favour, so the caller treats
+ * `false` as "nothing to do".
+ *
+ * EXPIRED is distinct from DECLINED on purpose: nobody refused anything, the
+ * window simply closed.
+ */
+export async function expireProposalReview(
+  tx: AgentOutboxTx,
+  {
+    executionId,
+    sessionId,
+    now = new Date(),
+  }: {
+    executionId: string;
+    sessionId: string;
+    now?: Date;
+  },
+): Promise<boolean> {
+  const { count } = await tx.agentToolExecution.updateMany({
+    where: {
+      id: executionId,
+      sessionId,
+      proposalState: AgentProposalState.AWAITING_APPROVAL,
+      expiresAt: { lte: now },
+    },
+    data: {
+      proposalState: AgentProposalState.EXPIRED,
+      expiredAt: now,
+    },
+  });
+
+  return count === 1;
+}
+
+/**
+ * Recover the proposal a durable execution `result` carries, if it carries one.
+ *
+ * This mirrors the `ok: true` branch of `deriveProposalLifecycle` against the
+ * PERSISTED result rather than the transcript, so the decision service and the
+ * criticality service agree on what the proposal is without either of them
+ * re-parsing the model's arguments. A result is a proposal only when it says
+ * `ok: true` AND the proposal parses against the structural schema.
+ */
+export function proposalFromExecutionResult(
+  result: unknown,
+): WorkflowProposal | null {
+  if (typeof result !== "object" || result === null) {
+    return null;
+  }
+
+  const value = result as { ok?: unknown; proposal?: unknown };
+
+  if (value.ok !== true) {
+    return null;
+  }
+
+  const parsed = WorkflowProposalSchema.safeParse(value.proposal);
+
+  return parsed.success ? parsed.data : null;
+}
+
+/** The proposal-row fields the decision service and read route need. */
+export type ProposalReviewExecution = {
+  id: string;
+  sessionId: string;
+  toolName: string;
+  status: AgentToolExecutionStatus;
+  result: unknown;
+  proposalState: AgentProposalState | null;
+  proposalFingerprint: string | null;
+  proposalRevision: number | null;
+  criticalityDecisions: unknown;
+  clarificationAnswer: unknown;
+  expiresAt: Date | null;
+  expiredAt: Date | null;
+};
+
+/**
+ * Load one proposal execution by its durable id, scoped to its session.
+ *
+ * The `sessionId` predicate is the security-relevant half: an execution id alone
+ * would let a caller who owns session A read an execution belonging to session
+ * B. This includes `result` (the other execution selects do not), because that
+ * is where the proposal lives.
+ */
+export async function getProposalReviewExecution({
+  sessionId,
+  executionId,
+}: {
+  sessionId: string;
+  executionId: string;
+}): Promise<ProposalReviewExecution | null> {
+  return prisma.agentToolExecution.findFirst({
+    where: { id: executionId, sessionId, toolName: PROPOSAL_TOOL_NAME },
+    select: {
+      id: true,
+      sessionId: true,
+      toolName: true,
+      status: true,
+      result: true,
+      proposalState: true,
+      proposalFingerprint: true,
+      proposalRevision: true,
+      criticalityDecisions: true,
+      clarificationAnswer: true,
+      expiresAt: true,
+      expiredAt: true,
+    },
+  });
+}
+
+/** Cheap liveness probe: does this session hold a decided/expired proposal? */
+export async function hasSettledProposal(sessionId: string): Promise<boolean> {
+  const count = await prisma.agentToolExecution.count({
+    where: {
+      sessionId,
+      proposalState: { in: [...SETTLED_PROPOSAL_STATES] },
+    },
+  });
+
+  return count > 0;
+}
+
+/**
+ * Candidate rows for the proposal-review expiry sweep.
+ *
+ * A cheap, bounded pre-filter only; the authoritative transition is the CAS in
+ * `expireProposalReview`, which re-checks the state and the deadline. Ordered by
+ * deadline and capped so a maintenance pass never walks an unbounded set - rows
+ * beyond the cap are simply picked up on the next tick.
+ *
+ * A NULL `expiresAt` cannot be due. A proposal parked before review deadlines
+ * existed stays AWAITING_APPROVAL rather than being closed against a window that
+ * was never agreed with anyone.
+ */
+export async function findDueProposalReviewCandidates(
+  limit: number,
+  now: Date = new Date(),
+): Promise<{ id: string; sessionId: string }[]> {
+  return prisma.agentToolExecution.findMany({
+    where: {
+      proposalState: AgentProposalState.AWAITING_APPROVAL,
+      expiresAt: { lte: now },
+    },
+    orderBy: { expiresAt: "asc" },
+    take: limit,
+    select: { id: true, sessionId: true },
+  });
 }

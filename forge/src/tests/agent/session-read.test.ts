@@ -196,3 +196,152 @@ describe("authorized response", () => {
     expect(body.finalResponse).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Assignment 37.9 — the review projection on the read route
+// ---------------------------------------------------------------------------
+
+const PROJECT_ID = "clxyz0000000000000000000a";
+
+const VALID_PROPOSAL = {
+  name: "Onboard a client",
+  description: "Kick off the onboarding.",
+  steps: {
+    kickoff: {
+      action: "task.create",
+      inputs: { title: "Create the onboarding task", projectId: PROJECT_ID },
+      dependsOn: [],
+    },
+    follow: {
+      action: "task.create",
+      inputs: { title: "Follow up", projectId: PROJECT_ID },
+      dependsOn: ["kickoff"],
+    },
+  },
+};
+
+function proposalExecution(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "exec_prop_1",
+    toolCallId: "call_prop_1",
+    toolName: "generateWorkflow",
+    input: {},
+    status: "COMPLETED",
+    error: null,
+    confirmedAt: null,
+    cancelledAt: null,
+    expiresAt: null,
+    expiredAt: null,
+    proposalState: "AWAITING_APPROVAL",
+    proposalFingerprint: "fp_1",
+    proposalRevision: 1,
+    result: { ok: true, proposal: VALID_PROPOSAL },
+    criticalityDecisions: { kickoff: true, follow: false },
+    clarificationAnswer: null,
+    createdAt: new Date("2026-09-29T00:00:30.000Z"),
+    updatedAt: new Date("2026-09-29T00:00:30.000Z"),
+    ...overrides,
+  };
+}
+
+describe("proposal review projection", () => {
+  beforeEach(() => {
+    authMock.mockResolvedValue({ user: { id: "user_a" } } as never);
+    getSessionMock.mockResolvedValue(session());
+  });
+
+  it("is null when the session holds no proposal", async () => {
+    getExecutionsMock.mockResolvedValue([
+      {
+        id: "exec_1",
+        toolCallId: "call_1",
+        toolName: "createTask",
+        input: {},
+        status: "PENDING",
+        error: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+
+    expect(body.pendingProposal).toBeNull();
+    expect(body.proposalOutcome).toBeNull();
+  });
+
+  it("renders the pending proposal from the persisted result", async () => {
+    getExecutionsMock.mockResolvedValue([proposalExecution()] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+    const review = pending.review as Record<string, unknown>;
+
+    expect(pending.interactionId).toBe("exec_prop_1");
+    expect(pending.state).toBe("AWAITING_APPROVAL");
+    expect(review.name).toBe("Onboard a client");
+    expect(review.stepCount).toBe(2);
+    // Dependency order, not insertion order.
+    expect(review.order).toEqual(["kickoff", "follow"]);
+    expect(review.criticality).toEqual({ kickoff: true, follow: false });
+    expect(body.proposalOutcome).toBeNull();
+  });
+
+  it("still surfaces a pending proposal whose stored result does not parse, with a null review", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({ result: { ok: false, code: "INVALID_INPUT" } }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    expect(pending.interactionId).toBe("exec_prop_1");
+    expect(pending.review).toBeNull();
+  });
+
+  it("surfaces a decided proposal as an outcome, never as pending", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({
+        proposalState: "DECLINED",
+        updatedAt: new Date("2026-09-29T00:05:00.000Z"),
+      }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const outcome = body.proposalOutcome as Record<string, unknown>;
+
+    expect(body.pendingProposal).toBeNull();
+    expect(outcome.state).toBe("DECLINED");
+    expect(outcome.decidedAt).toBe("2026-09-29T00:05:00.000Z");
+  });
+
+  it("dates an expired proposal by its expiredAt, not its updatedAt", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({
+        proposalState: "EXPIRED",
+        expiredAt: new Date("2026-09-29T00:09:00.000Z"),
+        updatedAt: new Date("2026-09-29T00:00:30.000Z"),
+      }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const outcome = body.proposalOutcome as Record<string, unknown>;
+
+    expect(outcome.state).toBe("EXPIRED");
+    expect(outcome.decidedAt).toBe("2026-09-29T00:09:00.000Z");
+  });
+
+  it("exposes the pending review deadline", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({ expiresAt: new Date("2026-09-29T00:15:00.000Z") }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    expect(pending.expiresAt).toBe("2026-09-29T00:15:00.000Z");
+    expect((pending.review as Record<string, unknown>).reviewExpiresAt).toBe(
+      "2026-09-29T00:15:00.000Z",
+    );
+  });
+});
