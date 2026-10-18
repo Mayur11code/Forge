@@ -858,3 +858,95 @@ and the session read endpoint are the recovery path
   in this module. No new lock order was introduced.
 - **F4 is not closed.** This decision and its implementation are evidence for
   acceptance; they are not acceptance.
+
+## Decision 23: A proposal-specific decision ingress, and review expiry as a silent terminal state (37.9)
+
+**Status:** `IMPLEMENTED` (Assignment 37.9) — `proposal-decision-service.ts`,
+`proposal-approval`/`proposal-decline` routes, `expireStaleProposalReviews` in
+`reaper.ts`, `ProposalReviewCard`. **Not independently accepted.**
+
+**Decision.** Approval and decline are answered through their own endpoints and
+their own service, not through the 35/36 tool-confirmation gate. A review that
+nobody answers is closed by the existing maintenance reaper, writing the new
+terminal state `EXPIRED` and nothing else.
+
+### Why approval is not a tool confirmation (owner decision A)
+
+A tool confirmation answers *"may this not-yet-run tool execute?"* and is bound to
+`AgentToolExecutionStatus.PENDING_CONFIRMATION`. A proposal has already run: the
+`generateWorkflow` execution is **`COMPLETED`** and its result is durable.
+Confirming a completed execution through the tool gate would queue a second
+execution of a tool that already produced its result and restart the loop against
+a turn the human has already left. The two questions are therefore answered on
+different endpoints, and neither mechanism is bent to serve the other
+([Decision 22](#decision-22-reuse-agenttoolexecution-for-the-durable-proposal-lifecycle-f4)).
+What *is* reused is the shape of the criticality ingress: ownership from the
+persisted session, a cheap 404/409 before the lock, the session lock, a proposal
+re-derived from the persisted result and re-validated server-side, a
+backend-recomputed fingerprint binding the decision to the reviewed revision, and
+a compare-and-set transition that commits with its audit line.
+
+### Why `DECLINED` is terminal, with no Workflow and no loop restart (owner decision B)
+
+A decline is a decision, not a failure and not a pause. Recording it as `DECLINED`
+lets the read route report "you declined this; no workflow was created" after a
+restart, and lets recovery distinguish a human's "no" from a crash. It does **not**
+materialize a workflow, execute an action, or record `AGENT_LOOP_REQUESTED`: the
+deferred-trigger decision rules out re-entering the model, and re-entering it on a
+declined proposal would regenerate the very thing the human rejected.
+
+### Why review expiry is its own sweep, not the approval sweep (owner decision C)
+
+A tool approval expiring is `PENDING_CONFIRMATION` (the tool has not run) and
+*continues the loop* so the model can report the timeout. A proposal review
+expiring is `AWAITING_APPROVAL` (the tool already ran) and is a silent terminal
+transition: the model is not re-entered, because a decided proposal is not a turn
+to continue. So `expireStaleProposalReviews` is a sibling of `expireStaleApprovals`
+on the existing reaper, not a variation of it, and it writes no transcript line —
+the durable `EXPIRED` state plus `expiredAt` *is* the record, surfaced by the read
+route. The deadline is stamped in the **same** compare-and-set that enters
+`AWAITING_APPROVAL` (`recordCriticalityDecision`), reusing
+`getAgentApprovalTimeoutMs` so review expiry and tool-approval expiry cannot drift.
+`EXPIRED` is distinct from `DECLINED` for the same reason
+[Decision 18](#decision-18-expired-is-a-distinct-terminal-state-not-cancelled)
+kept tool expiry distinct from cancellation: nobody refused anything, the window
+simply closed.
+
+### Why decisions are bound to the reviewed revision, not re-read at will
+
+The client sends only `interactionId`. The service reloads the persisted result,
+re-parses it through the proposal schema, and recomputes
+`computeProposalCorrelationId` on the backend, comparing it against the stored
+`proposalFingerprint`. A `REVISION_MISMATCH` means the row changed after it was
+parked, so the decision the human made no longer describes the proposal on the
+row. The client cannot name a different revision to approve because it never
+names a revision at all. Idempotency and every conflict reason are resolved from
+the durable row state, not from the request and not from an in-memory marker.
+
+### Why a settled proposal also exempts a stalled session
+
+`redriveStalledSessions` already parked a session holding a *pending* proposal.
+An `APPROVED`/`DECLINED`/`EXPIRED` proposal is not pending, so that check no longer
+matches — yet the execution is still `COMPLETED` and the model must still not be
+re-driven: an approved proposal awaits materialization (37.11), and a decided or
+expired one is a finished turn no timer may restart. `hasSettledProposal` is
+grouped with the `waiting` outcome because the action is identical (do not touch);
+only the reason differs. This guard is an addition beyond the literal 37.9
+deliverable and is called out as such.
+
+### Honest limitations
+
+- **No live-database evidence.** The lifecycle is proven against the in-memory
+  double, which simulates *enclosure* only — it has no rollback injection. That
+  the CAS and the audit message commit atomically is a property of the real
+  database, not something the double can prove. The migration is amended in place
+  on an unreleased branch and is applied to no database.
+- **The approve-race-with-expiry boundary is resolved in the human's favour by
+  the CAS, and tested; true concurrency is not.** Overlapping maintenance passes
+  and a concurrent decision are serialised by the CAS and, for a decision, by the
+  session lock. No new lock order was introduced and no multi-process test exists.
+- **The review surface has no page yet.** The agent subsystem is API-only: no
+  client creates agent sessions (`/api/chat` is the RAG path and does not), so
+  `ProposalReviewCard` is delivered as a self-contained leaf over the session-read
+  payload. Wiring it into a page is blocked on an agent-session client, not on this
+  decision.
