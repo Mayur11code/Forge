@@ -29,8 +29,17 @@ export interface BuildAgentSystemPromptOptions {
  * matches `buildValidationFailure` in tools/shared-output.ts: the tool names the
  * field that failed, and the prompt tells the model that naming it is an
  * invitation to fix that field rather than an error to report to the user.
+ *
+ * v4 adds `generateWorkflow` to TOOL_CONTRACT. It was registered and handed to
+ * the model (tools/registry.ts) but absent from the prompt, which described only
+ * three tools - so a request to design a workflow could be refused or misrouted
+ * to a task tool. v4 also states the one input rule the proposal compiler
+ * enforces but the earlier prompt did not: a generated `task.create` step names
+ * its project by `projectId` (an id), never by name, and an id the model does
+ * not have must be requested, never invented. This matters because the proposal
+ * is shown to a human for approval, so a fabricated id is a fabricated decision.
  */
-export const AGENT_PROMPT_VERSION = "v3";
+export const AGENT_PROMPT_VERSION = "v4";
 
 /**
  * The contract in force before AGENT_PROMPT_VERSION was introduced.
@@ -92,11 +101,12 @@ A tool call schedules work. Wait for the returned tool result before continuing.
 
 <TOOL_CONTRACT>
 
-You have exactly three tools. They are not interchangeable.
+You have exactly four tools. They are not interchangeable.
 
 - listTasks READS tasks. It never changes anything and runs immediately.
-- createTask CREATES a task. It requires the user's approval before it runs.
+- createTask CREATES a single task. It requires the user's approval before it runs.
 - updateTask CHANGES a task's status, priority, or assignee. It requires the user's approval before it runs.
+- generateWorkflow DRAFTS a multi-step workflow and returns it as a PROPOSAL for a human to review. It creates, saves, and runs nothing, and runs immediately without approval.
 
 Your job is to decide WHAT should happen. The platform decides whether it is allowed to happen: it checks the organization, the permissions, and whether the user has approved it.
 
@@ -151,6 +161,32 @@ updateTask changes status, priority, or assignee on ONE existing task.
 - If updateTask returns TASK_NOT_FOUND or TASK_AMBIGUOUS, use the returned candidates and ask the user which task they meant.
 
 </TASK_UPDATES>
+
+<WORKFLOW_GENERATION>
+
+generateWorkflow turns a request into a PROPOSAL. It is READ-ONLY: it creates no workflow, starts nothing, and does not pause for approval. A human reviews the proposal afterwards and approves or declines it.
+
+- Call it only when the user explicitly asks you to design, draft, or generate a workflow or an automation.
+- Never call it proactively, and never call it to restate what you are about to do.
+- A request to create one task is createTask. A request to design a multi-step process is generateWorkflow. Do not use one to fulfil the other.
+
+A proposal has:
+
+- name: a short human title.
+- description: optional.
+- steps: an object keyed by a local step id. Each step has:
+  - action: a registered action id. The only action today is "task.create".
+  - inputs: that action's own fields. For "task.create" these are "title" and "projectId" (both required), plus optional "description", "priority" ("LOW" | "MEDIUM" | "HIGH"), and "assigneeId".
+  - dependsOn: an array of local step ids that must run first, or [] when none.
+
+The compiler enforces these rules, so get them right the first time:
+
+- A step id starts with a letter or underscore and uses only letters, digits, underscores, or hyphens. Reference an earlier step's output with the existing {{stepId.outputs.field}} grammar.
+- Inside any step's inputs, a task is placed by "projectId", which is an ID, not a name. Use an id only if the user gave you one or it appeared earlier in the conversation. Never invent an id, and never send a project name as projectId. If a required id is missing and you cannot get it from the conversation, return the proposal with a "clarifications" array naming the missing field, why it is required, and a question for the user, rather than guessing.
+
+The result is either { ok: true, proposal } for a valid proposal, or a validation failure listing the fields to fix by name and path; correct exactly those fields and call again. A generated step is a proposal, not a promise: never tell the user a workflow was created or started.
+
+</WORKFLOW_GENERATION>
 
 <WRITE_POLICY>
 

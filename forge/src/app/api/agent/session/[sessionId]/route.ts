@@ -14,13 +14,47 @@ import { auth } from "@/lib/auth/auth";
 import { getAgentSessionForUser } from "@/lib/ai/agent/session-service";
 import { getMessages } from "@/lib/ai/agent/services/message-service";
 import { findPendingClarification } from "@/lib/ai/agent/services/clarification-service";
+import {
+  comparePendingProposalRecency,
+  proposalFromExecutionResult,
+  SETTLED_PROPOSAL_STATES,
+} from "@/lib/ai/agent/services/proposal-service";
+import { buildProposalReviewModel } from "@/lib/ai/agent/services/proposal-review";
 import { getToolExecutionsForSession } from "@/lib/ai/agent/services/tool-execution-service";
 import { describeToolProposal } from "@/lib/ai/agent/tools/registry";
-import { AgentToolExecutionStatus } from "@prisma/client";
+import { AgentToolExecutionStatus, AgentProposalState } from "@prisma/client";
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
+
+/**
+ * Project one proposal execution into the renderable review view, or null when
+ * its persisted result is not a valid proposal.
+ *
+ * The proposal is re-parsed from the durable `result`, so the SAME proposal the
+ * decision service would bind an approval to is what the client renders. The name
+ * comes from the proposal itself, never the compiler placeholder (F2).
+ */
+function buildReviewForExecution(execution: {
+  result: unknown;
+  criticalityDecisions: unknown;
+  clarificationAnswer: unknown;
+  expiresAt: Date | null;
+}) {
+  const proposal = proposalFromExecutionResult(execution.result);
+
+  if (!proposal) {
+    return null;
+  }
+
+  return buildProposalReviewModel({
+    proposal,
+    criticality: execution.criticalityDecisions,
+    clarification: execution.clarificationAnswer,
+    reviewExpiresAt: execution.expiresAt,
+  });
+}
 
 /**
  * Stable response shape. Clients should branch on `status` and
@@ -62,6 +96,36 @@ export async function GET(
     // interactionId it must answer.
     const clarification = findPendingClarification(messages);
 
+    // Assignment 37.8: the durable proposal lifecycle, derived from the already
+    // fetched execution rows rather than a second query. A proposal parked on a
+    // human decision (criticality, then approval) is what tells a refreshed
+    // client the session is waiting on it. It is read from persisted state, so
+    // it is correct after a restart and does not depend on live Pusher traffic.
+    //
+    // Ordering is `comparePendingProposalRecency`, the same newest-first,
+    // NULL-revisions-last rule `getPendingProposal` pushes into SQL. Sorting by
+    // revision alone would let a legacy row that carries no revision surface as
+    // the pending proposal instead of the one that superseded it.
+    const pendingProposalExecution = toolExecutions
+      .filter(
+        (execution) =>
+          execution.proposalState === AgentProposalState.AWAITING_CRITICALITY ||
+          execution.proposalState === AgentProposalState.AWAITING_APPROVAL,
+      )
+      .sort(comparePendingProposalRecency)[0];
+
+    // Assignment 37.9: the newest proposal whose review is over. A refreshed
+    // client must see the outcome (approved / declined / expired) rather than a
+    // stale "pending" card, so this too is derived from durable state and not
+    // from whether a card was ever rendered live.
+    const settledProposalExecution = toolExecutions
+      .filter(
+        (execution) =>
+          execution.proposalState !== null &&
+          SETTLED_PROPOSAL_STATES.includes(execution.proposalState),
+      )
+      .sort(comparePendingProposalRecency)[0];
+
     return Response.json(
       {
         sessionId: session.id,
@@ -83,6 +147,38 @@ export async function GET(
               fields: clarification.fields,
             }
           : null,
+        /**
+         * The proposal a human still has to act on, if any. `state` says which
+         * decision is pending; the durable row is the source of truth. `review`
+         * is the renderable view of the exact persisted proposal, and is null
+         * only when the stored result is not a valid proposal.
+         */
+        pendingProposal: pendingProposalExecution
+          ? {
+              interactionId: pendingProposalExecution.id,
+              toolName: pendingProposalExecution.toolName,
+              state: pendingProposalExecution.proposalState,
+              fingerprint: pendingProposalExecution.proposalFingerprint,
+              revision: pendingProposalExecution.proposalRevision,
+              expiresAt: pendingProposalExecution.expiresAt,
+              review: buildReviewForExecution(pendingProposalExecution),
+            }
+          : null,
+        /**
+         * The outcome of the newest reviewed proposal, once the review is over.
+         * Deliberately separate from `pendingProposal`: a decided or expired
+         * proposal must never be presented as something to act on.
+         */
+        proposalOutcome: settledProposalExecution
+          ? {
+              interactionId: settledProposalExecution.id,
+              state: settledProposalExecution.proposalState,
+              decidedAt:
+                settledProposalExecution.expiredAt ??
+                settledProposalExecution.updatedAt,
+              review: buildReviewForExecution(settledProposalExecution),
+            }
+          : null,
         messages: messages.map((message) => ({
           id: message.id,
           step: message.step,
@@ -99,6 +195,9 @@ export async function GET(
           error: execution.error,
           confirmedAt: execution.confirmedAt,
           cancelledAt: execution.cancelledAt,
+          proposalState: execution.proposalState,
+          proposalFingerprint: execution.proposalFingerprint,
+          proposalRevision: execution.proposalRevision,
           createdAt: execution.createdAt,
           updatedAt: execution.updatedAt,
           /**

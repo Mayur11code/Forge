@@ -56,7 +56,7 @@ the original planning matrix have moved from `PLANNED / VERIFY` to
 | Unit tests (agent) | `IMPLEMENTED` | 20 suites, 304 tests |
 | `searchKnowledge` | `REMOVED` | Replaced by `createTask` |
 | Dedicated tool-execution route | `REMOVED` | Folded into `/api/worker` — one consumer per event |
-| Agent UI | `PLANNED` | **No client exists.** Nothing calls `/api/agent/init` or the session GET |
+| Agent UI | `PARTIAL` | A workflow-builder session client exists (37.9.1): `WorkflowProposalPanel` at `/org/[orgId]/ai` calls `POST /api/agent/init` and polls the session GET, rendering proposal review and clarification. No general conversational UI and no `private-agent-*` subscription. |
 | Task read tools | `IMPLEMENTED` | `listTasks` is `READ_ONLY`; `getTaskInOrg` remains internal |
 | Task update tools | `IMPLEMENTED` | `updateTask` is `WRITE`, confirmed |
 | Task status transitions | `PARTIAL` | `IN_PROGRESS` / `DONE` now writable via `updateTask`, with no domain transition rules |
@@ -281,10 +281,17 @@ already dispatches it, so the CDC path is ready.
 
 ## Phase 3 — Agent UI / Session Experience
 
-**Status:** `PLANNED — no client exists today`
-> **There is currently no client at all.** Nothing in the app calls
+**Status:** `PARTIAL — a workflow-builder session client exists (37.9.1); no general conversational client`
+> **Updated 2026-10-19.** A first client now exists: `WorkflowProposalPanel`
+> mounted at `/org/[orgId]/ai` calls `POST /api/agent/init` and polls
+> `GET /api/agent/session/[sessionId]`, rendering the proposal review and the
+> clarification answer surfaces. It does **not** subscribe to a `private-agent-*`
+> channel or bind `AGENT_STATUS_CHANGE`, and there is still no general
+> conversational agent UI.
+>
+> **As of 2026-09-29 there was no client at all.** Nothing called
 > `POST /api/agent/init` or `GET /api/agent/session/[sessionId]`, and nothing
-> subscribes to a `private-agent-*` channel or binds `AGENT_STATUS_CHANGE`. The
+> subscribed to a `private-agent-*` channel or bound `AGENT_STATUS_CHANGE`. The
 > existing `RealtimeListener` and `useWorkflowLiveStream` hooks handle the
 > workflow and org channels respectively, and are a reasonable starting pattern.
 
@@ -580,6 +587,105 @@ under; `runAgentLoop` warns when it differs from the current one.
 transcript spanning a deploy cannot say which contract each turn saw. The hash
 should cover the tool descriptions too, since those carry behavioural rules —
 see [`prompt.md`](./prompt.md#prompt-provenance).
+
+## Backlog — future assignments
+
+Work that is intended but deliberately not scheduled. Recorded here so it is not
+lost and so its dependencies stay visible. These items are **not** part of the
+current roadmap, are `PLANNED`, and must be prioritized before any implementation
+begins. Recording an item here is **not** a claim of progress.
+
+### Assignment 38 — Organization Data Ingestion & RAG Operational Awareness
+
+**Status:** `PLANNED` — recorded 2026-10-19. Backlog only: not started, not
+prioritized, not implemented, not verified.
+
+**Problem.** Forge's organization chatbot relies on its existing retrieval
+context and may be unable to answer questions about information that exists in
+the application's canonical database. The system needs a deliberate architecture
+connecting organizational data, semantic retrieval, and authoritative operational
+queries. **The solution must not treat the vector database as the source of truth
+for current counts or statuses.**
+
+**Planned scope.**
+
+1. **Audit the existing architecture.** Inspect the actual `/api/chat` and
+   `ChatWorkspace` path, the embedding provider, the vector store, the retrieval
+   pipeline, ingestion mechanisms, background processing, Prisma models,
+   authorization rules, and organization-scoping strategy (e.g. `src/app/api/chat/`,
+   `src/lib/vector/`, the embedding worker). Reuse existing infrastructure where
+   appropriate; do not build a parallel system.
+
+2. **Build a reusable, multi-source ingestion pipeline.** Index only the domain
+   sources that should be indexed — where appropriate: materialized workflows
+   (description, steps, dependencies); projects and tasks; approved organizational
+   documents and knowledge sources; and workflow proposals as a separately
+   identifiable source, if proposal discovery is required. Do **not**
+   indiscriminately embed every database record. Respect permissions,
+   sensitivity, and tenant boundaries.
+
+3. **Connect indexing to source lifecycle events.** Design an **idempotent** and
+   **retryable** indexing lifecycle covering creation, content updates,
+   deletion/invalidation, and stale-chunk cleanup. Prefer Forge's established
+   event/outbox or job infrastructure over a new mechanism. Index workflows at
+   the actual materialization boundary planned for **Assignment 37.11**; an
+   approved proposal must not be treated as a materialized workflow.
+
+4. **Give the organization chatbot structured operational awareness.** Add
+   narrowly scoped, server-side, **read-only** database capabilities for exact
+   operational facts:
+   - how many workflows have actually been materialized;
+   - how many AI-generated proposals await review;
+   - which proposals are approved, declined, or expired;
+   - which workflows exist, and their current statuses.
+
+   Use the canonical database for exact counts and current state; use vector
+   retrieval for semantic questions about content and meaning. Connect these
+   capabilities to the actual organization chatbot — do **not** assume the
+   separate agent-session tools are automatically available to it. **Do not allow
+   arbitrary model-generated SQL.** Derive tenant scope from authenticated
+   server-side context and enforce authorization on every operation.
+
+5. **Preserve provenance and lifecycle distinctions.** Keep these distinct:
+   workflow proposal; approved proposal; materialized `Workflow` record; and an
+   executing or completed workflow, where supported by the actual domain model.
+   Determine AI origin from durable authoritative provenance — never from
+   workflow text or transient proposal state. Indexing or materialization must
+   **not** trigger workflow execution.
+
+6. **Test and observe the system.** Plan acceptance coverage for tenant
+   isolation, authorization, idempotent indexing, updated and deleted sources,
+   retry behavior, exact database counts, proposal-versus-workflow distinctions,
+   and preservation of existing chat and agent behavior. Distinguish mocked tests
+   from actual database and vector-provider integration tests.
+
+**Dependencies.**
+
+- The existing RAG implementation: `/api/chat`, `ChatWorkspace`, the embedding
+  provider, the vector store, and the retrieval pipeline.
+- **Assignment 37.11** — the workflow materialization boundary; workflow
+  indexing attaches there.
+- The canonical domain models for projects, tasks, documents, and workflows, and
+  their authorization/organization-scoping.
+- Forge's existing event/outbox or job infrastructure, for the indexing
+  lifecycle.
+- Any further dependency must be determined from the repository, not assumed.
+
+**Acceptance criteria (planned; to be finalized when prioritized).** When
+scheduled, the assignment must demonstrate: (a) the audited architecture with
+each reuse-versus-build decision justified; (b) an ingestion pipeline that is
+idempotent, retryable, and permission-respecting; (c) indexing driven by source
+lifecycle events and wired at the 37.11 materialization boundary; (d) read-only
+operational queries returning exact, tenant-scoped canonical-database answers
+with no model-generated SQL; (e) exact proposal/approved/workflow provenance
+separation with no execution side effect; and (f) tests that separate mocked
+coverage from real database and vector-provider integration coverage.
+
+**Boundaries.** This work relaxes none of the Assignment 37 boundary: the vector
+store is not a source of truth for counts or status — the canonical database is.
+Recording this item does not change any Assignment 37 status, does not mark any
+existing operational verification gate as passed, and does not move any completed
+assignment backwards.
 
 ## Deliberately deferred
 

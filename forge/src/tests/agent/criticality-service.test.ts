@@ -57,6 +57,11 @@ import { getToolExecutionsForSession } from "@/lib/ai/agent/services/tool-execut
 import { recordAgentEvent } from "@/lib/ai/agent/outbox";
 import { withAgentSessionLock } from "@/lib/ai/agent/locks";
 import {
+  resetStore,
+  restorePrismaDouble,
+  store,
+} from "./helpers/prisma-double";
+import {
   CRITICALITY_DECISION_MARKER,
   isCriticalityDecisionContent,
   readCriticalityDecisionRecord,
@@ -154,6 +159,22 @@ function submit(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  restorePrismaDouble();
+  resetStore();
+  // The durable decision write is a compare-and-set against the real double, so
+  // the proposal row must exist and be awaiting a criticality decision. This is
+  // the state the worker leaves behind when it parks a valid proposal.
+  store.executions = [
+    {
+      id: TARGET_ID,
+      sessionId: SESSION_ID,
+      toolCallId: TARGET_TOOL_CALL,
+      toolName: "generateWorkflow",
+      status: "COMPLETED",
+      proposalState: "AWAITING_CRITICALITY",
+      error: null,
+    },
+  ];
   sessionMock.mockResolvedValue(runningSession());
   getMessagesMock.mockResolvedValue([proposalRow(execution())]);
   executionsMock.mockResolvedValue([execution()]);
@@ -369,6 +390,34 @@ describe("37.7 service — recording, idempotency and conflict", () => {
     const conflict = await submit({ decisions: { setup: false, notify: false } });
     expect(conflict.ok).toBe(false);
     if (!conflict.ok) expect(conflict.code).toBe("CRITICALITY_CONFLICT");
+    expect(createMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects with 409 and writes no transcript when the durable CAS is lost (F-4)", async () => {
+    // The service saw a valid, non-superseded proposal, but the proposal row
+    // advanced underneath it. Honouring the CAS means the transcript must NOT
+    // record a decision the lifecycle never took.
+    store.executions[0]!.proposalState = "AWAITING_APPROVAL";
+
+    const result = await submit();
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.httpStatus).toBe(409);
+      expect(result.code).toBe("CRITICALITY_NOT_APPLIED");
+    }
+    expect(createMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("adopts a legacy proposal row that carries no lifecycle state", async () => {
+    // A row written before the 37.8 columns existed has a null proposalState.
+    // The CAS adopts it rather than refusing a decision that is otherwise valid.
+    store.executions[0]!.proposalState = null;
+
+    const result = await submit();
+
+    expect(result.ok).toBe(true);
+    expect(store.executions[0]!.proposalState).toBe("AWAITING_APPROVAL");
     expect(createMessageMock).toHaveBeenCalledTimes(1);
   });
 
