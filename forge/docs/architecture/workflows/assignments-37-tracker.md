@@ -1,10 +1,10 @@
 # Assignment 37 — Master Phase Tracker
 
 ```text
-Last Updated:     2026-10-19
-Current Phase:    37.10  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9 IMPLEMENTED)
+Last Updated:     2026-10-20
+Current Phase:    37.12  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 IMPLEMENTED)
 Overall Status:   BLOCKED  (I6 gates 37.12 only; every phase through 37.11 is actionable)
-Next Action:      Implement 37.10 — UI graph projection / deterministic layout (deps 37.9 + 37.0B satisfied)
+Next Action:      Verify 37.11 (implementation complete; real-DB round-trip still gated on the unapplied 37.8 migration)
 ```
 
 > **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
@@ -83,6 +83,45 @@ Next Action:      Implement 37.10 — UI graph projection / deterministic layout
 > valid; `git diff --check` clean. **F4 and the durability/restart gate remain
 > open.** See `assignments-37-phase-37.9-proposal-review.md` §14.
 
+> **37.10 IMPLEMENTED 2026-10-19 — not VERIFIED.** A pure, deterministic
+> projection (`projectProposalToUIGraph`) turns a reviewed proposal plus the
+> human's complete criticality decisions into positioned `uiNodes`/`uiEdges`,
+> with a documented hand-rolled longest-path layered layout (`PROPOSAL_UI_LAYOUT`;
+> no layout library added) and edges derived from `dependsOn` alone. A read-only
+> `ProposalGraphPreview` renders it inside the existing review surface, mounted
+> only with a complete, revision-bound criticality set (never at
+> `AWAITING_CRITICALITY`) and captioned that nothing has been created. Validation
+> stays 37.4, the exact-set rule 37.7, and revision binding is computed
+> server-side in the session GET. The 37.7 contract was split into a client-safe
+> module (build hazard, not a `resolve.fallback` hack) with no logic change. No
+> Workflow, Task or execution; no persistence, migration, lifecycle or auth
+> change; 37.6–37.9 untouched. 4 focused suites 33/7/19/19; full suite 53 suites /
+> 1005 tests; `tsc` 0; eslint 0; `prisma validate` valid; `git diff --check`
+> clean; 3 non-vacuity mutations reverted. **F1 remains open** (its ordering half
+> is AD-11). See `assignments-37-phase-37.10-ui-graph-projection.md`.
+
+> **37.11 IMPLEMENTED 2026-10-20 — not VERIFIED.** An approved, durably stored
+> proposal is now materialized into a persisted, triggerless `Workflow` by an
+> explicit human action. `materializeProposal` re-derives the proposal from the
+> durable result, re-verifies the revision fingerprint, applies the exact criticality
+> set through the 37.7 contract, and persists BOTH the canonical execution
+> definition (via `applyCriticalityDecisions`) and the verbatim 37.10 UI projection
+> through the shared `IncomingNodesSchema`/`IncomingEdgesSchema` boundary. The
+> transition is one transaction: CAS `APPROVED → MATERIALIZED` BEFORE `workflow.create`,
+> with the unique `sourceProposalId` index as the final duplicate defense. Provenance
+> is the durable `AgentToolExecution.id`; name is `proposal.name`; the workflow is
+> stored `eventId: null` / `isActive: false` (F1). A strict `{interactionId}` ingress
+> authorizes by persisted `userId` and derives the org from the persisted session.
+> Session read now exposes `MATERIALIZED` additively with a `workflowId`; the review
+> card offers an explicit **Create workflow** action (no optimistic success) and an
+> **Open workflow** link. **Materialization only: no execution, no `WorkflowRun`, no
+> `AGENT_LOOP_REQUESTED`, no QStash, no model-loop restart** (that is 37.12). 4 new
+> suites 33/17/10/15 + card extended; full suite 56 suites / 1074 tests; `tsc` 0;
+> eslint 0; `prisma validate` valid; `git diff --check` clean. **Real-DB round-trip
+> and unique-constraint enforcement remain OPEN — the 37.8 migration is still
+> UNAPPLIED.** F1 resolved (no schema change); F2 resolved (no new migration). See
+> `assignments-37-phase-37.11-workflow-materialization.md`.
+
 > **Future assignment recorded 2026-10-19 — this does not change any 37 status.**
 > **Assignment 38 — Organization Data Ingestion & RAG Operational Awareness** is
 > recorded as `PLANNED` (backlog, not prioritized) in the agent roadmap:
@@ -150,17 +189,17 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ASSIGNMENT 37 STATUS
 
 Overall:                     BLOCKED (I6 gates 37.12 only)
-Current Phase:               37.10  (UI graph projection / deterministic layout)
-Previous Completed Phase:    37.9   (Human proposal review — IMPLEMENTED, incl. 37.9.1 UI)
-Next Phase:                  37.10  (UI graph projection / deterministic layout)
+Current Phase:               37.12  (Execution handoff)
+Previous Completed Phase:    37.11  (Workflow materialization — IMPLEMENTED)
+Next Phase:                  37.12  (Execution handoff — gated on I6)
 Blocking Issue:              I6     (the only open P0)
 Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 NOT_STARTED
-Architecture Decision Pending: F1, F2, F4   (F5 resolved at 37.4)
+Architecture Decision Pending: F4   (F1/F2 resolved at 37.11; F5 resolved at 37.4; AD-11)
 Recorded scope decisions:    I7     (conditional routing — non-blocking)
-Verification debt:           37.4, 37.5, 37.7, 37.8, 37.9 (IMPLEMENTED, not VERIFIED)
+Verification debt:           37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 (IMPLEMENTED, not VERIFIED)
 Last Verification:           2026-10-17 — 37.6 missing-input protocol VERIFIED
                              (28/28 focused; agent + workflow 36 suites / 672)
-Last Updated:                2026-10-19
+Last Updated:                2026-10-20
 
 Progress:
 [███████░░░░░░░░░░░░░] 35%   (7 of 20 tracked phases VERIFIED)
@@ -257,8 +296,8 @@ Always use the smallest applicable status.
 | 37.7 | Human criticality state | **IMPLEMENTED** | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | 2026-10-18 — backend criticality service + routes; UI controls added by 37.9.1 | F4 part 2. Not `VERIFIED`. Consumed unchanged by 37.9.1's `ProposalReviewCard` criticality controls. |
 | 37.8 | Durable proposal persistence | **IMPLEMENTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | 2026-10-18 — durable lifecycle on amended (unapplied) migration | **NOT VERIFIED; durability/restart survival OPEN (F4).** Migration amended in place, applied to no database. See `assignments-37-phase-37.8-proposal-lifecycle.md`. |
 | 37.9 | Existing confirmation integration | **IMPLEMENTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | 2026-10-19 — 37.9 backend + 37.9.1 UI; 3 focused suites 19/11/15; agent 34/647; full 51/954; tsc clean; eslint 0 changed; prisma valid | Proposal-specific approve/decline/expiry ingress (37.9); human-criticality controls + workflow-builder panel + clarification answer card (37.9.1). Not `VERIFIED`; F4 open. See `assignments-37-phase-37.9-proposal-review.md` §14. |
-| 37.10 | UI graph projection / deterministic layout | **NOT_STARTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout | Projection is deterministic and Gemini-free | — | **F1.** Moved ahead of materialization. |
-| 37.11 | Workflow materialization | **NOT_STARTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | — | F1 + F2. Canvas-first path. |
+| 37.10 | UI graph projection / deterministic layout | **IMPLEMENTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout + read-only preview | Projection is deterministic and Gemini-free | 2026-10-19 — 4 focused suites 33/7/19/19; full 53/1005; tsc 0; eslint 0; prisma valid; 3 mutations reverted | **F1 open** (ordering recorded as AD-11). Moved ahead of materialization. Layout hand-rolled; no layout library. See `assignments-37-phase-37.10-ui-graph-projection.md`. Not `VERIFIED`. |
+| 37.11 | Workflow materialization | **IMPLEMENTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-20 — 4 new suites 33/17/10/15 + card; full 56/1074; tsc 0; eslint 0; prisma valid; diff-check clean | **F1 + F2 resolved.** Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. **Real-DB round-trip OPEN (37.8 migration unapplied).** Not `VERIFIED`. See `assignments-37-phase-37.11-workflow-materialization.md`. |
 | 37.12 | Execution handoff | **NOT_STARTED** | P1 | 37.11, **I6 VERIFIED (Gate G)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | — | No new executor, lock, or queue runner. **Cannot be VERIFIED unless I6 is.** |
 | 37.13 | Prompt / DAG planning instructions | **NOT_STARTED** | P1 | 37.12 | 37.16 | Prompt update + version bump | Prompt references real contracts only | — | Only after 37.1. Version explicitly tracked. |
 | 37.14 | Self-healing observations | **NOT_STARTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | — | No second retry controller. |
@@ -2097,7 +2136,7 @@ Made: reuse the 35/36 confirmation system. No special architecture.
 
 ### Status
 
-**NOT_STARTED** · Priority: P2 · **F1**
+**IMPLEMENTED** · Priority: P2 · **F1 (ordering half = AD-11; persistence decision still open)**
 
 ### Objective
 
@@ -2143,9 +2182,11 @@ time. Layout algorithm choice is a design decision for this phase.
 
 ### Deliverables
 
-- Projection implementation — path **UNKNOWN**
-- Determinism tests
-- Layout decision recorded
+- Projection implementation — `src/lib/workflow-types/proposal-ui-projection.ts`
+- Layout contract (`PROPOSAL_UI_LAYOUT`, longest-path layers) recorded in code + phase doc
+- Determinism / layout / criticality tests — `src/tests/workflow/proposal-ui-projection.test.ts`
+- Read-only preview — `src/features/organizations/components/ai/ProposalGraphPreview.tsx`
+  (+ gating in `WorkflowProposalPanel.tsx`, binding in the session GET)
 
 ### Acceptance Gate
 
@@ -2168,11 +2209,20 @@ repaired boundary.
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/lib/workflow-types/proposal-ui-projection.ts
+                src/lib/workflow-types/workflow-criticality-set.ts (37.7 contract split, client-safe)
+                src/features/organizations/components/ai/ProposalGraphPreview.tsx
+                src/features/organizations/components/ai/WorkflowProposalPanel.tsx (gating, additive fields)
+                src/app/api/agent/session/[sessionId]/route.ts (server-side revision binding)
+Tests:          src/tests/workflow/proposal-ui-projection.test.ts (33)
+                src/tests/agent/proposal-graph-preview.test.tsx (7)
+                src/tests/agent/workflow-proposal-panel.test.tsx (19, +4)
+                src/tests/agent/session-read.test.ts (19, +7)
+Verification:   2026-10-19 — full suite 53 suites / 1005 tests PASS;
+                tsc --noEmit 0; eslint 0; prisma validate valid; git diff --check clean;
+                3 non-vacuity mutations confirmed failing then reverted green
+Commit/PR:      — (not committed)
+Relevant files: docs/architecture/workflows/assignments-37-phase-37.10-ui-graph-projection.md
 ```
 
 ### Known Risks / Findings
@@ -2183,16 +2233,23 @@ unvalidated.
 
 ### Decisions
 
-Pending: **F1 — synthesize layout before persistence, or introduce a
-definition-first write path.** Not chosen in the plan; belongs to 37.10/37.11.
-Note: option two creates a second write path that must independently replicate the
-validation and authorization properties of the first — precisely what I1 shows
-can be got wrong.
+**F1 — the ordering half is decided (AD-11): projection precedes persistence.**
+The remaining F1 choice (which canvas-first write path materialization uses) belongs
+to 37.11. Note: a definition-first write path creates a second write path that must
+independently replicate the validation and authorization properties of the first —
+precisely what I1 shows can be got wrong.
+
+Implemented decisions, recorded in `assignments-37-phase-37.10-ui-graph-projection.md`:
+hand-rolled longest-path layout (no layout library); delegation to 37.4/37.7 with no
+re-validator and no `?? false`; 37.7 contract split into a client-safe module (build
+hazard, not a fallback hack); revision binding computed server-side; preview is
+read-only and gated on a complete, revision-bound criticality set.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-19 | **IMPLEMENTED** | Projection + layout + read-only preview + server-side binding; 4 focused suites; full 53/1005 green; tsc/eslint/prisma clean; 3 mutations reverted | `assignments-37-phase-37.10-ui-graph-projection.md` |
 
 ---
 
@@ -3402,7 +3459,7 @@ regardless of intent.
 - [ ] 37.7 complete
 - [ ] 37.8 complete
 - [ ] 37.9 complete
-- [ ] 37.10 complete
+- [ ] 37.10 complete — **IMPLEMENTED 2026-10-19 (not VERIFIED)** — deterministic projection + hand-rolled layered layout + read-only preview; server-side revision binding; 33/7/19/19 focused tests; full 53/1005; tsc/eslint/prisma clean; F1 still open (AD-11 ordering) — evidence: `src/tests/workflow/proposal-ui-projection.test.ts`, `assignments-37-phase-37.10-ui-graph-projection.md`
 - [ ] 37.11 complete
 - [ ] 37.12 complete
 - [ ] 37.13 complete
