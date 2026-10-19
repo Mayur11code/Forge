@@ -233,6 +233,11 @@ export function projectProposalToUIGraph(
           config: { ...step.inputs },
           isConfigured: true,
           isCritical: decisions[position.ref],
+          // A proposal step's inputs are literal and its ordering is
+          // `dependsOn`, so the canvas's upstream-wiring "Missing Data" check
+          // does not apply. The step's completeness was proven by
+          // `compileWorkflowProposal` before this projection ran.
+          inputsComplete: true,
         },
       };
     },
