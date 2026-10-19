@@ -406,6 +406,48 @@ tests; `tsc --noEmit` exit 0; eslint 0 on changed files.
 
 ---
 
+## 9b. Live round-trip verification (2026-10-20)
+
+The remediation was verified end-to-end against the live database, not only by unit tests. On prompt v5
+and the fixed executor, the previously-stuck placeholder prompt now completes the whole chain:
+
+```text
+user prompt (client name + Forge Core project, placeholders unresolved)
+        -> generateWorkflow: clarifications + {{...}} placeholders
+        -> NEEDS_USER_INPUT  (4 fields: kickoff title, both projectIds)   [was: INVALID_INPUT -> loop]
+        -> human answers (title "bund da keeda"; projectId cmve0mo05... x2)
+        -> generateWorkflow: ok:true, 2 steps, followup_task dependsOn [kickoff_task]
+        -> criticality decision (followup_task critical, kickoff_task not-critical)
+        -> proposal approved
+        -> materialized Workflow
+```
+
+Materialization evidence (session `cmvfra4g4…`, workflow `cmvfs015h…` "Onboard new client"):
+
+- `uiNodes` = **2**, `uiEdges` = **1** (`e:kickoff_task->followup_task`); both nodes
+  `inputsComplete: true`, carrying **real resolved values** (no `{{…}}`, no `<…>`). The 37.10
+  "Missing Data" fix holds in the persisted projection.
+- Criticality is baked into **both** the UI projection (`uiNodes[].data.isCritical`) and the canonical
+  `definition.steps[].isCritical`: `kickoff_task: false`, `followup_task: true` — matching the human's
+  decision exactly.
+- `isActive: false`, `eventId: null` (triggerless, F1); `sourceProposalId` = the durable
+  `generateWorkflow` execution id, guarded by the `@unique` index (idempotent — a second materialize
+  cannot create a second row).
+- `WorkflowRun` count for the org stayed **0** and no `AGENT_LOOP_REQUESTED` was recorded:
+  materialization only, no execution (the 37.11 boundary).
+
+**Residual, unfixed failure mode (not triggered by this prompt).** The executor demotion covers
+`UNKNOWN_REFERENCE_SOURCE` only. If the model writes a **plain-string sentinel** (e.g. `<Forge Core
+project id>`) into a required input, `isReferenceTemplate` (`workflow-proposal.ts:293`) does not forgive
+it (it matches `{{…}}` only), the capability's `.cuid()` fails, and the compiler emits `INVALID_INPUT`
+(`workflow-proposal.ts:427`). On a clarified field that still forces model correction and can re-arm the
+bounded loop. This prompt routes every such field through a clarification (and the model then emits
+`{{…}}` templates), so the flow above completes cleanly; widening the demotion to cover a
+present-but-invalid value on a clarified path is a candidate follow-up, deliberately not done here
+(the change would be a semantic one to the 37.6 classification rule, not a transport fix).
+
+---
+
 ## 10. Status History
 
 | Date | Status | Change | Evidence |
@@ -416,3 +458,4 @@ tests; `tsc --noEmit` exit 0; eslint 0 on changed files.
 | 2026-10-17 | VERIFIED | Final acceptance of the backend missing-input protocol and same-session clarification continuation (accepted scope; external UI not claimed); durability/restart survival still OPEN and owned by 37.8; F4 remains open | `missing-input-protocol` 28/28; `session-step-claim` 5/5; clarification focused 4 suites / 57; agent + workflow 36 suites / 672; full suite 40 suites / 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
 | 2026-10-19 | VERIFIED (unchanged) | Addendum only: recorded that the client answer surface (`ClarificationRequestCard`) was added by 37.9.1 over this unchanged protocol. 37.6 itself was not modified; no service, route, schema, or migration changed. | `clarification-request-card.test.tsx` 11; `workflow-proposal-panel.test.tsx` 15; full suite 51 suites / 954; tsc exit 0; Prisma schema untouched |
 | 2026-10-20 | REMEDIATION (live-testing defect fixed) | Two defects surfaced by running the flow against the live DB. (1) An `UNKNOWN_REFERENCE_SOURCE` issue on a field a clarification names now demotes to human-resolvable placeholder instead of forcing `INVALID_INPUT`, so a well-formed "ask + placeholder" proposal reaches `NEEDS_USER_INPUT` instead of retrying to the step cap (`execute.ts`; commit `7bc05a7`). (2) A prompt rule routes an unfilled placeholder to the clarification field; `AGENT_PROMPT_VERSION` bumped `v4 → v5` (`system-prompt.ts`, `generate-workflow/tool.ts`; commit `c7809f2`). The demotion is narrow — malformed/unknown-output/unknown-action/cycle/dangling-dep still force model correction. **This deliberately crosses the 37.5/37.6 "no prompt change — deferred to 37.13" boundary; recorded, not absorbed. Reviewer call whether the bump stays or folds into 37.13.** | `missing-input-protocol.test.ts` +3 (10b/10c/10d); full suite 56 suites / 1077 tests; tsc exit 0; eslint 0 on changed files; no migration, no schema change, no new service or route |
+| 2026-10-20 | REMEDIATION (live-verified) | Live round-trip against the DB confirms the fixed chain on prompt v5: placeholder prompt → `NEEDS_USER_INPUT` (4 fields) → human answers → `ok:true` 2-step proposal → criticality → approved → materialized `Workflow`. New workflow `cmvfs015h…` has 2 `uiNodes` / 1 `uiEdge`, both nodes `inputsComplete:true` with real values (no "Missing Data"); criticality baked into `uiNodes[].data.isCritical` and `definition.steps[].isCritical` (`kickoff_task:false`, `followup_task:true`); `isActive:false`/`eventId:null`; `sourceProposalId` = durable execution id under the `@unique` guard; `WorkflowRun` count stayed 0 (no execution). **Residual, unfixed:** a plain-string sentinel (e.g. `<…>`) in a required input is not forgiven by `isReferenceTemplate` and yields `INVALID_INPUT`, which on a clarified path can still re-arm the loop; not triggered by this prompt, flagged as a candidate follow-up. | Session `cmvfra4g4…` transcript + Neon inspection: 2 workflows in forge-hq (was 1); workflowRuns 0; agent executions all `COMPLETED`; DB-only read-only inspection, no code change |
