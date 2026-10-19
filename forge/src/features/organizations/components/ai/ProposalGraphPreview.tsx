@@ -141,6 +141,7 @@ export function ProposalGraphPreview({
             edges={uiEdges}
             nodeTypes={nodeTypes}
             fitView
+            fitViewOptions={{ padding: 0.35, maxZoom: 1 }}
             colorMode="dark"
             // Read-only affordances: inspect the graph, never edit it.
             nodesDraggable={false}
