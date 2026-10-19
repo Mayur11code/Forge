@@ -358,6 +358,54 @@ behavior, continuing the F4 fork before durable persistence lands at Phase 37.8.
 
 ---
 
+## 9a. Remediation (2026-10-20) — clarification must be able to win
+
+Found by running the flow against the live database, not by reading tests. A session observing
+`RUNNING` at step 3/5 with **zero workflow runs** had three `generateWorkflow` executions, all
+failures, all of which *did* carry `clarifications`. The model asked correctly, and also wrote
+`{{clientName}}` / `{{forgeCoreProjectId}}` into the same inputs. The compiler reported those as
+`UNKNOWN_REFERENCE_SOURCE`; the executor's gate treated any non-`MISSING_REQUIRED_INPUT` issue as a
+model-correctable mistake, returned `INVALID_INPUT`, discarded the clarification, and sent the model
+back to retry a value only a human can supply — a guaranteed march to `MAX_STEPS_EXCEEDED`.
+
+Two changes, both in `fix(...)` commits:
+
+1. **`7bc05a7` — `generate-workflow/execute.ts`.** An `UNKNOWN_REFERENCE_SOURCE` issue on an input path
+   that a clarification request names is treated as a human-supplied placeholder: it no longer forces
+   `INVALID_INPUT` and is excluded from the downstream `validateProposalReferences` re-check. The
+   clarification-legitimacy check uses `resolvablePaths = missingPaths ∪ placeholderPaths`. **Narrow by
+   design:** malformed references, unknown outputs, unknown actions, cycles and dangling dependencies
+   still force model correction.
+2. **`c7809f2` — prompt + tool description.** A rule under `<WORKFLOW_GENERATION>` (mirrored in the
+   `generateWorkflow` description) tells the model to emit a clarification for a required input absent
+   from context rather than inventing a placeholder. `AGENT_PROMPT_VERSION` bumped `v4 → v5`. A second
+   earlier session (`cmvfo40ti…`) reached `COMPLETED` at step 1 with a prose question and no answer
+   surface; this rule is the missing piece that produces the structured clarification field the client
+   consumes.
+
+**Scope boundary crossed, recorded.** §1 Out-of-scope and the status matrix of 37.5 both state
+*"No prompt change or prompt version bump: deferred to Phase 37.13."* This remediation touches the
+prompt and the version constant. It is logged here rather than silently absorbed. 37.13 still owns the
+prompt text and version identifier as a phase; whether this v5 bump remains, or the rule folds into
+37.13 proper, is a reviewer decision.
+
+**No migration, no schema change, no new service or route.** The protocol envelopes, validator,
+continuation service and reaper exemption above are unchanged.
+
+**Operator action.** The orphaned session `cmvfog8hv…` (`promptVersion "v5"`, `currentStep 4`, three
+`COMPLETED` executions, no pending clarification) was terminated by a controlled Prisma write to
+`FAILED` / `terminalReason "MANUAL_TERMINATION"` with an explanatory `errorMessage`. There is no
+session-level terminate route in the app; this was a deliberate, recorded operator action. (An earlier
+hypothesis that the session was a "v4 zombie" is wrong — the DB says `v5`; the mismatch is a warning,
+not a reject, per `loop-runner.ts:82`.)
+
+Evidence: `src/tests/agent/missing-input-protocol.test.ts` +3 (10b: the exact failing two-field `{{…}}`
+payload now yields `NEEDS_USER_INPUT`; 10c: an uncovered reference still yields `INVALID_INPUT`; 10d:
+a malformed reference on a clarified path still yields `INVALID_INPUT`); full suite 56 suites / 1077
+tests; `tsc --noEmit` exit 0; eslint 0 on changed files.
+
+---
+
 ## 10. Status History
 
 | Date | Status | Change | Evidence |
@@ -367,3 +415,4 @@ behavior, continuing the F4 fork before durable persistence lands at Phase 37.8.
 | 2026-10-17 | IMPLEMENTED (cleanup) | `currentStep` compare-and-set predicate enforced in the in-memory prisma double; new `claimNextAgentStep` regression suite (`session-step-claim.test.ts`, 5 cases); stale verification totals corrected; mocked-boundary comment corrected | 5/5 CAS focused; 3 suites / 87 (`missing-input-protocol durability maintenance`); 3 suites / 83 (`durability maintenance generate-workflow`); 2 suites / 59 (`durability maintenance`); 4 suites / 57 (clarification focused); 36 suites / 672 (agent + workflow); 40 suites / 692 (full); tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
 | 2026-10-17 | VERIFIED | Final acceptance of the backend missing-input protocol and same-session clarification continuation (accepted scope; external UI not claimed); durability/restart survival still OPEN and owned by 37.8; F4 remains open | `missing-input-protocol` 28/28; `session-step-claim` 5/5; clarification focused 4 suites / 57; agent + workflow 36 suites / 672; full suite 40 suites / 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched |
 | 2026-10-19 | VERIFIED (unchanged) | Addendum only: recorded that the client answer surface (`ClarificationRequestCard`) was added by 37.9.1 over this unchanged protocol. 37.6 itself was not modified; no service, route, schema, or migration changed. | `clarification-request-card.test.tsx` 11; `workflow-proposal-panel.test.tsx` 15; full suite 51 suites / 954; tsc exit 0; Prisma schema untouched |
+| 2026-10-20 | REMEDIATION (live-testing defect fixed) | Two defects surfaced by running the flow against the live DB. (1) An `UNKNOWN_REFERENCE_SOURCE` issue on a field a clarification names now demotes to human-resolvable placeholder instead of forcing `INVALID_INPUT`, so a well-formed "ask + placeholder" proposal reaches `NEEDS_USER_INPUT` instead of retrying to the step cap (`execute.ts`; commit `7bc05a7`). (2) A prompt rule routes an unfilled placeholder to the clarification field; `AGENT_PROMPT_VERSION` bumped `v4 → v5` (`system-prompt.ts`, `generate-workflow/tool.ts`; commit `c7809f2`). The demotion is narrow — malformed/unknown-output/unknown-action/cycle/dangling-dep still force model correction. **This deliberately crosses the 37.5/37.6 "no prompt change — deferred to 37.13" boundary; recorded, not absorbed. Reviewer call whether the bump stays or folds into 37.13.** | `missing-input-protocol.test.ts` +3 (10b/10c/10d); full suite 56 suites / 1077 tests; tsc exit 0; eslint 0 on changed files; no migration, no schema change, no new service or route |
