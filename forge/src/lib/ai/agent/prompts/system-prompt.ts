@@ -38,8 +38,17 @@ export interface BuildAgentSystemPromptOptions {
  * its project by `projectId` (an id), never by name, and an id the model does
  * not have must be requested, never invented. This matters because the proposal
  * is shown to a human for approval, so a fabricated id is a fabricated decision.
+ *
+ * v5 closes a routing gap left open by v4: v4 named only an absent `projectId`
+ * as a clarification trigger, so a model handed a placeholder in the user's own
+ * request (e.g. "Client kickoff: <client name>") answered conversationally
+ * instead of calling `generateWorkflow`. A chat question ends the turn with no
+ * structured clarification, and therefore no review surface for the user to
+ * answer - so the values could never be supplied. v5 states that ANY unfilled
+ * placeholder for a required value is a missing input and must be returned
+ * through the `clarifications` array, which is what presents the answer form.
  */
-export const AGENT_PROMPT_VERSION = "v4";
+export const AGENT_PROMPT_VERSION = "v5";
 
 /**
  * The contract in force before AGENT_PROMPT_VERSION was introduced.
@@ -183,6 +192,7 @@ The compiler enforces these rules, so get them right the first time:
 
 - A step id starts with a letter or underscore and uses only letters, digits, underscores, or hyphens. Reference an earlier step's output with the existing {{stepId.outputs.field}} grammar.
 - Inside any step's inputs, a task is placed by "projectId", which is an ID, not a name. Use an id only if the user gave you one or it appeared earlier in the conversation. Never invent an id, and never send a project name as projectId. If a required id is missing and you cannot get it from the conversation, return the proposal with a "clarifications" array naming the missing field, why it is required, and a question for the user, rather than guessing.
+- If the user's request contains an unfilled placeholder for a value you must supply (for example a "<client name>" or "<project id>" angle-bracket token, or any stated value left blank), treat that value as a missing required input. Do NOT ask for it in a normal chat reply and do NOT end the turn with a question. Call generateWorkflow with a "clarifications" array naming the field, why it is required, and the question — exactly as in the previous rule. A conversational question produces no review surface, while a "clarifications" entry presents the user with a form they can answer.
 
 The result is either { ok: true, proposal } for a valid proposal, or a validation failure listing the fields to fix by name and path; correct exactly those fields and call again. A generated step is a proposal, not a promise: never tell the user a workflow was created or started.
 

@@ -592,6 +592,126 @@ describe("Assignment 37.6 — Group A: Classification and Issue Contract", () =>
       "project_beta",
     ]);
   });
+
+  it("10b. a placeholder {{...}} reference on a clarified input is the human's to supply, not a model error", async () => {
+    // Regression: the model expresses an unfilled placeholder as a {{name}}
+    // reference inside the very field it is asking the user about. The compiler
+    // reports UNKNOWN_REFERENCE_SOURCE, but the clarification names that exact
+    // path, so the executor must park for the human instead of returning
+    // INVALID_INPUT. Returning INVALID_INPUT would discard the clarification and
+    // trap the bounded loop retrying a value only the human can provide.
+    const input = {
+      name: "Onboard a new client",
+      steps: {
+        kickoff_task: {
+          action: "task.create",
+          inputs: {
+            title: "Client kickoff: {{clientName}}",
+            priority: "HIGH",
+            projectId: "{{forgeCoreProjectId}}",
+          },
+          dependsOn: [],
+        },
+      },
+      clarifications: [
+        {
+          field: "steps.kickoff_task.inputs.title",
+          reason: "The client name is required to complete the kickoff title.",
+          question: "What is the name of the client?",
+        },
+        {
+          field: "steps.kickoff_task.inputs.projectId",
+          reason: "The Forge Core project id is required to place the task.",
+          question: "What is the id for the Forge Core project?",
+        },
+      ],
+    };
+
+    const output = jsonValue(await executeGenerateWorkflow(input));
+    expect(output.ok).toBe(false);
+    expect(output.code).toBe("NEEDS_USER_INPUT");
+    const clarification = output as GenerateWorkflowClarification;
+    expect(clarification.status).toBe("NEEDS_USER_INPUT");
+    expect(clarification.fields.map((f) => f.field)).toEqual([
+      "steps.kickoff_task.inputs.title",
+      "steps.kickoff_task.inputs.projectId",
+    ]);
+    expect(clarification.correlationId).toMatch(/^prop_corr_[a-f0-9]{16}$/);
+  });
+
+  it("10c. a placeholder reference NOT covered by a clarification still forces the model to correct it", async () => {
+    // The demotion is deliberately narrow. A {{...}} reference on a field the
+    // clarification does not name is a genuine model error that only the model
+    // can fix, so it must remain INVALID_INPUT - the human is not being asked
+    // about that field.
+    const input = {
+      name: "Broken",
+      steps: {
+        step1: {
+          action: "task.create",
+          inputs: {
+            title: "Reads a ghost",
+            projectId: PROJECT_ID,
+            description: "From {{ghost.outputs.taskId}}",
+          },
+          dependsOn: [],
+        },
+      },
+      clarifications: [
+        {
+          field: "steps.step1.inputs.title",
+          reason: "A title is required.",
+          question: "What title?",
+        },
+      ],
+    };
+
+    const output = jsonValue(
+      await executeGenerateWorkflow(input),
+    ) as GenerateWorkflowFailure;
+    expect(output.code).toBe("INVALID_INPUT");
+    expect(output.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "UNKNOWN_REFERENCE_SOURCE",
+          path: "steps.step1.inputs.description",
+        }),
+      ]),
+    );
+  });
+
+  it("10d. a malformed reference on a clarified path is still a model error, not a placeholder", async () => {
+    // Only UNKNOWN_REFERENCE_SOURCE is demoted. Broken {{...}} syntax on the same
+    // field the clarification names is a model mistake the placeholder rule must
+    // not excuse.
+    const input = {
+      name: "Malformed",
+      steps: {
+        step1: {
+          action: "task.create",
+          inputs: {
+            title: "Reads a broken ref",
+            projectId: PROJECT_ID,
+            description: "From {{step1.output.taskId}}",
+          },
+          dependsOn: [],
+        },
+      },
+      clarifications: [
+        {
+          field: "steps.step1.inputs.description",
+          reason: "Input needed.",
+          question: "What description?",
+        },
+      ],
+    };
+
+    const output = jsonValue(
+      await executeGenerateWorkflow(input),
+    ) as GenerateWorkflowFailure;
+    expect(output.code).toBe("INVALID_INPUT");
+  });
+
 });
 
 describe("Assignment 37.6 — Group B: Three-Loop Separation", () => {
