@@ -41,6 +41,10 @@ import { auth } from "@/lib/auth/auth";
 import { getAgentSessionForUser } from "@/lib/ai/agent/session-service";
 import { getMessages } from "@/lib/ai/agent/services/message-service";
 import { getToolExecutionsForSession } from "@/lib/ai/agent/services/tool-execution-service";
+import {
+  PROPOSAL_TOOL_NAME,
+  deriveProposalLifecycle,
+} from "@/lib/ai/agent/services/proposal-service";
 import { GET } from "@/app/api/agent/session/[sessionId]/route";
 
 const authMock = auth as jest.MockedFunction<typeof auth>;
@@ -343,5 +347,139 @@ describe("proposal review projection", () => {
     expect((pending.review as Record<string, unknown>).reviewExpiresAt).toBe(
       "2026-09-29T00:15:00.000Z",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Assignment 37.10 — the canonical proposal and the revision-bound decision set
+// ---------------------------------------------------------------------------
+
+// The stored fingerprint the write path stamps is derived, not invented, so the
+// binding check below is exercised against the value the application itself
+// would have written.
+const DERIVED = deriveProposalLifecycle(PROPOSAL_TOOL_NAME, {
+  ok: true,
+  proposal: VALID_PROPOSAL,
+});
+
+if (!DERIVED || DERIVED.fingerprint === null) {
+  throw new Error("fixture failed to derive a proposal fingerprint");
+}
+
+const FINGERPRINT = DERIVED.fingerprint;
+
+describe("proposal and criticality projection", () => {
+  beforeEach(() => {
+    authMock.mockResolvedValue({ user: { id: "user_a" } } as never);
+    getSessionMock.mockResolvedValue(session());
+  });
+
+  it("exposes the canonical proposal and the complete, revision-bound decision set", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({ proposalFingerprint: FINGERPRINT }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    expect(pending.proposal).toEqual(VALID_PROPOSAL);
+    expect(pending.approvedCriticality).toEqual({
+      kickoff: true,
+      follow: false,
+    });
+  });
+
+  it("withholds the decision set when the stored fingerprint names another revision", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({ proposalFingerprint: "fp_of_some_other_proposal" }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    // The proposal itself is still reviewable; only the DECISION is refused.
+    expect(pending.proposal).toEqual(VALID_PROPOSAL);
+    expect(pending.review).not.toBeNull();
+    expect(pending.approvedCriticality).toBeNull();
+  });
+
+  it("withholds the decision set from a row that never carried a fingerprint", async () => {
+    // Nothing to bind the decisions to, so nothing may be rendered from them.
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({ proposalFingerprint: null }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    expect(pending.proposal).toEqual(VALID_PROPOSAL);
+    expect(pending.approvedCriticality).toBeNull();
+  });
+
+  it("withholds the decision set while criticality is still outstanding", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({
+        proposalState: "AWAITING_CRITICALITY",
+        proposalFingerprint: FINGERPRINT,
+        criticalityDecisions: null,
+      }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    expect(pending.proposal).toEqual(VALID_PROPOSAL);
+    expect(pending.approvedCriticality).toBeNull();
+  });
+
+  it("withholds the decision set when a step is unclassified, even though the review still renders", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({
+        proposalFingerprint: FINGERPRINT,
+        criticalityDecisions: { kickoff: true },
+      }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    // The review model is a presentation projection and reports what exists;
+    // the preview needs the COMPLETE set and is given nothing instead.
+    expect(
+      (pending.review as Record<string, unknown>).criticality,
+    ).toEqual({ kickoff: true });
+    expect(pending.approvedCriticality).toBeNull();
+  });
+
+  it("carries neither field when the stored result does not parse", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({ result: { ok: false, code: "INVALID_INPUT" } }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const pending = body.pendingProposal as Record<string, unknown>;
+
+    expect(pending.review).toBeNull();
+    expect(pending.proposal).toBeNull();
+    expect(pending.approvedCriticality).toBeNull();
+  });
+
+  it("carries both fields on a settled outcome", async () => {
+    getExecutionsMock.mockResolvedValue([
+      proposalExecution({
+        proposalState: "APPROVED",
+        proposalFingerprint: FINGERPRINT,
+        updatedAt: new Date("2026-09-29T00:05:00.000Z"),
+      }),
+    ] as never);
+
+    const body = (await (await callGet()).json()) as Record<string, unknown>;
+    const outcome = body.proposalOutcome as Record<string, unknown>;
+
+    expect(outcome.proposal).toEqual(VALID_PROPOSAL);
+    expect(outcome.approvedCriticality).toEqual({
+      kickoff: true,
+      follow: false,
+    });
   });
 });
