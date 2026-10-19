@@ -3,12 +3,18 @@
 import { db } from '@/lib/prisma/db'; 
 import { revalidatePath } from 'next/cache';
 import { getOrgAccess } from '@/features/organizations/getOrgAccess';
-import { z } from 'zod';
-import { TriggerNodeDataSchema, ActionNodeDataSchema } from '@/lib/workflow-types/workflow';
 
 // Import the compiler we just built!
 import { compileWorkflow } from '@/lib/workflow/graph-ui/compiler';
 import { WorkflowValidationError } from '@/lib/workflow-types/workflow';
+// The persistence-boundary schemas live in one shared module (Assignment 37.11)
+// so the proposal materializer validates against the same contract this save
+// path does, rather than a second, weaker copy.
+import {
+  IncomingNodesSchema,
+  IncomingEdgesSchema,
+  type IncomingNode,
+} from '@/lib/workflow/validation/incoming-graph';
 
 /**
  * Turn a compile failure into something the user can act on.
@@ -26,66 +32,6 @@ function describeCompileFailure(error: unknown): string | null {
 
   return error.issues.map((issue) => issue.message).join(' ');
 }
-
-/**
- * Node validation at the persistence boundary.
- *
- * `data` used to be `.optional().or(z.any())`. `z.any()` accepts every value,
- * including `undefined`, so the union's right-hand branch always succeeded and
- * the left-hand branch was never reached: `eventId`, `actionType`, `config` and
- * `isCritical` - everything that decides what executes - crossed the boundary
- * unchecked.
- *
- * The union discriminates on the node's own `type`, not on `data.type`. React
- * Flow carries the discriminator at the top level and `AppNode`'s inferred data
- * type has no `type` field, so a union keyed on `data.type` would reject every
- * node this application actually creates. Keying it on `node.type` also makes
- * the two impossible to disagree: a node typed `trigger` must carry trigger data,
- * with no cross-field refinement needed to notice when it does not.
- */
-const IncomingNodeSchema = z.discriminatedUnion('type', [
-  z.object({
-    id: z.string(),
-    type: z.literal('trigger'),
-    position: z.object({ x: z.number(), y: z.number() }),
-    data: TriggerNodeDataSchema,
-  }),
-  z.object({
-    id: z.string(),
-    type: z.literal('action'),
-    position: z.object({ x: z.number(), y: z.number() }),
-    data: ActionNodeDataSchema,
-  }),
-]);
-
-const IncomingNodesSchema = z.array(IncomingNodeSchema);
-
-/**
- * Edges are validated on the same terms as nodes, and persisted from the parsed
- * result for the same reason: `compileWorkflow` is the only thing that turns drawn
- * edges into `dependsOn`, so an unvalidated edge is an unchecked instruction to the
- * execution engine, and persisting the raw argument would store whatever the
- * client sent in the JSONB column alongside a validated node set.
- *
- * React Flow carries optional presentation fields (`type`, `animated`, `label`,
- * markers, style). They are passed through rather than stripped, because they are
- * meaningful to the editor and harmless to the compiler, which reads only `source`
- * and `target`.
- */
-const IncomingEdgeSchema = z.object({
-  id: z.string(),
-  source: z.string(),
-  target: z.string(),
-  sourceHandle: z.string().nullish(),
-  targetHandle: z.string().nullish(),
-  type: z.string().optional(),
-  animated: z.boolean().optional(),
-  label: z.string().optional(),
-});
-
-const IncomingEdgesSchema = z.array(IncomingEdgeSchema);
-
-type IncomingNode = z.infer<typeof IncomingNodeSchema>;
 
 // ------------------------------------------------------------------
 // CREATE WORKFLOW

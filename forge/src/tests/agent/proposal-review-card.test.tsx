@@ -354,3 +354,116 @@ describe("terminal outcomes", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("materialization (Assignment 37.11)", () => {
+  it("offers an explicit Create workflow action once approved", () => {
+    renderCard({ state: "APPROVED" });
+
+    expect(
+      screen.getByRole("button", { name: "Create workflow" }),
+    ).toBeInTheDocument();
+  });
+
+  it("POSTs only the interaction id to the materialize endpoint", async () => {
+    fetchMock.mockResolvedValue(statusResponse({ status: "MATERIALIZED" }, 200));
+    const onMaterialized = jest.fn();
+
+    renderCard({ state: "APPROVED", onMaterialized });
+    fireEvent.click(screen.getByRole("button", { name: "Create workflow" }));
+
+    await waitFor(() => expect(onMaterialized).toHaveBeenCalled());
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/agent/session/${SESSION_ID}/proposal-materialize`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ interactionId: INTERACTION_ID }),
+      }),
+    );
+  });
+
+  it("does not fabricate MATERIALIZED on success and asks for a reread", async () => {
+    fetchMock.mockResolvedValue(statusResponse({ status: "MATERIALIZED" }, 200));
+    const onMaterialized = jest.fn();
+
+    renderCard({ state: "APPROVED", onMaterialized });
+    fireEvent.click(screen.getByRole("button", { name: "Create workflow" }));
+
+    await waitFor(() => expect(onMaterialized).toHaveBeenCalledTimes(1));
+    // The card stays on APPROVED until authoritative state says otherwise.
+    expect(
+      screen.getByRole("button", { name: "Create workflow" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Workflow created/)).toBeNull();
+  });
+
+  it("surfaces a creation failure and keeps the action usable", async () => {
+    fetchMock.mockResolvedValue(
+      statusResponse({ error: "The proposal changed since it was approved." }, 409),
+    );
+
+    renderCard({ state: "APPROVED" });
+    fireEvent.click(screen.getByRole("button", { name: "Create workflow" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The proposal changed since it was approved.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Create workflow" }),
+    ).toBeEnabled();
+  });
+
+  it("asks for a reread on a conflict so a stale view is reconciled", async () => {
+    fetchMock.mockResolvedValue(
+      statusResponse({ error: "Not approved.", code: "PROPOSAL_NOT_APPROVED" }, 409),
+    );
+    const onMaterialized = jest.fn();
+
+    renderCard({ state: "APPROVED", onMaterialized });
+    fireEvent.click(screen.getByRole("button", { name: "Create workflow" }));
+
+    await waitFor(() => expect(onMaterialized).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports a transport failure rather than hanging", async () => {
+    fetchMock.mockRejectedValue(new Error("offline"));
+
+    renderCard({ state: "APPROVED" });
+    fireEvent.click(screen.getByRole("button", { name: "Create workflow" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The workflow could not be created.",
+    );
+  });
+
+  it("shows an Open workflow link once materialized, using slug + id", () => {
+    renderCard({
+      state: "MATERIALIZED",
+      workflowId: "wf_123",
+      orgSlug: "acme",
+    });
+
+    const link = screen.getByRole("link", { name: "Open workflow" });
+    expect(link).toHaveAttribute("href", "/org/acme/workflows/wf_123");
+    expect(screen.queryByRole("button", { name: "Create workflow" })).toBeNull();
+  });
+
+  it("does not render an Open workflow link without a durable workflow id", () => {
+    renderCard({
+      state: "MATERIALIZED",
+      workflowId: null,
+      orgSlug: "acme",
+    });
+
+    expect(screen.queryByRole("link", { name: "Open workflow" })).toBeNull();
+    expect(
+      screen.getByText(/could not be opened from here/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render an Open workflow link without an org slug", () => {
+    renderCard({ state: "MATERIALIZED", workflowId: "wf_123" });
+
+    expect(screen.queryByRole("link", { name: "Open workflow" })).toBeNull();
+  });
+});

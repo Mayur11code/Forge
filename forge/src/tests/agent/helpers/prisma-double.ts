@@ -14,6 +14,7 @@ export const store = {
   executions: [] as Row[],
   messages: [] as Row[],
   outbox: [] as Row[],
+  workflows: [] as Row[],
 };
 
 export function resetStore() {
@@ -21,6 +22,8 @@ export function resetStore() {
   store.executions = [];
   store.messages = [];
   store.outbox = [];
+  store.workflows = [];
+  workflowSeq = 0;
 }
 
 // Applies an update `data` payload to a row, honouring Prisma's atomic
@@ -674,6 +677,7 @@ type TransactionCapableDouble = {
     findMany: unknown;
     updateMany: unknown;
   };
+  workflow: { findFirst: unknown; create: unknown; updateMany: unknown };
   agentMessage: { create: unknown };
   agentOutboxEvent: {
     findUnique: unknown;
@@ -687,6 +691,97 @@ type TransactionCapableDouble = {
 const runTransaction = <T>(
   fn: (tx: TransactionCapableDouble) => Promise<T>,
 ): Promise<T> => fn(prismaDouble);
+
+// --- workflow (Assignment 37.11 materialization) ----------------------------
+//
+// The proposal materializer creates a `Workflow` and relies on two properties the
+// double must model rather than stub:
+//
+//   1. The unique `sourceProposalId`. The database-level defense against a
+//      duplicate materialization is that index; a double that ignored it would
+//      let a second create succeed, so the "concurrent materialization cannot
+//      create two workflows" case would pass for the wrong reason.
+//   2. The org-scoped read. `findMaterializedWorkflow` filters on `orgId`; a
+//      double that dropped it would let one tenant resolve another tenant's
+//      workflow by provenance, which is exactly the cross-tenant leak the
+//      scoping exists to prevent.
+
+let workflowSeq = 0;
+
+function uniqueSourceViolation(): never {
+  const error = new Error(
+    "Unique constraint failed on the fields: (`sourceProposalId`)",
+  ) as Error & { code: string };
+  error.code = "P2002";
+  throw error;
+}
+
+function matchesWorkflowWhere(row: Row, where: Row): boolean {
+  if (where.id !== undefined && row.id !== where.id) return false;
+  if (where.orgId !== undefined && row.orgId !== where.orgId) return false;
+  if (where.sourceProposalId !== undefined && row.sourceProposalId !== where.sourceProposalId) {
+    return false;
+  }
+  return true;
+}
+
+const findFirstWorkflow = async ({
+  where,
+  select,
+}: {
+  where: Row;
+  select?: Row;
+}) => {
+  const row = store.workflows.find((candidate) =>
+    matchesWorkflowWhere(candidate, where),
+  );
+  if (!row) return null;
+
+  if (!select) return { ...row };
+
+  const picked: Row = {};
+  for (const field of Object.keys(select)) {
+    if (select[field]) picked[field] = row[field];
+  }
+  return picked;
+};
+
+const createWorkflow = async ({ data }: { data: Row }) => {
+  if (
+    data.sourceProposalId !== undefined &&
+    data.sourceProposalId !== null &&
+    store.workflows.some(
+      (row) => row.sourceProposalId === data.sourceProposalId,
+    )
+  ) {
+    uniqueSourceViolation();
+  }
+
+  workflowSeq += 1;
+
+  const row: Row = {
+    id: `wf_${workflowSeq}`,
+    eventId: null,
+    isActive: false,
+    description: null,
+    ...data,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  store.workflows.push(row);
+  return { ...row };
+};
+
+const updateManyWorkflows = async ({ where, data }: { where: Row; data: Row }) => {
+  const hits = store.workflows.filter((row) => matchesWorkflowWhere(row, where));
+
+  for (const row of hits) {
+    Object.assign(row, data);
+  }
+
+  return { count: hits.length };
+};
 
 export const prismaDouble = {
   $transaction: jest.fn(runTransaction),
@@ -706,6 +801,12 @@ export const prismaDouble = {
     create: jest.fn(createExecution),
     updateMany: jest.fn(updateManyExecutions),
     count: jest.fn(countExecutions),
+  },
+
+  workflow: {
+    findFirst: jest.fn(findFirstWorkflow),
+    create: jest.fn(createWorkflow),
+    updateMany: jest.fn(updateManyWorkflows),
   },
 
   agentMessage: {
@@ -774,6 +875,9 @@ export function restorePrismaDouble(): void {
   prismaDouble.agentToolExecution.count.mockImplementation(countExecutions);
   prismaDouble.agentMessage.create.mockImplementation(createMessageRow);
   prismaDouble.agentMessage.findMany.mockImplementation(findManyMessages);
+  prismaDouble.workflow.findFirst.mockImplementation(findFirstWorkflow);
+  prismaDouble.workflow.create.mockImplementation(createWorkflow);
+  prismaDouble.workflow.updateMany.mockImplementation(updateManyWorkflows);
   prismaDouble.task.findMany.mockImplementation(findManyExecutions);
   prismaDouble.task.findFirst.mockImplementation(findFirstTask);
   prismaDouble.task.update.mockImplementation(findFirstTask);

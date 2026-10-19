@@ -24,6 +24,23 @@ jest.mock("@/features/organizations/components/ai/ChatWorkspace", () => ({
   ChatWorkspace: () => <div data-testid="chat-workspace" />,
 }));
 
+// Assignment 37.10. The preview's own rendering is covered by
+// proposal-graph-preview.test.tsx (against a mocked `@xyflow/react`). Here the
+// subject is the PANEL's gating: when the preview is mounted at all, and with
+// which proposal and decision set. The double records both.
+jest.mock("@/features/organizations/components/ai/ProposalGraphPreview", () => ({
+  ProposalGraphPreview: (props: {
+    proposal: { name: string };
+    criticality: unknown;
+  }) => (
+    <div
+      data-testid="proposal-graph-preview"
+      data-proposal={props.proposal.name}
+      data-criticality={JSON.stringify(props.criticality)}
+    />
+  ),
+}));
+
 import DiagnosticsPage from "@/app/org/[orgId]/ai/page";
 
 const SESSION_ID = "clxwsession111111111111";
@@ -149,6 +166,71 @@ function sessionPendingAfterCriticality() {
       review: REVIEW_WITH_CRITICALITY,
     },
     proposalOutcome: null,
+  };
+}
+
+// Assignment 37.10 fixtures: the same pending proposal, but with the two
+// read-only fields the graph preview needs. Both come back from the session
+// read; the preview is gated on BOTH being present.
+function sessionPendingWithGraph() {
+  return {
+    sessionId: SESSION_ID,
+    status: "RUNNING",
+    currentStep: 3,
+    finalResponse: null,
+    error: null,
+    terminalReason: null,
+    clarification: null,
+    pendingProposal: {
+      interactionId: INTERACTION_ID,
+      toolName: "generateWorkflow",
+      state: "AWAITING_APPROVAL",
+      expiresAt: "2026-10-18T12:00:00.000Z",
+      review: REVIEW_WITH_CRITICALITY,
+      proposal: PROPOSAL,
+      approvedCriticality: { kickoff: true, follow: false },
+    },
+    proposalOutcome: null,
+  };
+}
+
+// A pending proposal whose revision binding failed server-side: the proposal is
+// there, but the decision set is not accepted for it, so no preview may show.
+function sessionPendingUnboundCriticality() {
+  const view = sessionPendingWithGraph();
+  return {
+    ...view,
+    pendingProposal: { ...view.pendingProposal, approvedCriticality: null },
+  };
+}
+
+// Criticality has not been recorded yet, so there is nothing to bind — and the
+// state is AWAITING_CRITICALITY, which must never show a preview even though a
+// proposal is in hand.
+function sessionCriticalityWithProposal() {
+  const view = sessionPendingWithGraph();
+  return {
+    ...view,
+    pendingProposal: {
+      ...view.pendingProposal,
+      state: "AWAITING_CRITICALITY",
+      expiresAt: null,
+      review: REVIEW,
+      approvedCriticality: null,
+    },
+  };
+}
+
+function sessionOutcomeWithGraph(state: "APPROVED" | "DECLINED" | "EXPIRED") {
+  const view = sessionOutcome(state);
+  return {
+    ...view,
+    proposalOutcome: {
+      ...view.proposalOutcome,
+      review: REVIEW_WITH_CRITICALITY,
+      proposal: PROPOSAL,
+      approvedCriticality: { kickoff: true, follow: false },
+    },
   };
 }
 
@@ -485,6 +567,61 @@ describe("WorkflowProposalPanel — criticality decisions", () => {
     expect(
       fetchMock.mock.calls.some(([url]) => String(url).endsWith("/api/agent/init")),
     ).toBe(false);
+  });
+});
+
+describe("WorkflowProposalPanel — the graph preview (Assignment 37.10)", () => {
+  it("shows the graph once the proposal is awaiting approval with a recorded decision set", async () => {
+    fetchMock.mockImplementation(
+      routeFetch({ session: [() => json(sessionPendingWithGraph())] }),
+    );
+
+    render(<WorkflowProposalPanel orgSlug={ORG_SLUG} />);
+    submit("Onboard a client");
+
+    const preview = await screen.findByTestId("proposal-graph-preview");
+    expect(preview).toHaveAttribute("data-proposal", "Onboard a client");
+    expect(
+      JSON.parse(preview.getAttribute("data-criticality") ?? ""),
+    ).toEqual({ kickoff: true, follow: false });
+  });
+
+  it("shows no graph while criticality is still outstanding", async () => {
+    fetchMock.mockImplementation(
+      routeFetch({ session: [() => json(sessionCriticalityWithProposal())] }),
+    );
+
+    render(<WorkflowProposalPanel orgSlug={ORG_SLUG} />);
+    submit("Onboard a client");
+
+    await screen.findByLabelText("Workflow proposal review");
+    expect(screen.queryByTestId("proposal-graph-preview")).toBeNull();
+  });
+
+  it("shows no graph when the server refused to bind the decision set", async () => {
+    fetchMock.mockImplementation(
+      routeFetch({ session: [() => json(sessionPendingUnboundCriticality())] }),
+    );
+
+    render(<WorkflowProposalPanel orgSlug={ORG_SLUG} />);
+    submit("Onboard a client");
+
+    await screen.findByLabelText("Workflow proposal review");
+    expect(screen.queryByTestId("proposal-graph-preview")).toBeNull();
+  });
+
+  it("shows the graph for a settled outcome, alongside the terminal banner", async () => {
+    window.localStorage.setItem(`forge:workflow-session:${ORG_SLUG}`, SESSION_ID);
+
+    fetchMock.mockImplementation(
+      routeFetch({ session: [() => json(sessionOutcomeWithGraph("APPROVED"))] }),
+    );
+
+    render(<WorkflowProposalPanel orgSlug={ORG_SLUG} />);
+
+    await screen.findByText(/This proposal was approved/);
+    expect(screen.getByTestId("proposal-graph-preview")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 });
 
