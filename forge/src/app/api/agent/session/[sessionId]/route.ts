@@ -19,7 +19,10 @@ import {
   proposalFromExecutionResult,
   SETTLED_PROPOSAL_STATES,
 } from "@/lib/ai/agent/services/proposal-service";
+import { findMaterializedWorkflowIdForSource } from "@/lib/ai/agent/services/proposal-materialization-service";
 import { buildProposalReviewModel } from "@/lib/ai/agent/services/proposal-review";
+import { validateCriticalityDecisions } from "@/lib/workflow-types/workflow-criticality";
+import type { CriticalityDecisions } from "@/lib/workflow-types/workflow-criticality";
 import { getToolExecutionsForSession } from "@/lib/ai/agent/services/tool-execution-service";
 import { describeToolProposal } from "@/lib/ai/agent/tools/registry";
 import { AgentToolExecutionStatus, AgentProposalState } from "@prisma/client";
@@ -35,12 +38,28 @@ type RouteContext = {
  * The proposal is re-parsed from the durable `result`, so the SAME proposal the
  * decision service would bind an approval to is what the client renders. The name
  * comes from the proposal itself, never the compiler placeholder (F2).
+ *
+ * Assignment 37.10 adds two read-only fields for the graph preview, both derived
+ * from that same re-parsed proposal and both additive:
+ *
+ *   - `proposal` — the canonical proposal itself. The preview must not
+ *     reconstruct a proposal from the review model: the review is a
+ *     presentation projection, and rebuilding compiler input from it is exactly
+ *     the kind of lossy round trip this endpoint exists to avoid.
+ *   - `approvedCriticality` — the human's COMPLETE decision set, present only
+ *     when the established 37.7 contract accepts it for THIS proposal AND the
+ *     stored revision fingerprint still matches. Revision binding therefore
+ *     happens here, on the server, with `node:crypto` available; a browser
+ *     cannot recompute the fingerprint and is never asked to. When the check
+ *     fails the field is `null`, so the client is handed either a complete,
+ *     revision-bound set or nothing at all.
  */
-function buildReviewForExecution(execution: {
+function buildExecutionView(execution: {
   result: unknown;
   criticalityDecisions: unknown;
   clarificationAnswer: unknown;
   expiresAt: Date | null;
+  proposalFingerprint: string | null;
 }) {
   const proposal = proposalFromExecutionResult(execution.result);
 
@@ -48,12 +67,31 @@ function buildReviewForExecution(execution: {
     return null;
   }
 
-  return buildProposalReviewModel({
+  const approval = validateCriticalityDecisions(
     proposal,
-    criticality: execution.criticalityDecisions,
-    clarification: execution.clarificationAnswer,
-    reviewExpiresAt: execution.expiresAt,
-  });
+    execution.criticalityDecisions,
+  );
+
+  // Bound to this exact revision: `approval.approved.fingerprint` is recomputed
+  // server-side from the re-parsed proposal, so a decision recorded against a
+  // different revision - or a row that never carried a fingerprint at all - is
+  // withheld rather than handed to the preview as if it still applied.
+  const approvedCriticality: CriticalityDecisions | null =
+    approval.success &&
+    execution.proposalFingerprint === approval.approved.fingerprint
+      ? { ...approval.approved.decisions }
+      : null;
+
+  return {
+    proposal,
+    approvedCriticality,
+    review: buildProposalReviewModel({
+      proposal,
+      criticality: execution.criticalityDecisions,
+      clarification: execution.clarificationAnswer,
+      reviewExpiresAt: execution.expiresAt,
+    }),
+  };
 }
 
 /**
@@ -118,13 +156,48 @@ export async function GET(
     // client must see the outcome (approved / declined / expired) rather than a
     // stale "pending" card, so this too is derived from durable state and not
     // from whether a card was ever rendered live.
-    const settledProposalExecution = toolExecutions
+    //
+    // Assignment 37.11 adds MATERIALIZED to this read set. It is the terminal
+    // outcome of an approved proposal that became a Workflow, and a refreshed
+    // client must be able to show the created workflow rather than a lingering
+    // "approved" banner. MATERIALIZED is deliberately NOT in the persisted
+    // `SETTLED_PROPOSAL_STATES` (37.8 wording is about a decision being over, not
+    // about a workflow existing), so it is added here, at the read boundary, and
+    // nowhere the write paths depend on.
+    const reviewedProposalExecution = toolExecutions
       .filter(
         (execution) =>
           execution.proposalState !== null &&
-          SETTLED_PROPOSAL_STATES.includes(execution.proposalState),
+          (SETTLED_PROPOSAL_STATES.includes(execution.proposalState) ||
+            execution.proposalState === AgentProposalState.MATERIALIZED),
       )
       .sort(comparePendingProposalRecency)[0];
+
+    const settledProposalExecution = reviewedProposalExecution;
+
+    // Assignment 37.10: the canonical proposal and the revision-bound criticality
+    // decision set ride along with each view, so the graph preview is built from
+    // the same durable row as the review instead of from presentation fields.
+    const pendingView = pendingProposalExecution
+      ? buildExecutionView(pendingProposalExecution)
+      : null;
+    const settledView = settledProposalExecution
+      ? buildExecutionView(settledProposalExecution)
+      : null;
+
+    // Assignment 37.11: for a MATERIALIZED outcome, resolve the durable
+    // `Workflow.id` from provenance, scoped to the authorized organization. This
+    // is a read-only lookup - it never creates a workflow and never restarts the
+    // agent loop. A MATERIALIZED state with no resolvable workflow reports a null
+    // id, so the client is never told a creation succeeded when it did not.
+    const settledWorkflowId =
+      settledProposalExecution &&
+      settledProposalExecution.proposalState === AgentProposalState.MATERIALIZED
+        ? await findMaterializedWorkflowIdForSource(
+            session.orgId,
+            settledProposalExecution.id,
+          )
+        : null;
 
     return Response.json(
       {
@@ -161,7 +234,12 @@ export async function GET(
               fingerprint: pendingProposalExecution.proposalFingerprint,
               revision: pendingProposalExecution.proposalRevision,
               expiresAt: pendingProposalExecution.expiresAt,
-              review: buildReviewForExecution(pendingProposalExecution),
+              review: pendingView?.review ?? null,
+              // Additive (37.10): null when the result is not a proposal, and
+              // `approvedCriticality` is additionally null when the decision set
+              // is absent, incomplete, or not bound to this proposal revision.
+              proposal: pendingView?.proposal ?? null,
+              approvedCriticality: pendingView?.approvedCriticality ?? null,
             }
           : null,
         /**
@@ -176,7 +254,15 @@ export async function GET(
               decidedAt:
                 settledProposalExecution.expiredAt ??
                 settledProposalExecution.updatedAt,
-              review: buildReviewForExecution(settledProposalExecution),
+              review: settledView?.review ?? null,
+              // Additive (37.10), same rules as `pendingProposal`.
+              proposal: settledView?.proposal ?? null,
+              approvedCriticality: settledView?.approvedCriticality ?? null,
+              // Additive (37.11): the durable `Workflow.id` for a MATERIALIZED
+              // outcome, null otherwise (including a MATERIALIZED row whose
+              // workflow cannot be resolved in this org - never presented as a
+              // successful creation).
+              workflowId: settledWorkflowId,
             }
           : null,
         messages: messages.map((message) => ({

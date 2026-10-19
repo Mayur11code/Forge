@@ -884,8 +884,8 @@ conflict. It is the authoritative sequence.
 37.7    Human criticality state                          IMPLEMENTED (continues F4)
 37.8    Durable proposal persistence                     IMPLEMENTED
 37.9    Existing confirmation integration                IMPLEMENTED (incl. 37.9.1 UI)
-37.10   UI graph projection / deterministic layout       NEXT (F1)
-37.11   Workflow materialization                        (canvas-first, F2)
+37.10   UI graph projection / deterministic layout       IMPLEMENTED (ordering = AD-11)
+37.11   Workflow materialization                        IMPLEMENTED (canvas-first; F1/F2 resolved)
 37.12   Execution handoff                               (GATED ON I6)
 37.13   Prompt / DAG planning instructions
 37.14   Self-healing observations
@@ -1013,6 +1013,15 @@ is a direct consequence of F1: the definition is not written first and projected
 afterwards. The only persistence path in Forge is canvas-first, so UI projection
 is a *precondition* of persistence rather than a consequence of it.
 
+> **[RESOLVED — 37.11, 2026-10-20]** F1 and F2 are resolved by
+> `assignments-37-phase-37.11-workflow-materialization.md`. F1: no schema change —
+> the materializer compiles an action-only proposal and stores it triggerless
+> (`eventId: null` / `isActive: false`), which is valid end-to-end. F2: no new
+> migration — `Workflow.sourceProposalId` already exists, provenance is the durable
+> `AgentToolExecution.id`, and `Workflow.name` is `proposal.name`. The canvas-first
+> ordering stands: the materializer persists BOTH the canonical definition and the
+> verbatim 37.10 UI projection through the shared save boundary.
+
 ```text
                     HUMAN INTENT
                          │
@@ -1084,11 +1093,20 @@ restart-survival remain OPEN and owned by 37.8 (F4 open).
 Phases 37.4, 37.5, 37.7, 37.8, 37.9: **IMPLEMENTED 2026-10-18/19 — not VERIFIED** —
 proposal compiler, the `generateWorkflow` tool, human criticality, durable proposal
 lifecycle, and human review (approve/decline/expiry), plus the human-input UI (37.9.1).
+Phase 37.10: **IMPLEMENTED 2026-10-19 — not VERIFIED** — deterministic proposal →
+`uiNodes`/`uiEdges` projection with a hand-rolled layered layout and a read-only
+preview in the review surface; revision binding computed server-side. F1 remains
+open (its ordering half recorded as AD-11).
+Phase 37.11: **IMPLEMENTED 2026-10-20 — not VERIFIED** — explicit human
+materialization of an approved proposal into a persisted, triggerless `Workflow`
+(CAS `APPROVED → MATERIALIZED` + `workflow.create` in one transaction; unique
+`sourceProposalId`). Materialization only — no execution. **F1 and F2 resolved**
+(no schema change, no new migration). Real-DB round-trip OPEN (37.8 migration
+unapplied).
 Tested at the mocked boundary; their documented Verification Gates are not yet satisfied.
 Current blockers: **I6** — the one remaining P0 (gates 37.12 only).
-Current implementation target: **37.10 — UI graph projection / deterministic layout**
-(dependencies 37.9 and 37.0B are satisfied).
-Later architectural decisions: **F1**, **F2**, **F4**. (F5 resolved at 37.4.)
+Current implementation target: **37.12 — execution handoff** (gated on I6).
+Later architectural decisions: **F4**. (F1/F2 resolved at 37.11; F5 resolved at 37.4.)
 
 This planning revision fixed no issue; the I6 work was documentation and gating
 only, and the execution path is not modified. I1 and I2 were subsequently closed

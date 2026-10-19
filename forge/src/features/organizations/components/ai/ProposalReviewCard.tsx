@@ -26,6 +26,7 @@ export type ProposalReviewState =
   | "AWAITING_CRITICALITY"
   | "AWAITING_APPROVAL"
   | "APPROVED"
+  | "MATERIALIZED"
   | "DECLINED"
   | "EXPIRED";
 
@@ -34,6 +35,15 @@ export type ProposalReviewCardProps = {
   interactionId: string;
   state: ProposalReviewState;
   review: ProposalReviewModel;
+  /**
+   * Assignment 37.11: the durable `Workflow.id` once the proposal has been
+   * materialized, and the org slug needed to build the editor URL. Both are
+   * supplied by the mounting panel from the authoritative session read. The
+   * card renders an Open workflow link only when BOTH are present; it never
+   * fabricates a workflow id.
+   */
+  workflowId?: string | null;
+  orgSlug?: string;
   /** Notified after the server accepts a decision, with the new state. */
   onDecided?: (state: "APPROVED" | "DECLINED", idempotent: boolean) => void;
   /**
@@ -43,6 +53,12 @@ export type ProposalReviewCardProps = {
    * reflected once a reread reports it.
    */
   onCriticalitySubmitted?: () => void;
+  /**
+   * Assignment 37.11: notified after the server confirms materialization, so the
+   * mounting surface can reread the authoritative session state. The card never
+   * sets its own state to MATERIALIZED.
+   */
+  onMaterialized?: () => void;
 };
 
 type Decision = "approve" | "decline";
@@ -51,6 +67,7 @@ const ACTION_LABEL: Record<ProposalReviewState, string> = {
   AWAITING_CRITICALITY: "Awaiting criticality review",
   AWAITING_APPROVAL: "Awaiting your review",
   APPROVED: "Approved",
+  MATERIALIZED: "Workflow created",
   DECLINED: "Declined",
   EXPIRED: "Review window closed",
 };
@@ -205,8 +222,11 @@ export const ProposalReviewCard = memo(function ProposalReviewCard({
   interactionId,
   state,
   review,
+  workflowId,
+  orgSlug,
   onDecided,
   onCriticalitySubmitted,
+  onMaterialized,
 }: ProposalReviewCardProps) {
   const [submitting, setSubmitting] = useState<Decision | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -221,12 +241,27 @@ export const ProposalReviewCard = memo(function ProposalReviewCard({
   // is in flight. The card never flips its own state to AWAITING_APPROVAL.
   const [criticalityRecorded, setCriticalityRecorded] = useState(false);
 
+  // Assignment 37.11: materialization is a separate, explicitly initiated step.
+  // The card never auto-materializes on approval, and it never advances itself to
+  // MATERIALIZED - a 2xx locks the button and the authoritative reread reports the
+  // new state (and the workflow id) via props.
+  const [materializing, setMaterializing] = useState(false);
+  const [materializeError, setMaterializeError] = useState<string | null>(null);
+
   const effectiveState = decided ?? state;
   const isPending =
     effectiveState === "AWAITING_APPROVAL" ||
     effectiveState === "AWAITING_CRITICALITY";
   const canDecide = effectiveState === "AWAITING_APPROVAL";
   const awaitingCriticality = effectiveState === "AWAITING_CRITICALITY";
+  const canMaterialize = effectiveState === "APPROVED" && !materializing;
+  const isMaterialized = effectiveState === "MATERIALIZED";
+  // The editor route is org-scoped by SLUG (`/org/[orgId]/workflows/[id]` where
+  // the segment is resolved through `getOrgAccess(slug)`), so the link is only
+  // built when the server-supplied slug and the durable workflow id are both
+  // present. The card never guesses either.
+  const canOpenWorkflow =
+    isMaterialized && typeof workflowId === "string" && workflowId.length > 0 && !!orgSlug;
 
   const refs = review.steps.map((step) => step.ref);
   const complete = refs.every(
@@ -322,6 +357,53 @@ export const ProposalReviewCard = memo(function ProposalReviewCard({
       setError("The criticality decisions could not be recorded.");
     } finally {
       setSubmittingCriticality(false);
+    }
+  }
+
+  /**
+   * Create the workflow from the approved proposal.
+   *
+   * No optimistic success: the button locks on submit and stays locked until the
+   * authoritative reread reports MATERIALIZED (and hands back the workflow id).
+   * A conflict asks the surface to reread so the card never reports a creation
+   * the server did not confirm.
+   */
+  async function materialize() {
+    if (effectiveState !== "APPROVED" || materializing) return;
+
+    setMaterializing(true);
+    setMaterializeError(null);
+
+    try {
+      const res = await fetch(
+        `/api/agent/session/${sessionId}/proposal-materialize`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ interactionId }),
+        },
+      );
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        setMaterializeError(body?.error ?? "The workflow could not be created.");
+
+        // A conflict means our view is stale; ask the surface to reread
+        // authoritative state. Remaining replays are idempotent.
+        if (res.status === 409) {
+          onMaterialized?.();
+        }
+        return;
+      }
+
+      // Accepted. Do NOT fabricate MATERIALIZED - reread authoritative state.
+      onMaterialized?.();
+    } catch {
+      setMaterializeError("The workflow could not be created.");
+    } finally {
+      setMaterializing(false);
     }
   }
 
@@ -449,10 +531,57 @@ export const ProposalReviewCard = memo(function ProposalReviewCard({
         </p>
       )}
 
+      {/*
+        Assignment 37.11 — approval is NOT materialization. An approved proposal
+        has not created anything yet; the human must explicitly create the
+        workflow. The button locks while the server works and the card only
+        reports success once a reread hands back the workflow.
+      */}
       {effectiveState === "APPROVED" && (
-        <p className="mt-5 text-xs text-zinc-500">
-          This proposal was approved.
-        </p>
+        <div className="mt-5 rounded-lg border border-zinc-800 bg-zinc-900/30 p-3">
+          <p className="text-[11px] text-zinc-400">
+            This proposal was approved. Create the workflow to save it to your
+            organization.
+          </p>
+
+          {materializeError && (
+            <p role="alert" className="mt-2 text-xs text-red-400">
+              {materializeError}
+            </p>
+          )}
+
+          <button
+            type="button"
+            disabled={!canMaterialize}
+            onClick={() => void materialize()}
+            className="mt-3 inline-flex h-9 items-center justify-center rounded-lg bg-zinc-200 px-4 text-xs font-semibold tracking-wide text-zinc-900 transition-all hover:bg-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {materializing ? "Creating…" : "Create workflow"}
+          </button>
+        </div>
+      )}
+
+      {isMaterialized && (
+        <div className="mt-5 rounded-lg border border-emerald-900/40 bg-emerald-950/20 p-3">
+          <p className="text-[11px] text-zinc-300">
+            Workflow created. It is saved as a draft with no trigger, so it will
+            not run until you configure one.
+          </p>
+
+          {canOpenWorkflow ? (
+            <a
+              href={`/org/${orgSlug}/workflows/${workflowId}`}
+              className="mt-3 inline-flex h-9 items-center justify-center rounded-lg bg-zinc-200 px-4 text-xs font-semibold tracking-wide text-zinc-900 transition-all hover:bg-white active:scale-95"
+            >
+              Open workflow
+            </a>
+          ) : (
+            <p className="mt-2 text-[10px] text-zinc-500">
+              The workflow was created but could not be opened from here. Find it
+              in your organization&apos;s workflows.
+            </p>
+          )}
+        </div>
       )}
 
       {awaitingCriticality && (

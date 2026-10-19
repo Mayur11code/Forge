@@ -38,38 +38,38 @@
 // `ApprovedCriticality`, which can only be produced by
 // `validateCriticalityDecisions`, so the placeholder can never be mistaken for
 // a human answer and raw model data can never be passed as one.
+//
+// ASSIGNMENT 37.10 NOTE. The exact-set rule and its issue vocabulary moved
+// verbatim to `./workflow-criticality-set` so the browser-side proposal
+// projection can enforce the same rule without pulling `node:crypto` (reached
+// through `computeProposalCorrelationId`) into a client bundle. They are
+// re-exported below, so this module is still the single import path for the
+// contract and there is still exactly one implementation of the rule.
 
 import { computeProposalCorrelationId } from "@/lib/ai/agent/tools/generate-workflow/execute";
 
+import {
+  collectCriticalityIssues,
+  type CriticalityDecisions,
+  type CriticalityIssue,
+} from "./workflow-criticality-set";
 import { mapProposalToDefinition } from "./workflow-proposal-compiler";
 import type { WorkflowProposal } from "./workflow-proposal";
 import type { WorkflowDefinition, WorkflowStep } from "./workflow";
 
 /**
- * One human decision: whether a named step is critical.
- *
- * `true` means "a failure of this step rolls back the run"; `false` means it
- * does not. There is no third state - "unsure" is not a decision and the human
- * is required to make one for every step (see `INCOMPLETE_CRITICALITY`).
+ * The issue vocabulary and the exact-set rule moved to
+ * `./workflow-criticality-set` in Assignment 37.10 so a browser bundle can
+ * enforce the same rule without dragging `node:crypto` in. They are re-exported
+ * here so this module remains the single import path for the whole 37.7
+ * contract.
  */
-export type CriticalityDecision = boolean;
-
-/** A decision for every step, keyed by proposal-local ref. */
-export type CriticalityDecisions = Record<string, CriticalityDecision>;
-
-/** Machine-readable reason a decision set was rejected. */
-export type CriticalityIssueCode =
-  | "UNKNOWN_CRITICALITY_STEP"
-  | "INCOMPLETE_CRITICALITY"
-  | "INVALID_CRITICALITY_VALUE"
-  | "REVISION_MISMATCH";
-
-/** One structured rejection, in the same `{ code, path, message }` shape as `ProposalIssue`. */
-export type CriticalityIssue = {
-  code: CriticalityIssueCode;
-  path: string;
-  message: string;
-};
+export type {
+  CriticalityDecision,
+  CriticalityDecisions,
+  CriticalityIssue,
+  CriticalityIssueCode,
+} from "./workflow-criticality-set";
 
 /**
  * The nominal brand that makes a validated decision set unforgeable.
@@ -101,69 +101,6 @@ export type CriticalityValidationResult =
 export type CriticalityApplicationResult =
   | { success: true; definition: WorkflowDefinition }
   | { success: false; issues: CriticalityIssue[] };
-
-/**
- * The exact-and-complete check, shared by validation and application.
- *
- * Two rules, and both directions matter:
- *   - every step in `refs` must have a decision, or the set is incomplete;
- *   - every key in the set must name a step in `refs`, or it is unknown.
- *
- * The second direction is what stops a decision from a different proposal
- * revision being applied here: a ref that this proposal does not contain is
- * rejected rather than ignored, so an approved set is bound to the proposal it
- * was made against.
- */
-function collectCriticalityIssues(
-  refs: readonly string[],
-  raw: unknown,
-): CriticalityIssue[] {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return [
-      {
-        code: "INVALID_CRITICALITY_VALUE",
-        path: "",
-        message:
-          "Criticality decisions must be an object mapping each step id to a boolean.",
-      },
-    ];
-  }
-
-  const decisions = raw as Record<string, unknown>;
-  const known = new Set(refs);
-  const issues: CriticalityIssue[] = [];
-
-  for (const key of Object.keys(decisions)) {
-    if (!known.has(key)) {
-      issues.push({
-        code: "UNKNOWN_CRITICALITY_STEP",
-        path: key,
-        message: `Step "${key}" is not a step in this workflow proposal.`,
-      });
-      continue;
-    }
-
-    if (typeof decisions[key] !== "boolean") {
-      issues.push({
-        code: "INVALID_CRITICALITY_VALUE",
-        path: key,
-        message: `The decision for step "${key}" must be true or false.`,
-      });
-    }
-  }
-
-  for (const ref of refs) {
-    if (!Object.prototype.hasOwnProperty.call(decisions, ref)) {
-      issues.push({
-        code: "INCOMPLETE_CRITICALITY",
-        path: ref,
-        message: `No criticality decision was supplied for step "${ref}".`,
-      });
-    }
-  }
-
-  return issues;
-}
 
 /**
  * Validate a human decision set against a proposal.

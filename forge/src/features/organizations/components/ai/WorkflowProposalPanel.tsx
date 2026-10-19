@@ -26,12 +26,15 @@ import { useCallback, useEffect, useState } from "react";
 
 import type { ProposalReviewModel } from "@/lib/ai/agent/services/proposal-review";
 import type { MissingUserInputField } from "@/lib/ai/agent/tools/shared-output";
+import type { CriticalityDecisions } from "@/lib/workflow-types/workflow-criticality";
+import type { WorkflowProposal } from "@/lib/workflow-types/workflow-proposal";
 
 import { ClarificationRequestCard } from "./ClarificationRequestCard";
 import {
   ProposalReviewCard,
   type ProposalReviewState,
 } from "./ProposalReviewCard";
+import { ProposalGraphPreview } from "./ProposalGraphPreview";
 
 /** How often an active, non-terminal session is re-read. */
 const POLL_INTERVAL_MS = 2500;
@@ -42,6 +45,16 @@ type PendingProposalView = {
   state: ProposalReviewState;
   expiresAt: string | null;
   review: ProposalReviewModel | null;
+  /**
+   * Assignment 37.10: the canonical proposal and the human's COMPLETE
+   * criticality decision set, both read from the same durable row. Both are
+   * null when the row does not carry a renderable proposal, and
+   * `approvedCriticality` is additionally null unless the server's authoritative
+   * contract accepted the set for this exact revision — so the graph preview is
+   * either given a complete, revision-bound set or not rendered at all.
+   */
+  proposal: WorkflowProposal | null;
+  approvedCriticality: CriticalityDecisions | null;
 };
 
 type ProposalOutcomeView = {
@@ -49,6 +62,15 @@ type ProposalOutcomeView = {
   state: ProposalReviewState;
   decidedAt: string;
   review: ProposalReviewModel | null;
+  proposal: WorkflowProposal | null;
+  approvedCriticality: CriticalityDecisions | null;
+  /**
+   * Assignment 37.11: the durable `Workflow.id` for a MATERIALIZED outcome,
+   * resolved server-side from provenance and scoped to the authorized org. Null
+   * for every other outcome, and also null when a MATERIALIZED row's workflow
+   * could not be resolved (which the panel never presents as a success).
+   */
+  workflowId: string | null;
 };
 
 type ClarificationView = {
@@ -339,12 +361,34 @@ export function WorkflowProposalPanel({ orgSlug }: { orgSlug: string }) {
             </p>
           )}
 
+          {/*
+            Assignment 37.10 — the graph preview. Deliberately gated on ALL of:
+            the pending state being `AWAITING_APPROVAL`, a canonical proposal,
+            and the server-confirmed COMPLETE decision set. While criticality is
+            still outstanding none of this renders, so no step is ever presented
+            as definitively non-critical before the human has classified it, and
+            the criticality controls stay exactly where they were.
+          */}
+          {pending &&
+            pending.state === "AWAITING_APPROVAL" &&
+            pending.proposal &&
+            pending.approvedCriticality && (
+              <ProposalGraphPreview
+                proposal={pending.proposal}
+                criticality={pending.approvedCriticality}
+              />
+            )}
+
           {!pending && outcome && outcome.review && sessionId && (
             <ProposalReviewCard
               sessionId={sessionId}
               interactionId={outcome.interactionId}
               state={outcome.state}
               review={outcome.review}
+              workflowId={outcome.workflowId}
+              orgSlug={orgSlug}
+              onDecided={() => setNonce((value) => value + 1)}
+              onMaterialized={() => setNonce((value) => value + 1)}
             />
           )}
 
@@ -353,6 +397,22 @@ export function WorkflowProposalPanel({ orgSlug }: { orgSlug: string }) {
               The most recent proposal is {outcome.state.toLowerCase()}.
             </p>
           )}
+
+          {/*
+            Same projection for a settled review (approved, declined or expired).
+            The terminal banner above still says what actually happened, and the
+            preview's caption states that nothing has been created — an approved
+            proposal materializes nothing until Assignment 37.11.
+          */}
+          {!pending &&
+            outcome &&
+            outcome.proposal &&
+            outcome.approvedCriticality && (
+              <ProposalGraphPreview
+                proposal={outcome.proposal}
+                criticality={outcome.approvedCriticality}
+              />
+            )}
 
           {!pending && !outcome && clarification && sessionId && (
             <ClarificationRequestCard

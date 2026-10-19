@@ -45,3 +45,25 @@
 // the throw is unaffected: it mutates `process.env` inside its own test body,
 // after this has already run.
 process.env.GEMINI_API_KEY ??= "jest-placeholder-not-a-real-key";
+
+// `jest-environment-jsdom` does not expose `TextEncoder`/`TextDecoder`, but the
+// real modules the application imports do reach them - `@prisma/client` pulls in
+// `cuid2`, which hashes with `@noble/hashes` and calls `new TextEncoder()` at
+// module load. Node provides both globals, so they are copied across only when
+// the environment is missing them (`??=` never replaces a real one, and the node
+// test environment already has both).
+//
+// Without this, any jsdom test that transitively imports a module depending on
+// `@prisma/client` fails at import time with `ReferenceError: TextEncoder is not
+// defined`, before a single assertion runs. Assignment 37.10's proposal-graph
+// preview is the first client component to import the shared `ActionNode`, which
+// reads `StepExecutionStatus` from `@prisma/client`.
+import { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
+
+const polyfillable = globalThis as unknown as {
+  TextEncoder?: typeof NodeTextEncoder;
+  TextDecoder?: typeof NodeTextDecoder;
+};
+
+polyfillable.TextEncoder ??= NodeTextEncoder;
+polyfillable.TextDecoder ??= NodeTextDecoder;
