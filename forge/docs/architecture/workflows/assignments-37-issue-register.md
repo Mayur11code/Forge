@@ -771,6 +771,18 @@ capstone rather than during it.
 
 ## 5. P2 Later Architectural Findings
 
+> **[RESOLVED — 37.11, 2026-10-20]** **F1 and F2 are CLOSED** by
+> `assignments-37-phase-37.11-workflow-materialization.md`. F1: Option 1 was taken
+> — the materializer synthesizes the deterministic layout via the verbatim 37.10
+> projection and persists it through the SAME shared save boundary
+> (`IncomingNodesSchema`/`IncomingEdgesSchema`), so there is one write path and its
+> I1/I2 guarantees are inherited. No schema change was needed: `compileWorkflow`
+> accepts action-only graphs and stores `eventId: null` / `isActive: false`. F2: no
+> new migration — `Workflow.sourceProposalId` already existed; provenance is the
+> durable `AgentToolExecution.id`, and `Workflow.name` is `proposal.name`. The
+> `/api/agent/session/[sessionId]/route.ts` session read and the review card now
+> surface the outcome. The historical text below is retained unchanged.
+
 ### F1 — Canvas-first persistence
 
 **Classification:** P2 · required decision around **37.10 / 37.11**.
@@ -977,8 +989,8 @@ execution. Conditional routing is **not** claimed to work end-to-end. See
 | **F5** schema is not the production semantic gate | **P1** | **37.4** | Deterministic, structured proposal compilation; AD-P4 | No — **CLOSED 2026-10-12** |
 | **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7 / 37.8** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | **Open** — protocol scope VERIFIED 37.6 (2026-10-17, AD-18); persistence deferred to 37.8 |
 | **I5** maintenance schedule unknown | **P1-CHECK** | **37.16** | Capstone recovery verification; only if confirmed absent | Only if confirmed absent |
-| **F1** canvas-first persistence | **P2** | **37.10 / 37.11** | Materialization ordering; layout strategy | No |
-| **F2** definition id/name are placeholders | **P2** | **37.11** | Provenance; correct human-facing name placement | No |
+| **F1** canvas-first persistence | **P2** | **37.10 / 37.11** | Materialization ordering; layout strategy | No — **CLOSED 2026-10-20** (37.11, Option 1: synthesize layout before persistence through the shared boundary) |
+| **F2** definition id/name are placeholders | **P2** | **37.11** | Provenance; correct human-facing name placement | No — **CLOSED 2026-10-20** (37.11: `Workflow.name` = proposal name; provenance = `AgentToolExecution.id`; no new migration) |
 | **I3** `WAITING_CONFIRMATION` unreachable | **P2/P3** | Later state-machine cleanup | Nothing in 37.1–37.5 | No |
 | **I7** conditional routing not executable/authorable | **P2** | Scope decision (recorded 37.1) | Any claim that generated conditional branches work | No — needs a scope decision, not a ticket yet |
 
@@ -1009,7 +1021,7 @@ convenience.
 37.7    Human criticality state                          IMPLEMENTED (continues F4)
 37.8    Durable proposal persistence                     IMPLEMENTED
 37.9    Existing confirmation integration                IMPLEMENTED (incl. 37.9.1 UI)
-37.10   UI graph projection / deterministic layout       NEXT (F1)
+37.10   UI graph projection / deterministic layout       IMPLEMENTED (ordering = AD-11; F1 open)
 37.11   Workflow materialization                        (canvas-first, F2)
 37.12   Execution handoff                               (GATED ON I6)
 37.13   Prompt / DAG planning instructions
@@ -1183,7 +1195,7 @@ written.
                                  CONFIRMATION           37.9
                                       │
                                       ▼
-                             UI GRAPH / LAYOUT         37.10   ← F1
+                             UI GRAPH / LAYOUT         37.10   ← F1 (IMPLEMENTED)
                                       │
                          CANVAS-FIRST PERSISTENCE      37.11   ← I2
                                       │
@@ -1215,7 +1227,8 @@ the original placed UI derivation as a side concern after materialization.
 **37.2 (2026-10-12)**, **37.3 (2026-10-12)**, **37.6 (2026-10-17)**
 
 **Phases IMPLEMENTED (not VERIFIED):** 37.4, 37.5, 37.7, 37.8, **37.9 (incl. 37.9.1
-human-input UI, 2026-10-19)** — complete and tested at the mocked boundary; their
+human-input UI, 2026-10-19)**, **37.10 (2026-10-19, UI graph projection + read-only
+preview)** — complete and tested at the mocked boundary; their
 documented Verification Gates are not yet satisfied.
 
 **Current blockers:**
@@ -1225,8 +1238,8 @@ documented Verification Gates are not yet satisfied.
 (2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0** and still
 gates 37.12. None of the three was ever satisfied by closing either of the others.
 
-**Current implementation target:** 37.10 — UI graph projection / deterministic
-layout (dependencies 37.9 and 37.0B satisfied)
+**Current implementation target:** 37.11 — workflow materialization (dependency
+37.10 satisfied; F1/F2 persistence decision still open)
 
 **Closed by Phase 37.1, with evidence:**
 - **F3** — the capability contract exists and is tested
