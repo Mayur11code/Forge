@@ -325,11 +325,43 @@ export async function executeGenerateWorkflow(
     return { type: "json", value };
   }
 
+  // The set of input-field paths a clarification request asks the user to fill.
+  const requestedPaths = new Set(validRequests.map((r) => r.field));
+
+  /**
+   * A placeholder reference is an `UNKNOWN_REFERENCE_SOURCE` issue on an
+   * input-field path that a clarification request also names. A model that is
+   * asking the user for a value often writes a `{{placeholder}}` (or a
+   * `{{notAStep}}`) into that same field, which the compiler reports as an
+   * unknown reference source rather than a missing input. Sending that back as
+   * `INVALID_INPUT` would discard the clarification and trap the model in a
+   * bounded self-correction loop it cannot exit: no amount of retrying invents
+   * the value the human is being asked for. It is therefore resolved by the
+   * answer, not by the model.
+   *
+   * Deliberately narrow: ONLY `UNKNOWN_REFERENCE_SOURCE` on a clarified path is
+   * demoted. A malformed reference syntax (MALFORMED_REFERENCE), a self
+   * reference, an unknown output, a missing data dependency, an unknown action,
+   * a dangling dependency or a cycle is a genuine model error and still forces
+   * `INVALID_INPUT` so the existing bounded loop can correct it.
+   */
+  const placeholderPaths = new Set(
+    result.issues
+      .filter((issue) => issue.code === "UNKNOWN_REFERENCE_SOURCE")
+      .map((issue) => issue.path)
+      .filter((path) => requestedPaths.has(path)),
+  );
+
   // Check if there are any compiler issues that are NOT MISSING_REQUIRED_INPUT.
-  // Model-correctable errors (UNKNOWN_ACTION, UNKNOWN_DEPENDENCY, CYCLE, MALFORMED_REFERENCE, etc.)
-  // must be corrected by the model in the bounded loop, NOT sent to the human as questions.
+  // Model-correctable errors (UNKNOWN_ACTION, UNKNOWN_DEPENDENCY, CYCLE,
+  // MALFORMED_REFERENCE, etc.) must be corrected by the model in the bounded
+  // loop, NOT sent to the human as questions. A placeholder reference the
+  // clarification already covers is the one exception: it is the human's to
+  // supply, so it does not force a model correction.
   const modelErrors = result.issues.filter(
-    (issue) => issue.code !== "MISSING_REQUIRED_INPUT",
+    (issue) =>
+      issue.code !== "MISSING_REQUIRED_INPUT" &&
+      !(issue.code === "UNKNOWN_REFERENCE_SOURCE" && requestedPaths.has(issue.path)),
   );
   if (modelErrors.length > 0) {
     const issues: ToolValidationIssue[] = result.issues.map((issue) => ({
@@ -345,15 +377,17 @@ export async function executeGenerateWorkflow(
     return { type: "json", value };
   }
 
-  // The only compiler issues are MISSING_REQUIRED_INPUT.
-  // Verify that every clarification request corresponds to a real missing required input.
+  // Every remaining issue is either a missing required input or a placeholder
+  // reference the human will resolve. Verify that every clarification request
+  // corresponds to one of them: a field that is neither missing nor an
+  // unresolved placeholder reference cannot be justified as a user question.
   const missingPaths = new Set(result.issues.map((i) => i.path));
-  const requestedPaths = new Set(validRequests.map((r) => r.field));
+  const resolvablePaths = new Set([...missingPaths, ...placeholderPaths]);
 
   const clarificationErrors: ToolValidationIssue[] = [];
 
   for (const req of validRequests) {
-    if (!missingPaths.has(req.field)) {
+    if (!resolvablePaths.has(req.field)) {
       clarificationErrors.push({
         path: req.field,
         code: "INVALID_INPUT",
@@ -362,7 +396,9 @@ export async function executeGenerateWorkflow(
     }
   }
 
-  // Also check if any required inputs were omitted without being covered by clarification requests
+  // Also check if any required inputs were omitted without being covered by
+  // clarification requests. A placeholder reference the clarification already
+  // covers is resolved by the answer, so it is not an uncovered omission.
   for (const issue of result.issues) {
     if (!requestedPaths.has(issue.path)) {
       clarificationErrors.push({
@@ -381,12 +417,17 @@ export async function executeGenerateWorkflow(
     return { type: "json", value };
   }
 
-  // Ensure downstream graph and reference semantics have no model-correctable errors
-  // (cycles, dangling dependencies, invalid {{...}} paths) before asking the human.
+  // Ensure downstream graph and reference semantics have no model-correctable
+  // errors (cycles, dangling dependencies, invalid {{...}} paths) before asking
+  // the human. A placeholder reference on a clarified input is the human's value
+  // to supply, so it is excluded: the answer replaces it with real data, and
+  // re-reporting it here would defeat the clarification.
   const parsedProposal = WorkflowProposalSchema.safeParse(proposalInput);
   if (parsedProposal.success) {
     const proposal = parsedProposal.data;
-    const refIssues = validateProposalReferences(proposal);
+    const refIssues = validateProposalReferences(proposal).filter(
+      (issue) => !placeholderPaths.has(issue.path),
+    );
     if (refIssues.length > 0) {
       const issues: ToolValidationIssue[] = refIssues.map((issue) => ({
         path: issue.path,

@@ -267,6 +267,19 @@ export const ActionNodeDataSchema = z.object({
   config: z.record(z.string(), z.any()).default({}),
   isConfigured: z.boolean().default(false),
   isCritical: z.boolean().default(false),
+  /**
+   * Set ONLY by the read-only proposal projection (37.10). A proposal step
+   * carries its inputs as literal values and expresses ordering through
+   * `dependsOn`, not through `{{stepId.outputs.*}}` wiring, so the canvas's
+   * upstream-output heuristic does not apply. When true, `ActionNode` suppresses
+   * the "Missing Data" alert, because the step's completeness was already
+   * established by the proposal compiler and the human's approval.
+   *
+   * Optional, and never defaulted: it is absent on every canvas-created node
+   * (`undefined` is treated as false), so canvas behaviour and persisted rows
+   * are unchanged, and no test needs to know this field exists.
+   */
+  inputsComplete: z.boolean().optional(),
 
   executionStatus: ExecutionStatusSchema, // This will be injected live during execution to reflect the current status of the step
 });

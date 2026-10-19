@@ -61,6 +61,14 @@ function ActionNode({
   // ------------------------------------------------------------------
 
   const missingVariables = useMemo(() => {
+    // A projection-flagged node (37.10 proposal preview) carries literal,
+    // complete inputs and orders by `dependsOn`, so upstream-output wiring is
+    // not the completeness criterion. The proposal compiler already proved the
+    // step valid before this node existed; suppressing the alert here is what
+    // stops an approved step from being mislabelled "Missing Data". Canvas nodes
+    // never set this flag, so the canvas alert is unchanged.
+    if (data.inputsComplete) return [];
+
     if (!actionDef?.requires) return [];
 
     const availableKeys = upstreamOutputs.map(
@@ -70,7 +78,7 @@ function ActionNode({
     return actionDef.requires.filter(
       (req) => !availableKeys.includes(req)
     );
-  }, [actionDef, upstreamOutputs]);
+  }, [actionDef, upstreamOutputs, data.inputsComplete]);
 
   // ------------------------------------------------------------------
   // Configuration State

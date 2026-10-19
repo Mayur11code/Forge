@@ -295,6 +295,7 @@ describe("37.10 projection — nodes and edges", () => {
       config: { title: "Kick off", projectId: PROJECT_ID },
       isConfigured: true,
       isCritical: true,
+      inputsComplete: true,
     });
     expect(actionData(nodes.follow).isCritical).toBe(false);
   });
