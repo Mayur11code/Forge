@@ -24,6 +24,10 @@ const config = {
   // why: agent code uses two prisma modules, and mocking only one of them used
   // to point tests at the live database via the developer's .env.
   setupFilesAfterEnv: ['<rootDir>/jest.setup-db-guard.ts'],
+  // Real-database acceptance suites are named `*.realdb.test.ts` and run under
+  // jest.realdb.config.ts instead (which does not install the guard). They must
+  // not be picked up here or the guard fails the default run by design.
+  testPathIgnorePatterns: ['\\.realdb\\.test\\.ts$'],
   transform: {},
 }satisfies Config;
 
