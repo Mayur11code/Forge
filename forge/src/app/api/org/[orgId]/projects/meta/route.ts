@@ -17,7 +17,6 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> }
 ) {
   noStore();
-  console.log("🔥 META ROUTE HIT");
 
   // RBAC + tenant isolation
   // const { organization } = await requireOrgAccess((await params).orgId);

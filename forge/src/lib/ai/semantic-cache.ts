@@ -32,11 +32,9 @@ export async function checkSemanticCache(queryEmbedding: number[], orgId: string
     const cachedResponse = await redis.get<string>(cacheKey);
     
     if (cachedResponse) {
-      console.log(`⚡ [CACHE HIT] Latency bypassed. Score: ${bestMatch.score}`);
       return cachedResponse;
     }
   }
-  console.log(`⚠️ [CACHE MISS] No suitable cached response found.${bestMatch ? ` Best score: ${bestMatch.score}` : ''}`);
   return null; // Cache Miss
 }
 
@@ -76,8 +74,6 @@ const cacheRecord: PineconeSdkRecord<SemanticCacheMetadata> = {
 await cacheNamespace.upsert({
   records: [cacheRecord],
 });
-    
-    console.log(`💾 [CACHE WRITTEN] Saved new LLM response to semantic cache.`);
   } catch (error) {
     console.error("❌ Failed to write to semantic cache:", error);
   }

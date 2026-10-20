@@ -213,25 +213,6 @@ export async function publishEvent<K extends EventType>(
   try {
     const res = await client.publishJSON(request);
 
-
-    //i added this because i want to log the messageId of the published event for debugging purposes. 
-    // The messageId is a unique identifier for the published message,
-    //  and logging it can help track the event in QStash's dashboard 
-    // and troubleshoot any issues that may arise with event processing.
-    //but it can be an array if multiple messagens are published like in the case where 
-    // we publish multiple events in a loop, so we need to handle both cases.
-    
-    const messageId = Array.isArray(res)
-      ? res[0].messageId
-      : res.messageId;
-
-    
-    console.log(" EVENT PUBLISHED");
-    console.log("Event:", eventName);
-    console.log("Message ID:", messageId);
-    console.log("Topic:", topic);
-   
-
     return res;
   } catch (error) {
     console.error("❌ QSTASH PUBLISH ERROR:", error);

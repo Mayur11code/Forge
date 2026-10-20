@@ -84,10 +84,6 @@ export function useWorkflowLiveStream(
         return;
       }
 
-      console.log(`[PUSHER] Forcing React re-render for ${data.stepId} -> ${status}`);
-
-      console.log("[PUSHER EVENT]", data);
-
 // Update the local component state directly!
       setNodes((nds) =>
         nds.map((node) =>

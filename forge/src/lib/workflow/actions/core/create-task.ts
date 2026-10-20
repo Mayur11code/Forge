@@ -46,10 +46,6 @@ const execute: ExecuteFunction = async (ctx) => {
       };
     }
 
-    console.log(
-      `[ACTION: task.create] Creating task "${title}" in project ${projectId} (org ${workflow.orgId})...`,
-    );
-
     // 3. Canonical business operation.
     const result = await createTaskInOrg(
       { title, projectId, description, priority, assigneeId },

@@ -202,6 +202,96 @@ describe("authorized response", () => {
 });
 
 // ---------------------------------------------------------------------------
+// S5 (strengthened) — the read route projects tool errors through the allowlist
+// ---------------------------------------------------------------------------
+
+describe("tool error disclosure", () => {
+  function executedWithError(error: string | null) {
+    return {
+      id: "exec_err",
+      toolCallId: "call_err",
+      toolName: "createTask",
+      input: { title: "t" },
+      status: "FAILED",
+      error,
+      confirmedAt: null,
+      cancelledAt: null,
+      proposalState: null,
+      proposalFingerprint: null,
+      proposalRevision: null,
+      createdAt: new Date("2026-09-29T00:00:30.000Z"),
+      updatedAt: new Date("2026-09-29T00:00:30.000Z"),
+    };
+  }
+
+  beforeEach(() => {
+    authMock.mockResolvedValue({ user: { id: "user_a" } } as never);
+    getSessionMock.mockResolvedValue(session());
+    getMessagesMock.mockResolvedValue([] as never);
+  });
+
+  it("passes an authored validation message through unchanged", async () => {
+    getExecutionsMock.mockResolvedValue([
+      executedWithError("Tool input cannot be null."),
+    ] as never);
+
+    const res = await callGet();
+    const body = (await res.json()) as { toolExecutions: { error: string }[] };
+
+    expect(body.toolExecutions[0].error).toBe("Tool input cannot be null.");
+  });
+
+  it("collapses a database error to a generic message", async () => {
+    getExecutionsMock.mockResolvedValue([
+      executedWithError(
+        "Unique constraint failed on the fields: (`email`) at prisma",
+      ),
+    ] as never);
+
+    const res = await callGet();
+    const body = (await res.json()) as { toolExecutions: { error: string }[] };
+
+    expect(body.toolExecutions[0].error).toBe(
+      "The operation could not be completed.",
+    );
+    expect(JSON.stringify(body)).not.toContain("constraint");
+  });
+
+  it("collapses a stack-bearing error and never emits a path", async () => {
+    getExecutionsMock.mockResolvedValue([
+      executedWithError(
+        "Error: boom\n    at /app/src/lib/tool.ts:42:9",
+      ),
+    ] as never);
+
+    const res = await callGet();
+    const body = (await res.json()) as { toolExecutions: { error: string }[] };
+
+    expect(body.toolExecutions[0].error).toBe(
+      "The operation could not be completed.",
+    );
+    expect(JSON.stringify(body)).not.toContain("/app/");
+    expect(JSON.stringify(body)).not.toContain("at ");
+  });
+
+  it("collapses a provider error to a generic message", async () => {
+    getExecutionsMock.mockResolvedValue([
+      executedWithError(
+        "GoogleGenerativeAI Error: [400] API key not valid.",
+      ),
+    ] as never);
+
+    const res = await callGet();
+    const body = (await res.json()) as { toolExecutions: { error: string }[] };
+
+    expect(body.toolExecutions[0].error).toBe(
+      "The operation could not be completed.",
+    );
+    expect(JSON.stringify(body)).not.toContain("API key");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Assignment 37.9 — the review projection on the read route
 // ---------------------------------------------------------------------------
 

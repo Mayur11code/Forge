@@ -22,8 +22,6 @@ const execute: ExecuteFunction = async (ctx) => {
       };
     }
 
-    console.log(`[ACTION: utils.generate_report] Generating heavy payload for user "${userName}"...`);
-
     // 2. GENERATE THE HEAVY DATA (The Coat)
     // Simulating a heavy text/CSV/PDF generation
     const reportContent = `CONFIDENTIAL REPORT\nGenerated for: ${userName}\nTemplate: ${templateId ?? 'default'}\n\n` + "DATA... ".repeat(5000);

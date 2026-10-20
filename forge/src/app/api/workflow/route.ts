@@ -180,7 +180,6 @@ async function handleExecuteWorkflowNode(
     // still a context.
     const globalContext = (stepRun.run.context as Record<string, JsonValue>) ?? {};
     resolvedInputs = resolveInputs(rawInputs, globalContext);
-    console.log(`[WORKER] Resolved inputs for step ${stepRunId}:`, resolvedInputs);
   }
 
   const result = await wrapStepOperation(

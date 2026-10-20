@@ -19,12 +19,31 @@ import { waitUntil } from "@vercel/functions";
  * `"false"` as true and disable verification on a service that explicitly asked
  * for it to stay on.
  *
- * Deliberately NOT keyed on NODE_ENV. Accidentally running a deployed service
- * as "development" must never be sufficient to disable queue authenticity,
- * because this handler is a write path.
+ * Deliberately NOT keyed on NODE_ENV for the ENABLE decision. Accidentally
+ * running a deployed service as "development" must never be sufficient to
+ * disable queue authenticity, because this handler is a write path.
+ *
+ * S10 (hardened) - PRODUCTION IS ALWAYS SAFE. Even with the explicit flag set,
+ * the opt-out is refused when `NODE_ENV === "production"` (or when the
+ * deployment is otherwise detected as production). This turns "we rely on the
+ * operator never setting the flag on a deployed service plus a warning" into an
+ * enforced invariant: no configuration can make a production worker accept
+ * unsigned requests. The flag is a local-development affordance, and it is
+ * honoured only outside production.
  */
 export function isUnsignedWorkerAllowed(): boolean {
-  return process.env.ALLOW_UNSIGNED_LOCAL_WORKER === "true";
+  if (process.env.ALLOW_UNSIGNED_LOCAL_WORKER !== "true") {
+    return false;
+  }
+
+  // The explicit opt-in cannot pierce production. `NODE_ENV=production` is the
+  // canonical signal; Vercel preview/production deployments set it, and the
+  // local dev server does not.
+  if (process.env.NODE_ENV === "production") {
+    return false;
+  }
+
+  return true;
 }
 
 /**

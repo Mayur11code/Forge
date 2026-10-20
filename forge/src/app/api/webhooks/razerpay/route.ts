@@ -23,7 +23,17 @@ export async function POST(req: Request) {
       .update(body)
       .digest("hex");
 
-    if (expectedSignature !== signature) {
+    // S6 (security) — constant-time comparison. The digest is fixed-length hex,
+    // so a length check followed by `timingSafeEqual` on buffers avoids leaking
+    // information through the comparison of this billing write path's sole
+    // authentication gate.
+    const expectedBuffer = Buffer.from(expectedSignature, "utf8");
+    const signatureBuffer = Buffer.from(signature, "utf8");
+    const signatureValid =
+      expectedBuffer.length === signatureBuffer.length &&
+      crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
+
+    if (!signatureValid) {
       console.error("❌ Invalid signature detected");
       return new NextResponse("Invalid signature", { status: 400 });
     }
@@ -72,6 +82,21 @@ const eventId = event.id || `${eventType}_${entityId}_${event.created_at}`;
         if (!orgId) {
           console.warn("⚠️ No orgId in metadata. Cannot assign subscription.");
           break; // Break safely, returning 200 OK below
+        }
+
+        // S2 (security) — defense-in-depth. The `orgId` note originates from
+        // `create-order`, which now requires ADMIN auth; this second check stops
+        // a malformed or otherwise-unexpected note from reaching a write with a
+        // nonexistent id. `update` would throw P2025 for a missing row and bounce
+        // the webhook into a 500 retry loop, so resolve first and skip cleanly.
+        const targetOrg = await db.organization.findUnique({
+          where: { id: orgId },
+          select: { id: true },
+        });
+
+        if (!targetOrg) {
+          console.warn("⚠️ Subscription references an unknown organization.");
+          break;
         }
 
         await db.organization.update({

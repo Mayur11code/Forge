@@ -51,19 +51,17 @@ if (!projectId) {
       select: { id: true, orgId: true, organization: { select: { slug: true } } },
     });
 
-    if (!project) {
+    // S7 (security) — no existence oracle. "No such project" and "a project in
+    // an organization you do not belong to" return the SAME 404, so a caller
+    // cannot probe project ids to learn which tenants exist.
+    const access = project
+      ? await getOrgAccess(project.organization.slug)
+      : null;
+
+    if (!project || !access) {
       return Response.json(
         { error: 'Project not found.' },
         { status: 404 }
-      );
-    }
-
-    const access = await getOrgAccess(project.organization.slug);
-
-    if (!access) {
-      return Response.json(
-        { error: 'You do not have access to this organization.' },
-        { status: 403 }
       );
     }
 

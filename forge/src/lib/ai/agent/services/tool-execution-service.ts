@@ -640,9 +640,16 @@ export async function failToolExecution(
     },
     data: {
       status: AgentToolExecutionStatus.FAILED,
+      // S5 (security) — persist `error.message`, never `error.stack`.
+      //
+      // The stack used to be written here and is returned verbatim by the
+      // session GET handler, so internal file paths and dependency internals
+      // were disclosed to any client in production. The message retains the
+      // diagnostic value the session owner needs; the stack is now server-side
+      // only (it still reaches the logger at the throw site).
       error:
         error instanceof Error
-          ? (error.stack ?? error.message)
+          ? error.message
           : String(error),
     },
   });
