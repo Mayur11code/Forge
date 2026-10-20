@@ -199,9 +199,20 @@ then treated as a canonical `WorkflowDefinition` source.
 ticket · **must be closed before 37.12**, i.e. before Assignment 37 hands any
 generated workflow to the existing execution engine.
 
-**Status:** OPEN. Recorded after Phase 0 closed, from a separate inspection of the
-execution entrypoint. Phase 0 findings are not amended by this entry; I6 is an
-additional finding in its own right.
+**Status:** IMPLEMENTED (source-level fix complete; mocked/unit regression suite
+green) — **real-PostgreSQL cross-tenant verification OPEN**. The fix landed on
+`feat/37.1-action-capability-catalog`; see §I6 Resolution below. Originally
+recorded after Phase 0 closed, from a separate inspection of the execution
+entrypoint. Phase 0 findings are not amended by this entry; I6 is an additional
+finding in its own right.
+
+**Gate status (reconciled 2026-10-20).** The source fix and its mocked tests are
+complete, but the acceptance evidence Gate G requires — a **real-database**
+cross-tenant run proving a caller authenticated for one organization cannot start
+another organization's workflow (and that no `WorkflowRun` row is created) — was
+**not** performed. I6 is therefore **not** `VERIFIED`, and **37.12 remains
+BLOCKED** on this gate. Do not mark I6 `CLOSED` or `VERIFIED` on the strength of
+the mocked suites alone.
 
 **Affected files / functions.**
 
@@ -330,6 +341,66 @@ carries no authentication of its own. It is a second reachable path to the same
 unscoped primitive. It is noted because the fix must not stop at
 `triggerWorkflowRun` — a ticket that fixes only the server action would leave this
 route open. No behavior at this route is analyzed or changed here.
+
+---
+
+#### I6 Resolution (source fix implemented; mocked tests green; real-DB verification OPEN)
+
+**Contract.** `startWorkflow` no longer accepts an id in isolation. Its signature
+is now `startWorkflow(orgId, workflowId, triggerData = {})`, and the lookup is
+tenant-scoped:
+
+```ts
+const workflow = await db.workflow.findFirst({
+  where: { id: workflowId, orgId },   // orgId is REQUIRED and rides in the predicate
+});
+```
+
+The `orgId` parameter is required (not optional), so no unscoped call shape
+remains for a future caller to reach for; adding one would not compile. The
+`orgId` passed in must be a **server-derived, verified** organization id — never a
+value lifted from the request body.
+
+**Entry points secured (all verified).**
+
+| Entry point | Protection added |
+|---|---|
+| `src/app/actions/workflows/workflow-run.ts` → `triggerWorkflowRun` | Calls `getOrgAccess(orgslug)` first (the second argument is the `[orgId]` URL segment, which the router fills with the org **slug**). On `null`, returns `{ success: false, error: "Unauthorized" }` before any execution. Passes `access.organization.id` — the verified id — to `startWorkflow`. |
+| `src/app/api/workflow/test/[workflowId]/test-run/route.ts` → `POST` | Independently calls `auth()`; returns `401` without a session. Resolves the workflow through a **membership-constrained** predicate (`organization: { memberships: { some: { userId } } }`), so a foreign workflow matches nothing — the same `404` as a nonexistent one, with no existence oracle — and passes the resolved `orgId` to `startWorkflow`. |
+
+The trusted internal QStash worker (`src/app/api/workflow/route.ts`) is unchanged:
+it is signature-verified and calls `advanceWorkflow`, not `startWorkflow`.
+
+**Regression tests (mutation-sensitive).**
+
+| File | Properties asserted |
+|---|---|
+| `src/tests/workflow/trigger-tenant-scope.test.ts` | lookup predicate carries `orgId`; foreign workflow refused **and** `workflowRun.create` / `advanceWorkflow` not called; missing and foreign yield the same error; same-org positive path still creates the run and advances. |
+| `src/tests/workflow/workflow-run-boundary-scope.test.ts` | server action: unauthorized ⇒ refused with no `startWorkflow` call; verified org id (not the slug) is passed; action refusal propagates. route: unauthenticated ⇒ `401` with no lookup; lookup is membership-scoped and starts with the resolved org; foreign and missing both `404` with the same response shape and no `startWorkflow` call. |
+
+**Verification performed.** Focused suites pass; full Jest suite
+**58 suites / 1087 tests** pass (was 56 / 1077); `tsc --noEmit` clean; ESLint clean
+on all changed files; `git diff --check` clean. Verification level: **unit /
+route-level with mocked boundaries (auth, `getOrgAccess`, Prisma, `startWorkflow`,
+`advanceWorkflow`)**. A real-Postgres cross-tenant integration run was **not**
+performed for I6; the mocked predicates mirror the production query text exactly.
+
+**Gate G status (reconciled 2026-10-20).** Source-level reconciliation is
+complete and the mocked suites are green, **but this is not the acceptance
+evidence Gate G defines.** Gate G requires a real-database demonstration that a
+caller authenticated for organization A cannot start organization B's workflow and
+that no `WorkflowRun` row is created. That run is **OPEN**. I6 is **not** `VERIFIED`
+and **37.12 stays BLOCKED** until it lands. The mocked suites are necessary but not
+sufficient.
+
+**Residual / follow-ups.** At source level, every production caller of
+`startWorkflow` is one of the two entry points above, and both derive `orgId`
+server-side; adding an unscoped call shape would not compile. This is asserted at
+the mocked boundary only — a real-DB cross-tenant run (Gate G) remains **OPEN**.
+A plain-string sentinel in a clarified
+proposal still fails `isReferenceTemplate` and can re-arm the loop
+(`workflow-proposal.ts:293,427`) — an unrelated defect, tracked separately, not
+part of I6.
 
 ---
 
@@ -1232,11 +1303,15 @@ preview)** — complete and tested at the mocked boundary; their
 documented Verification Gates are not yet satisfied.
 
 **Current blockers:**
-- I6
+- I6 — source fix complete and mocked tests green, but **real-PostgreSQL
+  cross-tenant verification is OPEN**, so the P0 is **not closed** and **37.12
+  remains BLOCKED** (reconciled 2026-10-20).
 
 **P0 set:** I1, I2, I6 — three separate tickets, of which **I1 and I2 are CLOSED
-(2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0** and still
-gates 37.12. None of the three was ever satisfied by closing either of the others.
+(2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0**: its
+source fix and mocked suites are done, but its real-DB acceptance run is not, and
+it still gates 37.12. None of the three was ever satisfied by closing either of
+the others.
 
 **Current implementation target:** 37.11 — workflow materialization (dependency
 37.10 satisfied; F1/F2 persistence decision still open)
@@ -1290,6 +1365,34 @@ prompt, or execution path. The Phase 0 audit remains unmodified.
 
 **I5 remains unverified** and is not listed as a blocker. It becomes one only if
 verification confirms no workflow-maintenance schedule exists.
+
+### Deferred follow-ups (recorded 2026-10-20)
+
+Tracked so that deferred cleanup is not mistaken for closed work. Items 1–3 are
+ordinary deferrals; the I6 acceptance run, the 37.8 migration gate and the 37.11
+real-DB materialization gate are **blockers**, not deferrals.
+
+1. **`@modal/new` route correction (deferred; config-only workaround in place).**
+   `next.config.ts` carries `deprecated: { looseRouteMatching: true }` to work
+   around a strict parallel-route match failure in the `org/[orgId]/projects`
+   layout + `@modal/new` slot. The permanent correction is to fix the route
+   structure and **remove the flag**, then re-evaluate compatibility with a future
+   `next` patch (16.4.2+). The flag is a compatibility shim, not a fix.
+2. **Residual `resend` / `svix` advisory.** Moderate, transitive, no compatible
+   upstream fix at this time. Monitor for a patched `svix` release; reassess on a
+   new advisory, a reachability change, or a deployment change.
+3. **Remaining dev / CLI / build-tooling advisories.** Lower priority (not in the
+   production request path). Clear opportunistically with compatible upgrades.
+   Reassessment triggers: a patched release, a reachability change, a deployment
+   change, or a new advisory.
+4. **Production Pinecone config prerequisite (BLOCKER for a clean production
+   build).** The production build stops at page-data collection on missing
+   `PINECONE_API_KEY_PROD` / `PINECONE_INDEX_PROD` (`src/lib/vector/client.ts:8,13`;
+   `.env` has only `_DEV`). No fake creds were supplied and no config check was
+   weakened. Recorded honestly as unresolved.
+5. **Conditional credential rotation (owner action).** No confirmed exposure —
+   `forge/.env` is untracked, ignored, and absent from all commits. Rotation is
+   owner hygiene, not a confirmed leak remediation.
 
 ---
 
