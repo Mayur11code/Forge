@@ -18,7 +18,8 @@ Companion documents: `assignments-37-phase-0-audit.md` (evidence, unmodified),
 
 This phase adds a read-only validator. It writes no workflows, changes no runtime,
 and **does not modify `src/lib/workflow/execution/resolver.ts`** — which is why it
-may proceed while I6 is still open (Gate G applies to 37.12, not here). The
+may proceed while I6 is still open (Gate G applies to 37.12, not here). (I6 has
+since been `VERIFIED`, 2026-10-20.) The
 existing execution runtime remains the only execution authority.
 
 **Status — `VERIFIED` (2026-10-12).** The reference validator is implemented,

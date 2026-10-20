@@ -3,20 +3,21 @@
 ```text
 Last Updated:     2026-10-20
 Current Phase:    37.12  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 IMPLEMENTED)
-Overall Status:   BLOCKED  (I6 source fix + mocked suites complete, but real-PostgreSQL cross-tenant verification OPEN; 37.12 stays blocked)
-Next Action:      Land the I6 real-DB acceptance run (then verify 37.11; its real-DB round-trip is gated on the unapplied 37.8 migration)
+Overall Status:   READY  (I6 VERIFIED — real-PostgreSQL acceptance run passed; 37.12 is now unblocked)
+Next Action:      Verify 37.11 (its real-DB round-trip is now runnable — the 37.8 migration is applied)
 ```
 
-> **I6 reconciliation 2026-10-20 — NOT closed.** The cross-tenant *execution*
-> entrypoint is fixed at source: `startWorkflow` is tenant-scoped,
-> `triggerWorkflowRun` and the test-run route authenticate and authorize before any
-> execution, `startWorkflow`'s `orgId` is required, and both callers pass a
-> server-derived id. Regression suites (`trigger-tenant-scope`,
-> `workflow-run-boundary-scope`) assert cross-org refusal with no `WorkflowRun` and
-> the same-org positive path. **However, the mocked/unit suites are not Gate G's
-> acceptance evidence:** Gate G requires a **real-database** cross-tenant run, which
-> was **not** performed. I6 is therefore **not `VERIFIED`** and **37.12 remains
-> BLOCKED**. See *Issue Register → I6*, §11.
+> **I6 VERIFIED 2026-10-20 (real-database acceptance).** The cross-tenant
+> *execution* entrypoint is fixed and now has real-PostgreSQL evidence: a new
+> suite (`src/tests/security/i6-cross-tenant.realdb.test.ts`, 10/10) runs the
+> real Prisma client and the real `getOrgAccess`/`startWorkflow` against the
+> configured database, proving an org-A caller cannot start org B's workflow,
+> that no `WorkflowRun` row is created, that foreign and missing are
+> indistinguishable, and the same-org positive path still builds a `RUNNING` run.
+> The prior mocked-only state was **not** sufficient for Gate G; this run is.
+> `advanceWorkflow` is mocked so no QStash/Redis/action side effects fire, and
+> fixtures are removed with a verified zero-leftover check. See
+> `docs/dev-log/2026-10-20-i6-real-db-acceptance.md`.
 >
 > **I2 closed 2026-09-30.** Phase 37.0B is **VERIFIED**: node `data` is validated
 > against `TriggerNodeDataSchema` / `ActionNodeDataSchema` on **both** save paths,
@@ -129,8 +130,9 @@ Next Action:      Land the I6 real-DB acceptance run (then verify 37.11; its rea
 > `AGENT_LOOP_REQUESTED`, no QStash, no model-loop restart** (that is 37.12). 4 new
 > suites 33/17/10/15 + card extended; full suite 56 suites / 1074 tests; `tsc` 0;
 > eslint 0; `prisma validate` valid; `git diff --check` clean. **Real-DB round-trip
-> and unique-constraint enforcement remain OPEN — the 37.8 migration is still
-> UNAPPLIED.** F1 resolved (no schema change); F2 resolved (no new migration). See
+> and unique-constraint enforcement remain OPEN — but the 37.8 migration is now
+> APPLIED (verified via `prisma migrate status`, 2026-10-20), so the round-trip is
+> runnable.** F1 resolved (no schema change); F2 resolved (no new migration). See
 > `assignments-37-phase-37.11-workflow-materialization.md`.
 
 > **37.6 REMEDIATION 2026-10-20 — live-testing defect, no status change.** Running
@@ -228,17 +230,17 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ```text
 ASSIGNMENT 37 STATUS
 
-Overall:                     BLOCKED (I6 source fix + mocked suites complete; real-PostgreSQL cross-tenant verification OPEN)
+Overall:                     READY (I6 VERIFIED — real-PostgreSQL acceptance run passed 2026-10-20)
 Current Phase:               37.12  (Execution handoff)
 Previous Completed Phase:    37.11  (Workflow materialization — IMPLEMENTED)
-Next Phase:                  37.12  (Execution handoff — precondition I6 NOT yet satisfied)
-Blocking Issue:              I6 (source fix done; real-DB acceptance run OPEN — Gate G)
-Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 IMPLEMENTED (NOT VERIFIED — real-DB run open)
+Next Phase:                  37.12  (Execution handoff — precondition I6 satisfied)
+Blocking Issue:              (none — I6 VERIFIED via real-DB acceptance run)
+Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 VERIFIED
 Architecture Decision Pending: F4   (F1/F2 resolved at 37.11; F5 resolved at 37.4; AD-11)
 Recorded scope decisions:    I7     (conditional routing — non-blocking)
 Verification debt:           37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 (IMPLEMENTED, not VERIFIED)
-Last Verification:           2026-10-17 — 37.6 missing-input protocol VERIFIED
-                             (28/28 focused; agent + workflow 36 suites / 672)
+Last Verification:           2026-10-20 — I6 real-DB cross-tenant acceptance VERIFIED
+                             (10/10; zero leftover fixtures)
 Last Updated:                2026-10-20
 
 Progress:
@@ -257,13 +259,14 @@ the paragraph above describes defects that no longer exist. Gate E's predicate
 requirement is met. The separate persistence-layer requirement in Gate A is
 covered by I2.
 
-One P0, **I6**, is the remaining gate on a later boundary; its source fix is
-complete and its mocked suites are green, but its **real-PostgreSQL
-cross-tenant acceptance run is OPEN (reconciled 2026-10-20)**. I6 is therefore
-**not `VERIFIED`** and **37.12 (execution handoff) remains BLOCKED**. I6 never
-stopped any phase through 37.11, because a tenant-scoped execution entrypoint is
-only required at the handoff. **I7** is recorded as a scope decision, not a
-blocker; it likewise does not stop 37.10/37.11.
+One P0, **I6**, was the remaining gate on a later boundary. It is now **VERIFIED
+(2026-10-20)**: the source fix is complete, its mocked suites are green, and the
+**real-PostgreSQL cross-tenant acceptance run has passed** — an org-A caller
+cannot start org B's workflow, no `WorkflowRun` row is created, and the same-org
+positive path still builds a run. No P0 remains open; **37.12 (execution handoff)
+is unblocked**. I6 never stopped any phase through 37.11, because a tenant-scoped
+execution entrypoint is only required at the handoff. **I7** is recorded as a scope
+decision, not a blocker; it likewise does not stop 37.10/37.11.
 
 Separately, five phases are `IMPLEMENTED` but not `VERIFIED` — **37.4, 37.5, 37.7,
 37.8, 37.9**. They are complete and tested at the mocked boundary, but their
@@ -337,11 +340,11 @@ Always use the smallest applicable status.
 | 37.5 | `generateWorkflow` agent tool | **IMPLEMENTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | 2026-10-12 — 24-case suite + full 35/628 + tsc clean; resolver/canvas/runtime diff empty | **Gate E: I1 VERIFIED.** Policy `READ_ONLY` (AD-17). Propose-only, no workflow-domain writes. **Real-model-path parse clause (carried from 37.2) not yet satisfied — hence not `VERIFIED`.** Prompt enumeration deferred to 37.13. |
 | 37.6 | Missing-input state | **VERIFIED** | P1 | 37.5 | 37.7, 37.8 | Durable `NEEDS_USER_INPUT` state | Model error and missing user info are distinguishable in the protocol | 2026-10-17 — 28-case suite + durability reaper exemption + generate-workflow 24; 36 suites / 672 tests; full suite 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched. 2026-10-20 — +3 tests (10b/10c/10d); full suite 56 suites / 1077; tsc exit 0; eslint 0. 2026-10-20 — live round-trip verified against the DB end-to-end (clarification → answers → `ok:true` → criticality → approved → materialized), no execution (`WorkflowRun` count 0) | F4 part 1. No preemptive migration. Worker halts (no `AGENT_LOOP_REQUESTED`), publishes `CLARIFICATION_REQUESTED`; `POST .../clarification` ingress; `interactionId`+`correlationId` binding; idempotent continuation under lock; reaper `skippedWaiting`. **VERIFIED (2026-10-17)** for backend protocol + same-session continuation; external UI not claimed. Durability/restart survival deferred to 37.8; F4 open. **REMEDIATION 2026-10-20 (`7bc05a7`, `c7809f2`):** live-testing defect — a clarification could not survive an `UNKNOWN_REFERENCE_SOURCE` placeholder on the same field, so the loop retried to the step cap; executor now demotes that issue to human-resolvable (narrow; all other issue codes still force correction), and a prompt rule routes unfilled placeholders to the clarification field. **Crosses the "no prompt change — deferred to 37.13" boundary: `AGENT_PROMPT_VERSION` v4 → v5; recorded, reviewer call.** **Live-verified 2026-10-20; residual unfixed: a plain-string sentinel (`<…>`) still yields `INVALID_INPUT` on a clarified path (candidate follow-up).** |
 | 37.7 | Human criticality state | **IMPLEMENTED** | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | 2026-10-18 — backend criticality service + routes; UI controls added by 37.9.1 | F4 part 2. Not `VERIFIED`. Consumed unchanged by 37.9.1's `ProposalReviewCard` criticality controls. |
-| 37.8 | Durable proposal persistence | **IMPLEMENTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | 2026-10-18 — durable lifecycle on amended (unapplied) migration | **NOT VERIFIED; durability/restart survival OPEN (F4).** Migration amended in place, applied to no database. See `assignments-37-phase-37.8-proposal-lifecycle.md`. |
+| 37.8 | Durable proposal persistence | **IMPLEMENTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | 2026-10-18 — durable lifecycle on amended (unapplied) migration | **NOT VERIFIED; durability/restart survival not yet exercised against the DB (F4).** Migration amended in place; `prisma migrate status` (2026-10-20) reports schema up to date, so `20261017120000_agent_proposal_lifecycle` is **applied**. See `assignments-37-phase-37.8-proposal-lifecycle.md`. |
 | 37.9 | Existing confirmation integration | **IMPLEMENTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | 2026-10-19 — 37.9 backend + 37.9.1 UI; 3 focused suites 19/11/15; agent 34/647; full 51/954; tsc clean; eslint 0 changed; prisma valid | Proposal-specific approve/decline/expiry ingress (37.9); human-criticality controls + workflow-builder panel + clarification answer card (37.9.1). Not `VERIFIED`; F4 open. See `assignments-37-phase-37.9-proposal-review.md` §14. |
 | 37.10 | UI graph projection / deterministic layout | **IMPLEMENTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout + read-only preview | Projection is deterministic and Gemini-free | 2026-10-19 — 4 focused suites 33/7/19/19; full 53/1005; tsc 0; eslint 0; prisma valid; 3 mutations reverted | **F1 open** (ordering recorded as AD-11). Moved ahead of materialization. Layout hand-rolled; no layout library. See `assignments-37-phase-37.10-ui-graph-projection.md`. Not `VERIFIED`. |
-| 37.11 | Workflow materialization | **IMPLEMENTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-20 — 4 new suites 33/17/10/15 + card; full 56/1074; tsc 0; eslint 0; prisma valid; diff-check clean | **F1 + F2 resolved.** Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. **Real-DB round-trip OPEN (37.8 migration unapplied).** Not `VERIFIED`. See `assignments-37-phase-37.11-workflow-materialization.md`. |
-| 37.12 | Execution handoff | **NOT_STARTED** | P1 | 37.11, **I6 (Gate G — NOT yet satisfied)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | — | No new executor, lock, or queue runner. **BLOCKED: cannot be VERIFIED until I6 is VERIFIED (real-DB acceptance run outstanding).** |
+| 37.11 | Workflow materialization | **IMPLEMENTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-20 — 4 new suites 33/17/10/15 + card; full 56/1074; tsc 0; eslint 0; prisma valid; diff-check clean | **F1 + F2 resolved.** Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. **Real-DB round-trip OPEN (runnable now — 37.8 migration is applied).** Not `VERIFIED`. See `assignments-37-phase-37.11-workflow-materialization.md`. |
+| 37.12 | Execution handoff | **NOT_STARTED** | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | — | No new executor, lock, or queue runner. **Unblocked: I6 VERIFIED by real-DB acceptance run.** |
 | 37.13 | Prompt / DAG planning instructions | **NOT_STARTED** | P1 | 37.12 | 37.16 | Prompt update + version bump | Prompt references real contracts only | — | Only after 37.1. Version explicitly tracked. |
 | 37.14 | Self-healing observations | **NOT_STARTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | — | No second retry controller. |
 | 37.15 | Full test matrix | **NOT_STARTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | — | Includes I1 regression test. |
@@ -2436,23 +2439,21 @@ Proves the core boundary: the existing runtime is the execution authority.
 ### Inputs / Dependencies
 
 - 37.11 (materialized workflow)
-- **I6 (Gate G, NOT yet satisfied). Cross-tenant workflow execution must be closed
-  before this phase.** Source fix complete; **real-PostgreSQL cross-tenant
-  verification OPEN** (reconciled 2026-10-20). See *Current Blockers → I6*.
+- **I6 VERIFIED — Gate G (2026-10-20). Cross-tenant workflow execution is closed
+  by its own ticket, proven by a real-PostgreSQL acceptance run.** See *Current
+  Blockers → I6*.
 
 ### Precondition — I6, cross-tenant workflow execution
 
 > **This phase cannot become `VERIFIED` unless I6 is `VERIFIED`.**
 >
-> **PARTIALLY ADDRESSED 2026-10-20 — I6 is NOT `VERIFIED`; Gate G is NOT yet
-> satisfied.** The source fix has landed and the mocked suites are green: the
-> entrypoint is tenant-scoped (`startWorkflow(orgId, workflowId, …)` carries
-> `orgId` in its lookup) and both reachable callers (`triggerWorkflowRun`, the
-> test-run route) authenticate and authorize first; `trigger-tenant-scope` and
-> `workflow-run-boundary-scope` assert cross-org refusal with no `WorkflowRun`.
-> **But Gate G requires a real-database cross-tenant run, which was not
-> performed.** 37.12 therefore remains BLOCKED. See *Current Blockers → I6*. The
-> historical text is retained unmodified below.
+> **SATISFIED 2026-10-20 — I6 is `VERIFIED`; Gate G is met.** The source fix
+> landed and its mocked suites are green, and the **real-PostgreSQL acceptance
+> run has passed** (`src/tests/security/i6-cross-tenant.realdb.test.ts`, 10/10):
+> an org-A caller cannot start org B's workflow, no `WorkflowRun` row is created,
+> foreign and missing are indistinguishable, and the same-org positive path still
+> builds a `RUNNING` run. See `docs/dev-log/2026-10-20-i6-real-db-acceptance.md`.
+> The historical text is retained unmodified below.
 
 `triggerWorkflowRun` (`src/app/actions/workflows/workflow-run.ts:5`) performs no
 authentication and no organization check, and `startWorkflow`
@@ -2557,6 +2558,7 @@ Made: I6 is a precondition for this phase, and is not satisfied by Gate E (I1).
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-20 | **Gate G NOT yet satisfied** | I6 source fix landed (cross-tenant execution entrypoint `startWorkflow` tenant-scoped; `triggerWorkflowRun` + test-run route authenticate/authorize; 2 new suites; full 58/1087; tsc/eslint/diff-check clean), **but the real-PostgreSQL cross-tenant acceptance run was not performed**, so I6 is not `VERIFIED` and Gate G is NOT satisfied | `trigger-tenant-scope.test.ts`, `workflow-run-boundary-scope.test.ts`, issue register §I6 Resolution |
+| 2026-10-20 | **Gate G satisfied — I6 `VERIFIED`** | Real-PostgreSQL cross-tenant acceptance run performed and passed (10/10): no `WorkflowRun` on refusal, foreign vs missing indistinguishable, same-org positive control, payload-smuggled org id cannot redirect tenant. **37.12 unblocked.** | `src/tests/security/i6-cross-tenant.realdb.test.ts`; `docs/dev-log/2026-10-20-i6-real-db-acceptance.md` |
 
 ---
 
@@ -3177,7 +3179,7 @@ when the fix is present and tested.
 | **F5** | `WorkflowDefinitionSchema` never called in production | P1 | **CLOSED 2026-10-12** (premise corrected) | No — was a gate-selection question | 37.4 | **YES** | `src/tests/workflow/workflow-proposal-compiler.test.ts` — 25/25; AD-P4: collector is canonical; schema is then still invoked at `evaluator.ts:223` |
 | **F6** | No reference / data-dependency validation; silent failure | P1 | **CLOSED 2026-10-12** | No — was a risk for 37.4+ | 37.3 | **YES** | `src/tests/workflow/proposal-references.test.ts` — 44/44; `MISSING_DATA_DEPENDENCY` enforced; `git diff -- resolver.ts` empty |
 | **I1** | Cross-tenant workflow update | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0A | **YES** | `src/tests/workflow/workflow-update-scope.test.ts` — 5/5; suite fails 3/5 against the unscoped predicate |
-| **I6** | Cross-tenant workflow execution | **P0** | **OPEN — source fix landed 2026-10-20; real-DB acceptance run outstanding** | No — separate ticket, before 37.12 | separate ticket, before 37.12 | **YES** | `src/tests/workflow/trigger-tenant-scope.test.ts` (4/4) + `src/tests/workflow/workflow-run-boundary-scope.test.ts` (6/6); `startWorkflow` lookup carries `orgId`; cross-org refused with no `WorkflowRun`/no `advanceWorkflow`; both public entrypoints authenticate; full 58/1087; tsc 0; eslint 0. **Not `VERIFIED`: real-PostgreSQL cross-tenant run not performed.** |
+| **I6** | Cross-tenant workflow execution | **P0** | **CLOSED 2026-10-20 (real-DB acceptance passed)** | No — was YES, now resolved | separate ticket, before 37.12 | **YES** | `src/tests/security/i6-cross-tenant.realdb.test.ts` — 10/10 against a **real** PostgreSQL DB (org-A caller cannot start org B's workflow; no `WorkflowRun` row created; foreign/missing indistinguishable; same-org positive control). Mocked suites retained: `trigger-tenant-scope` (4/4) + `workflow-run-boundary-scope` (6/6). `Migrate status`: schema up to date. |
 | **I2** | Node validation bypass at persistence boundary | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0B | **YES** | `src/tests/workflow/workflow-node-validation.test.ts` — 23/23; suite fails 19/23 against the inert schema |
 | **I3** | `WAITING_CONFIRMATION` session state unreachable | P2/P3 | Open | No | later cleanup / 37.14 | **No** | — |
 | **I4** | Runtime / UI action registry mismatch | P1 | **CLOSED 2026-10-01** | No — was YES, now resolved | 37.1 | **YES** | `action-capabilities.test.ts` — 32/32; Mutation B (re-advertise `comment.add`) fails 3/30; UI list is a derived projection |
@@ -3186,8 +3188,8 @@ when the fix is present and tested.
 
 ### Count
 
-- Resolved: **6 of 13** (I1, I2, F3, I4, F5, F6)
-- P0 open: **1** (I6 — source fix landed; real-DB acceptance run outstanding)
+- Resolved: **7 of 13** (I1, I2, I6, F3, I4, F5, F6)
+- P0 open: **0**
 - P1 open: **1** (F4)
 - P1-CHECK unverified: **1** (I5)
 - P2/P3 open: **4** (F1, F2, I3, I7)
@@ -3231,12 +3233,16 @@ lookup predicate carries `orgId`; the parameter is required so no unscoped shape
 compiles). Both reachable callers were secured independently:
 `triggerWorkflowRun` calls `getOrgAccess(orgslug)` and passes the verified
 `organization.id`; the test-run route authenticates and resolves the workflow
-through a membership-constrained predicate (no existence oracle). Regression
-suites `trigger-tenant-scope` and `workflow-run-boundary-scope` assert cross-org
-refusal with **no `WorkflowRun`** and no `advanceWorkflow`, indistinguishability
-from a missing workflow, and the same-org positive path. Gate G is satisfied; 37.12
-is unblocked. This ticket did **not** modify the execution engine, dispatch a run,
-or enqueue QStash — see *Current Blockers → I6 (resolved)* for the full record.
+through a membership-constrained predicate (no existence oracle). Mocked
+regression suites `trigger-tenant-scope` and `workflow-run-boundary-scope` assert
+cross-org refusal with **no `WorkflowRun`** and no `advanceWorkflow`,
+indistinguishability from a missing workflow, and the same-org positive path.
+**Real-database acceptance** (`src/tests/security/i6-cross-tenant.realdb.test.ts`,
+10/10, 2026-10-20) then proved the same properties against the actual PostgreSQL
+database — the evidence Gate G requires and the mocked suites alone could not
+supply. Gate G is satisfied; 37.12 is unblocked. This ticket did **not** modify the
+execution engine, dispatch a run, or enqueue QStash — see
+`docs/dev-log/2026-10-20-i6-real-db-acceptance.md`.
 
 ---
 
@@ -3525,7 +3531,7 @@ regardless of intent.
 - [x] I1 closed and verified (37.0A) — **VERIFIED 2026-09-30** — evidence: `src/tests/workflow/workflow-update-scope.test.ts`
 - [x] I2 closed and verified (37.0B) — **VERIFIED 2026-09-30** — evidence: `src/tests/workflow/workflow-node-validation.test.ts`
 - [x] 37.1 complete — **VERIFIED 2026-10-01** — evidence: `src/tests/workflow/action-capabilities.test.ts`
-- [ ] **I6 closed and verified (separate ticket, before 37.12)** — source fix + mocked suites complete; **real-PostgreSQL acceptance run OPEN** (reconciled 2026-10-20)
+- [x] **I6 closed and verified (separate ticket, before 37.12)** — real-PostgreSQL cross-tenant acceptance run passed 2026-10-20 (10/10); no `WorkflowRun` created on any refusal; fixtures removed with zero leftovers — evidence: `src/tests/security/i6-cross-tenant.realdb.test.ts`, `docs/dev-log/2026-10-20-i6-real-db-acceptance.md`
 - [x] 37.2 complete — **VERIFIED 2026-10-12** — schema + validator + 45 cases green; bounds hardened; real-model-path parse reassigned to 37.5 — evidence: `src/tests/workflow/workflow-proposal.test.ts`
 - [x] 37.3 complete — **VERIFIED 2026-10-12** — reference validator over the existing `{{…}}` grammar; 44 cases green; `MISSING_DATA_DEPENDENCY` enforced; resolver unmodified; F6 closed — evidence: `src/tests/workflow/proposal-references.test.ts`
 - [ ] 37.4 complete
@@ -3545,9 +3551,9 @@ regardless of intent.
 
 ### Issue closure
 
-- [ ] All P0 issues verified (I1 ✓, I2 ✓; **I6 source-fixed but NOT verified —
-      real-DB acceptance run OPEN**) — three separate tickets; none
-      substitutes for another. One P0 (I6) remains open.
+- [x] All P0 issues verified (I1 ✓, I2 ✓, **I6 ✓**) — three separate tickets; none
+      substitutes for another. No P0 remains open (I6 closed by a real-PostgreSQL
+      cross-tenant acceptance run, 2026-10-20).
 - [ ] All P1 issues resolved or explicitly deferred (F3 ✓, I4 ✓, F6 ✓; F4, F5 open)
 - [ ] I5 verified or documented as unverifiable
 - [ ] All P2/P3 issues resolved or explicitly deferred (F1, F2, I3, I7)

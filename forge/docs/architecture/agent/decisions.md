@@ -939,8 +939,10 @@ deliverable and is called out as such.
 - **No live-database evidence.** The lifecycle is proven against the in-memory
   double, which simulates *enclosure* only — it has no rollback injection. That
   the CAS and the audit message commit atomically is a property of the real
-  database, not something the double can prove. The migration is amended in place
-  on an unreleased branch and is applied to no database.
+  database, not something the double can prove. The migration was amended in place
+  on the branch; it is **now applied** (updated 2026-10-20 — `prisma migrate status`
+  reports the schema up to date), though the atomic-commit property is still proven
+  only against the double.
 - **The approve-race-with-expiry boundary is resolved in the human's favour by
   the CAS, and tested; true concurrency is not.** Overlapping maintenance passes
   and a concurrent decision are serialised by the CAS and, for a decision, by the
