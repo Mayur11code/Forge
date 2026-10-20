@@ -18,7 +18,7 @@ Companion documents: `assignments-37-phase-0-audit.md` (evidence, unmodified),
 
 This phase adds a schema and a validator. It writes no workflows and changes no
 runtime, which is why it may proceed while I6 is still open (Gate G applies to
-37.12, not here). The existing execution runtime remains the only execution
+37.12, not here). (I6 has since been `VERIFIED`, 2026-10-20.) The existing execution runtime remains the only execution
 authority and was not modified.
 
 **Status — `VERIFIED` (2026-10-12).** Unit tests are green (§13) and the

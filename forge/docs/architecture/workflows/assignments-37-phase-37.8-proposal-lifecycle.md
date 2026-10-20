@@ -104,6 +104,13 @@ reported this migration, plus the unrelated
 `20260930120000_workflow_run_progress`, as **unapplied**. It has not been applied
 to any database (see §18).
 
+> **Amendment 2026-10-20 (supersedes the migration-state observation above).**
+> A later `npx prisma migrate status` now reports **"Database schema is up to
+> date!"** — **all 26 migrations are applied**, including this one
+> (`20261017120000_agent_proposal_lifecycle`). The "unapplied" statement above
+> reflected the state at authoring time and is **stale**. The 37.11 real-DB
+> round-trip is therefore runnable; its own verification remains outstanding.
+
 ## 6. Proposal Lifecycle State Machine
 
 `deriveProposalLifecycle(toolName, outputValue)` (`proposal-service.ts`) returns
@@ -292,6 +299,10 @@ Limitations / open items:
    the migration was offline-generated, and a later `prisma migrate status` did
    connect but confirmed the migration is **unapplied**. A
    cold-restart-against-Postgres test is owed.
+   - **Update 2026-10-20:** `prisma migrate status` now reports the schema
+     up to date — the migration **is applied**. The owed cold-restart/durability
+     test is still owed (this is F4), but it is no longer blocked by migration
+     state.
 2. Supersession concurrency under two simultaneous writers is not proven;
    serialization relies on the existing session lock, not a new advisory lock.
 3. F4 remains open.

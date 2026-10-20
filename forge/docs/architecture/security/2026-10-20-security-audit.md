@@ -74,12 +74,15 @@ independently. `WorkflowRun.create` occurs in exactly one place
 `src/tests/security/workflow-worker-ingress.test.ts` (proves the worker POST is
 the `verifySignatureAppRouter` wrapper).
 
-**I6 is NOT `VERIFIED`.** The suites above are mocked/unit-level. Gate G's
-acceptance evidence — a **real-PostgreSQL** cross-tenant run proving a caller
-authenticated for one organization cannot start another organization's workflow
-(and that no `WorkflowRun` row is created) — was **not** performed. **37.12
-remains BLOCKED** on this gate. Do not record I6 as closed. See the issue
-register §I6.
+**I6 is now `VERIFIED` (2026-10-20).** The mocked suites above were necessary but
+not sufficient; the Gate G evidence is a **real-PostgreSQL** cross-tenant
+acceptance run (`src/tests/security/i6-cross-tenant.realdb.test.ts`, 10/10) that
+exercises the **real** Prisma client, `getOrgAccess` and `startWorkflow`:
+an org-A caller cannot start org B's workflow, `workflowRun.count(...) === 0` on
+every refusal, foreign and missing are indistinguishable, and the same-org
+positive path still creates a `RUNNING` run. Fixtures are removed with a verified
+zero-leftover check. See `docs/dev-log/2026-10-20-i6-real-db-acceptance.md`.
+**37.12 is unblocked.** See the issue register §I6.
 
 ## 5. Console-logging cleanup (Phase 3)
 
@@ -129,16 +132,18 @@ Removed / redacted:
   errors).
 
 **Level of assurance.** Unit / route-level with mocked boundaries and a mocked
-Prisma client. No real-PostgreSQL, multi-process, or live-provider execution was
-performed. The tenant predicates asserted here are the same predicates a real
-database would apply, but a real-DB cross-tenant run remains an open gate (§7).
+Prisma client, **plus** a real-PostgreSQL acceptance run for the I6 tenant
+boundary (§7). No multi-process or live-provider execution was performed.
 
 ## 7. Outstanding gates
 
-- Real-PostgreSQL / multi-process integration verification: **OPEN** (mocked
-  boundaries only).
-- 37.11 real-DB materialization/idempotency gate and the 37.8 migration-applied
-  gate: **OPEN** (unchanged).
+- Real-PostgreSQL verification: **CLOSED for I6** — the cross-tenant execution
+  boundary was accepted against a real database on 2026-10-20 (10/10). Other
+  boundaries remain mocked.
+- 37.11 real-DB materialization/idempotency gate: **OPEN**.
+- 37.8 migration-applied gate: **RESOLVED** — `prisma migrate status` reports the
+  schema up to date; the `20261017120000_agent_proposal_lifecycle` migration is
+  applied.
 - Credential rotation (S11): **owner action** — no confirmed exposure (see §8).
 
 ## 8. Follow-up remediation coverage
@@ -147,7 +152,7 @@ Each originally flagged gap, its status, and the evidence that closes it.
 
 | Gap | Status | Evidence |
 |---|---|---|
-| 1. I6 proof (cross-tenant execution) | **Source-fixed; mocked suites green; real-DB verification OPEN (not VERIFIED)** | `src/tests/security/workflow-worker-ingress.test.ts`; `workflow-run-boundary-scope.test.ts` (8); `trigger-tenant-scope.test.ts` (4); `WorkflowRun.create` is a single call site (`trigger.ts`). Gate G's real-PostgreSQL run is outstanding. |
+| 1. I6 proof (cross-tenant execution) | **Verified (source + mocked + real-DB, 2026-10-20)** | `src/tests/security/i6-cross-tenant.realdb.test.ts` (10/10, real PostgreSQL; no run on refusal, same-org positive control); mocked: `workflow-worker-ingress.test.ts`, `workflow-run-boundary-scope.test.ts` (8), `trigger-tenant-scope.test.ts` (4); `WorkflowRun.create` is a single call site (`trigger.ts`). |
 | 2. Seed-password fallback | **Remediated** | `src/lib/security/seed-password.ts` (fail-closed) + `src/tests/security/seed-password.test.ts` (9). |
 | 3. Unsigned-worker guard | **Remediated** | `src/lib/events/worker.ts` `isUnsignedWorkerAllowed()` production refusal + `src/tests/agent/worker-auth.test.ts` (19). |
 | 4. Error sanitization allowlist | **Remediated** | `src/lib/security/public-error.ts` + `src/tests/security/public-error.test.ts` (8) + route-level projection in `src/tests/agent/session-read.test.ts`. |

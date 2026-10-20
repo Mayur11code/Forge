@@ -89,6 +89,20 @@ describe("triggerWorkflowRun (canvas server action)", () => {
     });
   });
 
+  it("starts with an empty trigger context when no payload is supplied", async () => {
+    // 37.12: a generated, validator-clean workflow references no
+    // `{{trigger.outputs.*}}` field, so omitting the payload is the correct call
+    // and the engine primes an empty trigger namespace.
+    const result = await triggerWorkflowRun(WORKFLOW_ID, SLUG_A);
+
+    expect(startWorkflowMock).toHaveBeenCalledWith(ORG_A_ID, WORKFLOW_ID, {});
+    expect(result).toEqual({
+      success: true,
+      runId: "run_1",
+      redirectTo: `/org/${SLUG_A}/runs/run_1`,
+    });
+  });
+
   it("propagates a refusal from startWorkflow as an error, not a success", async () => {
     startWorkflowMock.mockRejectedValue(new Error("Cannot start workflow: x not found."));
 
@@ -100,26 +114,27 @@ describe("triggerWorkflowRun (canvas server action)", () => {
     });
   });
 
-  it("cannot be tricked into a foreign tenant by client-supplied identity in the payload", async () => {
-    // A caller who tries to smuggle an organization id through the payload must
-    // not influence the tenant actually used. The org passed to the engine is
-    // the one `getOrgAccess` verified from the slug; payload fields are opaque
-    // trigger data.
+  it("rejects a payload that tries to smuggle tenant/identity keys, before the engine", async () => {
+    // 37.12: the trigger context is a data boundary. A caller who names `orgId`
+    // (or any reserved identity/tenant key) is refused rather than having the
+    // key silently ignored, and the engine is never reached — so no run is
+    // created from a forged-authority payload.
     const result = await triggerWorkflowRun(WORKFLOW_ID, SLUG_A, {
       orgId: "org_attacker",
       organizationId: "org_attacker",
       projectId: "p_1",
     });
 
-    expect(result.success).toBe(true);
+    expect(result).toEqual({ success: false, error: "Invalid trigger data." });
     expect(getOrgAccessMock).toHaveBeenCalledWith(SLUG_A);
-    // First positional argument is the verified org id, not any payload value.
-    expect(startWorkflowMock).toHaveBeenCalledWith(
-      ORG_A_ID,
-      WORKFLOW_ID,
-      expect.objectContaining({ orgId: "org_attacker" }),
-    );
-    expect(startWorkflowMock.mock.calls[0][0]).toBe(ORG_A_ID);
+    expect(startWorkflowMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-plain-object trigger context, before the engine", async () => {
+    const result = await triggerWorkflowRun(WORKFLOW_ID, SLUG_A, ["not", "an", "object"]);
+
+    expect(result).toEqual({ success: false, error: "Invalid trigger data." });
+    expect(startWorkflowMock).not.toHaveBeenCalled();
   });
 
   it("creates no run and dispatches nothing when authorization fails", async () => {

@@ -191,6 +191,11 @@ The `20261017120000_agent_proposal_lifecycle` migration is committed but
 `@@index([proposalState, expiresAt])` added (with the matching index in the SQL).
 `npx prisma validate` passes. **The migration is applied to no database.**
 
+> **Amendment 2026-10-20.** `prisma migrate status` now reports the schema up to
+> date; the `20261017120000_agent_proposal_lifecycle` migration **is applied**
+> (all 26 migrations applied). The statement above reflected the authoring-time
+> state.
+
 ## 9. Test Coverage
 
 New suites (Assignment 37.9):
@@ -242,8 +247,8 @@ the affected suites re-run green.
 - **No live-database evidence.** The in-memory double simulates *enclosure*
   only; it has no rollback injection, so "CAS and audit commit atomically"
   remains a property of the real database that the double cannot prove. The
-  migration is unapplied. A cold-restart-against-Postgres test is owed and is
-  named here.
+  migration is **now applied** (updated 2026-10-20); a cold-restart-against-Postgres
+  test is owed and is named here.
 - **Concurrency is reasoned, not multi-process tested.** The session lock and the
   CAS serialise the realistic races (decision vs. worker, decision vs. sweep,
   sweep vs. sweep), and each is tested single-process; no cross-process test
