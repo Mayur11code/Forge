@@ -1,10 +1,10 @@
 # Assignment 37 — Master Phase Tracker
 
 ```text
-Last Updated:     2026-10-20
-Current Phase:    37.12  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 IMPLEMENTED)
-Overall Status:   READY  (I6 VERIFIED — real-PostgreSQL acceptance run passed; 37.12 is now unblocked)
-Next Action:      Verify 37.11 (its real-DB round-trip is now runnable — the 37.8 migration is applied)
+Last Updated:     2026-10-21
+Current Phase:    37.12  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 IMPLEMENTED; 37.12 IMPLEMENTED)
+Overall Status:   READY  (I6 VERIFIED — real-PostgreSQL acceptance run passed; 37.12 handoff IMPLEMENTED, not yet VERIFIED)
+Next Action:      Verify 37.12 (handoff IMPLEMENTED — mocked + real-DB suites green) and verify 37.11 (real-DB round-trip)
 ```
 
 > **I6 VERIFIED 2026-10-20 (real-database acceptance).** The cross-tenant
@@ -344,7 +344,7 @@ Always use the smallest applicable status.
 | 37.9 | Existing confirmation integration | **IMPLEMENTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | 2026-10-19 — 37.9 backend + 37.9.1 UI; 3 focused suites 19/11/15; agent 34/647; full 51/954; tsc clean; eslint 0 changed; prisma valid | Proposal-specific approve/decline/expiry ingress (37.9); human-criticality controls + workflow-builder panel + clarification answer card (37.9.1). Not `VERIFIED`; F4 open. See `assignments-37-phase-37.9-proposal-review.md` §14. |
 | 37.10 | UI graph projection / deterministic layout | **IMPLEMENTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout + read-only preview | Projection is deterministic and Gemini-free | 2026-10-19 — 4 focused suites 33/7/19/19; full 53/1005; tsc 0; eslint 0; prisma valid; 3 mutations reverted | **F1 open** (ordering recorded as AD-11). Moved ahead of materialization. Layout hand-rolled; no layout library. See `assignments-37-phase-37.10-ui-graph-projection.md`. Not `VERIFIED`. |
 | 37.11 | Workflow materialization | **IMPLEMENTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-20 — 4 new suites 33/17/10/15 + card; full 56/1074; tsc 0; eslint 0; prisma valid; diff-check clean | **F1 + F2 resolved.** Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. **Real-DB round-trip OPEN (runnable now — 37.8 migration is applied).** Not `VERIFIED`. See `assignments-37-phase-37.11-workflow-materialization.md`. |
-| 37.12 | Execution handoff | **NOT_STARTED** | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | — | No new executor, lock, or queue runner. **Unblocked: I6 VERIFIED by real-DB acceptance run.** |
+| 37.12 | Execution handoff | **IMPLEMENTED** | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | 2026-10-21 — 5 new suites (5/10/5/4/5) + boundary-scope updated; full 68/1168; focused workflow+security 26/403; realdb I6 10/10 + handoff 5/5; tsc 0; eslint 0; not committed | No new executor, lock, or queue runner. Explicit authenticated Run action → `startWorkflow`; validated optional trigger context (reserved keys refused); canvas `mockProjectPayload` removed. Multiple-run behaviour preserved. **Not `VERIFIED`.** |
 | 37.13 | Prompt / DAG planning instructions | **NOT_STARTED** | P1 | 37.12 | 37.16 | Prompt update + version bump | Prompt references real contracts only | — | Only after 37.1. Version explicitly tracked. |
 | 37.14 | Self-healing observations | **NOT_STARTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | — | No second retry controller. |
 | 37.15 | Full test matrix | **NOT_STARTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | — | Includes I1 regression test. |
@@ -2426,7 +2426,15 @@ Pending: **F1** (carried from 37.10) and **F2** (where provenance lives).
 
 ### Status
 
-**NOT_STARTED** · Priority: P1
+**IMPLEMENTED** · Priority: P1
+
+> **IMPLEMENTED 2026-10-21 — not `VERIFIED`.** The handoff now reuses the
+> existing engine via an explicit, authenticated, tenant-scoped user action; no
+> second runtime was added. The runtime-input trust boundary was tightened:
+> `triggerWorkflowRun`'s free-form `triggerPayload` is replaced by a validated,
+> bounded, optional trigger context, and the canvas no longer fabricates a
+> `mockProjectPayload`. New mocked + real-PostgreSQL suites are green. See
+> *Evidence* and *Status History*.
 
 ### Objective
 
@@ -2506,8 +2514,16 @@ No new machinery. The existing path is the path.
 
 ### Deliverables
 
-- Handoff integration — path **UNKNOWN**
-- Integration test
+- Handoff integration — **DONE**. The persisted, materialized `Workflow` is
+  started by the existing `startWorkflow` (`lib/workflow/execution/trigger.ts`),
+  reached only through the authorization-checked `triggerWorkflowRun` server
+  action bound to the editor's Run control. No new run-creation site exists.
+- Runtime-input trust boundary — **DONE**. `src/lib/workflow/execution/trigger-context.ts`
+  validates the caller-supplied trigger context (bounded depth/size, JSON-only,
+  no tenant/identity/prototype keys); the action refuses invalid context before a
+  run is created. Generated workflows supply none.
+- Integration tests — **DONE** (mocked handoff, validator unit, UI control,
+  source-invariant, and a real-PostgreSQL handoff acceptance suite).
 
 ### Acceptance Gate
 
@@ -2533,19 +2549,58 @@ Integration test proving end-to-step dispatch through the existing engine only,
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: 2026-10-21 (not committed — reported for review)
+  - src/app/actions/workflows/workflow-run.ts       (validated trigger context; no free-form blob)
+  - src/lib/workflow/execution/trigger-context.ts   (NEW — runtime-input trust boundary)
+  - src/features/organizations/components/workflow/RunWorkflowButton.tsx (no fabricated payload; pending/error guard)
+  - src/features/organizations/components/workflow/WorkflowCanvas.tsx    (removed mockProjectPayload + dead import)
+Tests:
+  - execution-handoff.test.ts            5/5  (mocked; real startWorkflow path)
+  - trigger-context.test.ts             10/10 (validator unit)
+  - run-workflow-button.test.tsx         5/5  (UI handoff / single-submission / retry)
+  - execution-boundary-invariants.test.ts 4/4 (source invariants: one run-creation site)
+  - workflow-run-boundary-scope.test.ts 10/10 (updated for the new refusal contract)
+  - execution-handoff.realdb.test.ts     5/5  (REAL PostgreSQL acceptance)
+  - i6-cross-tenant.realdb.test.ts      10/10 (regression; updated refusal case)
+  - default suite: 68 suites / 1168 tests green; focused workflow+security: 26/403
+Verification:   tsc 0; eslint 0 errors (31 pre-existing warnings, none in changed files);
+                realdb (--runInBand) I6 10/10 + handoff 5/5
+Commit/PR:      — (not staged/committed this pass)
+Relevant files: src/lib/workflow/execution/trigger.ts (unchanged — sole run-creation site)
+                src/lib/ai/agent/services/proposal-materialization-service.ts (unchanged)
 ```
+
+**Note on real-DB runs.** The isolated-PostgreSQL suites pass reliably when run
+with `--runInBand` against a healthy connection; the shared Neon fixture is
+intermittently unreachable under rapid repeated runs (`Can't reach database
+server`), which affects I6 equally and is environmental, not a suite defect.
 
 ### Known Risks / Findings
 
 **I6 — P0, separate ticket, gate for this phase.** The engine itself is the
 hardened surface 37 depends on and must not be rebuilt. The defect is not in the
 engine: it is the missing tenant check at the entrypoint that reaches it, which
-this phase is the first to depend on from generated material.
+this phase is the first to depend on from generated material. *Resolved — I6 is
+`VERIFIED` (2026-10-20).*
+
+**I8 (recorded 2026-10-21) — runtime-input trust boundary at the handoff.** The
+`triggerWorkflowRun` action accepted an unconstrained
+`triggerPayload: Record<string, JsonValue>` that became
+`WorkflowRun.context.trigger.outputs`. Two problems: (a) the canvas fabricated a
+`mockProjectPayload` (`projectId` unrelated to the workflow being run), inventing
+runtime data; (b) a caller could name tenant/identity keys (`orgId`, …) in the
+payload. The tenant was never actually at risk — `orgId` is server-derived from
+the verified slug — but the boundary was implicit and relied on the resolver
+ignoring smuggled keys. **Fix:** validate the trigger context at the server
+boundary (bounded, JSON-only, reserved keys refused). Not a P0 (no authority was
+reachable); recorded to make the refusal explicit. No second executor, lock, or
+queue runner was added; `startWorkflow` remains the sole run-creation site
+(asserted by `execution-boundary-invariants.test.ts`).
+
+**Multiple-run policy preserved.** A repeated, separate start (retry, second
+tab) still creates a second run — this is the engine's existing, deliberate
+behaviour and was preserved, not changed. The Run control's `submitting` guard is
+a UI affordance only; it is not server-side idempotency.
 
 ### Decisions
 
@@ -2553,12 +2608,21 @@ Made: the existing engine is the executor. No second runtime.
 
 Made: I6 is a precondition for this phase, and is not satisfied by Gate E (I1).
 
+Made (2026-10-21): the handoff trigger context is a **data** boundary — optional,
+validated, bounded, and never carrying tenant/identity authority. A generated,
+validator-clean workflow supplies none (it cannot reference `{{trigger.outputs.*}}`).
+Reserved keys are refused, not silently ignored.
+
+Made (2026-10-21): preserve the engine's multiple-run behaviour; do not add
+uniqueness, a partial index, or a run lock at the handoff.
+
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-20 | **Gate G NOT yet satisfied** | I6 source fix landed (cross-tenant execution entrypoint `startWorkflow` tenant-scoped; `triggerWorkflowRun` + test-run route authenticate/authorize; 2 new suites; full 58/1087; tsc/eslint/diff-check clean), **but the real-PostgreSQL cross-tenant acceptance run was not performed**, so I6 is not `VERIFIED` and Gate G is NOT satisfied | `trigger-tenant-scope.test.ts`, `workflow-run-boundary-scope.test.ts`, issue register §I6 Resolution |
 | 2026-10-20 | **Gate G satisfied — I6 `VERIFIED`** | Real-PostgreSQL cross-tenant acceptance run performed and passed (10/10): no `WorkflowRun` on refusal, foreign vs missing indistinguishable, same-org positive control, payload-smuggled org id cannot redirect tenant. **37.12 unblocked.** | `src/tests/security/i6-cross-tenant.realdb.test.ts`; `docs/dev-log/2026-10-20-i6-real-db-acceptance.md` |
+| 2026-10-21 | **IMPLEMENTED — not `VERIFIED`** | Handoff reuses the existing engine via the explicit, authenticated, tenant-scoped Run action; no second runtime. Runtime-input trust boundary tightened: free-form `triggerPayload` → validated/bounded/optional trigger context (reserved tenant/identity keys refused); canvas `mockProjectPayload` removed. 5 new suites. Default 68/1168; focused workflow+security 26/403; realdb I6 10/10 + handoff 5/5; tsc 0; eslint 0. Not committed. | `execution-handoff.test.ts`, `trigger-context.test.ts`, `run-workflow-button.test.tsx`, `execution-boundary-invariants.test.ts`, `execution-handoff.realdb.test.ts` |
 
 ---
 

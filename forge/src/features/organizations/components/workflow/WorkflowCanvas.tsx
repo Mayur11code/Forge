@@ -14,8 +14,6 @@ import {
   type Connection,
 } from '@xyflow/react';
 
-import RunWOrkflowButton from './RunWorkflowButton';
-
 import { autoMapNodeVariables} from '@/lib/workflow/graph-ui/utils';
 
 
@@ -32,7 +30,6 @@ import Sidebar from './sidebar';
 import { Loader2, Save } from 'lucide-react'; 
 import PropertiesPanel from './PropertiesPanel';
 import RunWorkflowButton from './RunWorkflowButton';
-// import RunWorkflowButton from './RunWorkflowButton';
 
 interface WorkflowCanvasProps {
   workflowId?: string; // undefined for new workflows
@@ -202,25 +199,19 @@ const onConnect = useCallback(
 
 
 
-  // The verification payload to check if the workflow is working as expected for the admin
-  const mockProjectPayload = {
-    projectId: `cmnj8u44p0003a0gcvqgt25dv`,
-    projectName: "Forge Core",
-    createdAt: new Date().toISOString(),
-  };
-
   return (
     <div className="flex-grow h-[80vh]" ref={reactFlowWrapper}>
 
 {/* Sleek Floating Action Bar */}
       <div className="absolute top-4 right-4 z-10 flex items-center gap-3">
         
-        {/* Only show the Run button if the workflow exists in the database */}
+        {/* Only show the Run button if the workflow exists in the database.
+            37.12: no fabricated trigger payload is passed; the server action
+            validates any context and derives the tenant from the slug. */}
         {workflowId && (
           <RunWorkflowButton 
             workflowId={workflowId} 
             orgId={orgId} 
-            payload={mockProjectPayload} 
           />
         )}
 
