@@ -4,14 +4,14 @@
 Phase:            37.11 — workflow materialization
 Status:           IMPLEMENTED (2026-10-20 — submitted for independent acceptance)
 Classification:   P2
-Depends on:       37.10 IMPLEMENTED (deterministic projection); 37.9 IMPLEMENTED (approval); 37.8 IMPLEMENTED (durable lifecycle, unapplied migration); 37.7 IMPLEMENTED (criticality contract); 37.4 IMPLEMENTED (compiler); 37.0A/37.0B VERIFIED (tenant update, node validation)
+Depends on:       37.10 IMPLEMENTED (deterministic projection); 37.9 IMPLEMENTED (approval); 37.8 IMPLEMENTED (durable lifecycle; migration APPLIED as of 2026-10-20); 37.7 IMPLEMENTED (criticality contract); 37.4 IMPLEMENTED (compiler); 37.0A/37.0B VERIFIED (tenant update, node validation)
 Blocks:           37.12 (execution handoff)
 Resolves:         F1 (canvas-first persistence), F2 (placeholder provenance/naming)
 Writes workflows: Yes — one `Workflow` row, triggerless, inactive
 Writes anything:  One `AgentToolExecution.proposalState` CAS (APPROVED → MATERIALIZED) in the same transaction
 Runtime changed:  No (no evaluator, no executor, no lock, no queue)
 Resolver changed: No
-Schema migration: None — uses the existing (UNAPPLIED) 37.8 migration
+Schema migration: None — uses the existing 37.8 migration (APPLIED as of 2026-10-20)
 ```
 
 Companion documents: `assignments-37-plan.md` (Phase 37.11, F1/F2),
@@ -22,10 +22,10 @@ Companion documents: `assignments-37-plan.md` (Phase 37.11, F1/F2),
 **Status — `IMPLEMENTED`, not `VERIFIED`.** The service, route, session-read
 change, UI and their tests are implemented and locally verified; this document is
 submitted for independent acceptance. **The real-database round-trip and the
-unique-constraint enforcement are OPEN**: the 37.8 migration is still UNAPPLIED
-(its own comment records `prisma migrate status` reporting it unapplied). Nothing
-here was proven against a live database, and no migration command was run. This
-document does not self-accept.
+unique-constraint enforcement are OPEN** — but the 37.8 migration is now
+**APPLIED** (verified by `prisma migrate status`, 2026-10-20), so the round-trip
+is runnable. Nothing here was proven against a live database, and no migration
+command was run by this phase. This document does not self-accept.
 
 ---
 
@@ -220,14 +220,16 @@ at the mocked boundary and `jest.setup-db-guard.ts` fails any real connection.
 
 - **No new migration.** 37.11 reads/writes `Workflow.sourceProposalId` and the
   `AgentProposalState.MATERIALIZED` enum value, both of which already exist in
-  `prisma/schema.prisma` and in the UNAPPLIED migration
+  `prisma/schema.prisma` and in the migration
   `20261017120000_agent_proposal_lifecycle`. Creating another would duplicate it.
-- **The migration is still UNAPPLIED.** `sourceProposalId`, its unique index, its
-  FK and the enum value exist only in the migration file, not necessarily in any
-  database. Source-file presence is not rollout proof.
-- Consequently, **the real-DB round-trip and the unique-constraint enforcement are
-  unverified.** They are named as open acceptance gates and were deliberately not
-  exercised against a shared or production database.
+- **The 37.8 migration is APPLIED (updated 2026-10-20).** A later
+  `prisma migrate status` reports the schema up to date, so `sourceProposalId`, its
+  unique index, its FK and the enum value are present in the configured database.
+  (The earlier "UNAPPLIED" note reflected the authoring-time state.)
+- Consequently, the real-DB round-trip is **now runnable**; it remains an open
+  acceptance gate and was deliberately not exercised against a shared or production
+  database. `sourceProposalId` etc. now exist in the database — but simply existing
+  is not the round-trip proof.
 
 ## 10. Boundaries — What 37.11 Does NOT Do
 
@@ -246,15 +248,17 @@ at the mocked boundary and `jest.setup-db-guard.ts` fails any real connection.
 
 ## 11. Known Risks and Open Gates
 
-- **Real-DB acceptance is OPEN.** The migration is unapplied; the unique index and
-  the transaction's rollback are properties of Postgres, not of the double.
+- **Real-DB acceptance is OPEN (runnable now).** The 37.8 migration is applied, so
+  the unique index and the transaction's rollback can be exercised; the properties
+  are Postgres's, not the double's.
 - **F1/F2 resolved by construction, not by live evidence.** The design avoids any
   schema change and any new path, but "no schema change needed" was argued from the
   code, not observed on a database.
 - **`MATERIALIZED` is exposed only at the read boundary.** If a future write path
   ever consults `SETTLED_PROPOSAL_STATES` to decide materializability, the two must
   not be conflated — the reason for keeping them separate is documented inline.
-- **I6 remains the only open P0** and still gates 37.12. This phase does not
+- **I6 was the only open P0; it is now `VERIFIED` (2026-10-20)** by a real-DB
+  cross-tenant acceptance run, so 37.12 is unblocked. This phase does not
   execute anything, so it is not gated by I6.
 
 ## 12. Acceptance Checklist and Recommendation
@@ -278,7 +282,7 @@ at the mocked boundary and `jest.setup-db-guard.ts` fails any real connection.
 - [x] 56 suites / 1074 tests; tsc, eslint, `prisma validate`, `git diff --check`
       clean.
 - [ ] **Real-database round-trip and unique-constraint enforcement (OPEN — 37.8
-      migration unapplied).**
+      migration now APPLIED, so runnable).**
 - [ ] Independent acceptance (out of this document's hands).
 
 **Recommendation:** record 37.11 in the tracker as `IMPLEMENTED` pending

@@ -88,13 +88,14 @@ it is signature-verified and calls `advanceWorkflow`, not `startWorkflow`.
 - `git diff --check`: clean.
 - Level: **unit / route-level with mocked boundaries** (auth, `getOrgAccess`,
   Prisma, `startWorkflow`, `advanceWorkflow`). A real-Postgres cross-tenant
-  integration run was **not** performed for I6; the mocked predicates mirror the
-  production query text exactly.
+  integration run was **not** performed in *this* pass; the mocked predicates
+  mirror the production query text exactly.
 
-**Gate status (reconciled 2026-10-20).** Because the real-Postgres acceptance run
-was not performed, **I6 is NOT `VERIFIED`** and **37.12 remains BLOCKED**. The
-source fix and its mocked suites are necessary but not sufficient for Gate G. See
-the issue register §I6 and `assignments-37-tracker.md`.
+**Gate status (superseded 2026-10-20).** The real-PostgreSQL acceptance run this
+note deferred was subsequently performed and passed — **I6 is `VERIFIED` and 37.12
+is unblocked.** See `docs/dev-log/2026-10-20-i6-real-db-acceptance.md`
+(`src/tests/security/i6-cross-tenant.realdb.test.ts`, 10/10). The record above
+stands as the source-fix pass; it is no longer the last word on Gate G.
 
 ## Constraints honored
 

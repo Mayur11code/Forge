@@ -199,20 +199,21 @@ then treated as a canonical `WorkflowDefinition` source.
 ticket · **must be closed before 37.12**, i.e. before Assignment 37 hands any
 generated workflow to the existing execution engine.
 
-**Status:** IMPLEMENTED (source-level fix complete; mocked/unit regression suite
-green) — **real-PostgreSQL cross-tenant verification OPEN**. The fix landed on
+**Status:** IMPLEMENTED — **VERIFIED (2026-10-20)** by a real-PostgreSQL
+cross-tenant acceptance run. The fix landed on
 `feat/37.1-action-capability-catalog`; see §I6 Resolution below. Originally
 recorded after Phase 0 closed, from a separate inspection of the execution
 entrypoint. Phase 0 findings are not amended by this entry; I6 is an additional
 finding in its own right.
 
-**Gate status (reconciled 2026-10-20).** The source fix and its mocked tests are
-complete, but the acceptance evidence Gate G requires — a **real-database**
-cross-tenant run proving a caller authenticated for one organization cannot start
-another organization's workflow (and that no `WorkflowRun` row is created) — was
-**not** performed. I6 is therefore **not** `VERIFIED`, and **37.12 remains
-BLOCKED** on this gate. Do not mark I6 `CLOSED` or `VERIFIED` on the strength of
-the mocked suites alone.
+**Gate status (2026-10-20).** The source fix and its mocked tests are complete,
+**and** the acceptance evidence Gate G requires — a **real-database** cross-tenant
+run proving a caller authenticated for one organization cannot start another
+organization's workflow (and that no `WorkflowRun` row is created) — has now been
+performed and passed. I6 is therefore `VERIFIED`, and **37.12 is unblocked**.
+Evidence: `src/tests/security/i6-cross-tenant.realdb.test.ts` (10/10) and
+`docs/dev-log/2026-10-20-i6-real-db-acceptance.md`. The mocked suites are retained
+but are not, by themselves, the Gate G evidence.
 
 **Affected files / functions.**
 
@@ -344,7 +345,7 @@ route open. No behavior at this route is analyzed or changed here.
 
 ---
 
-#### I6 Resolution (source fix implemented; mocked tests green; real-DB verification OPEN)
+#### I6 Resolution (source fix + mocked tests + real-DB acceptance — VERIFIED)
 
 **Contract.** `startWorkflow` no longer accepts an id in isolation. Its signature
 is now `startWorkflow(orgId, workflowId, triggerData = {})`, and the lookup is
@@ -378,25 +379,37 @@ it is signature-verified and calls `advanceWorkflow`, not `startWorkflow`.
 | `src/tests/workflow/trigger-tenant-scope.test.ts` | lookup predicate carries `orgId`; foreign workflow refused **and** `workflowRun.create` / `advanceWorkflow` not called; missing and foreign yield the same error; same-org positive path still creates the run and advances. |
 | `src/tests/workflow/workflow-run-boundary-scope.test.ts` | server action: unauthorized ⇒ refused with no `startWorkflow` call; verified org id (not the slug) is passed; action refusal propagates. route: unauthenticated ⇒ `401` with no lookup; lookup is membership-scoped and starts with the resolved org; foreign and missing both `404` with the same response shape and no `startWorkflow` call. |
 
-**Verification performed.** Focused suites pass; full Jest suite
-**58 suites / 1087 tests** pass (was 56 / 1077); `tsc --noEmit` clean; ESLint clean
-on all changed files; `git diff --check` clean. Verification level: **unit /
-route-level with mocked boundaries (auth, `getOrgAccess`, Prisma, `startWorkflow`,
-`advanceWorkflow`)**. A real-Postgres cross-tenant integration run was **not**
-performed for I6; the mocked predicates mirror the production query text exactly.
+**Verification performed.** Focused mocked suites pass; full default Jest suite
+**64 suites / 1142 tests** pass; `tsc --noEmit` clean; ESLint clean
+on all changed files; `git diff --check` clean. Verification level:
+**unit / route-level with mocked boundaries (auth, `getOrgAccess`, Prisma,
+`startWorkflow`, `advanceWorkflow`)— plus a real-database acceptance run.**
 
-**Gate G status (reconciled 2026-10-20).** Source-level reconciliation is
-complete and the mocked suites are green, **but this is not the acceptance
-evidence Gate G defines.** Gate G requires a real-database demonstration that a
-caller authenticated for organization A cannot start organization B's workflow and
-that no `WorkflowRun` row is created. That run is **OPEN**. I6 is **not** `VERIFIED`
-and **37.12 stays BLOCKED** until it lands. The mocked suites are necessary but not
-sufficient.
+**Real-database acceptance (Gate G evidence, 2026-10-20).** A separate suite,
+`src/tests/security/i6-cross-tenant.realdb.test.ts` (**10/10**), runs the **real**
+Prisma client, the **real** `getOrgAccess`, `startWorkflow`, `triggerWorkflowRun`
+and the test-run route against the configured PostgreSQL database (`auth()` and
+`advanceWorkflow` are mocked so identity is deterministic and no QStash/Redis/
+action side effects fire). It proves: an org-A caller cannot start org B's
+workflow and `workflowRun.count({ workflowId: B }) === 0`; a nonexistent workflow
+is refused indistinguishably; the same-org positive path creates exactly one
+`RUNNING` run with the expected `context.trigger.outputs` and reaches
+`advanceWorkflow`; a payload-smuggled org id cannot redirect the tenant; and the
+test-run route returns an identical `404` for foreign vs missing with no run.
+Fixtures are created under a unique prefix and removed with a verified
+zero-leftover check. It is wired via `jest.realdb.config.ts` +
+`jest.setup-realdb.ts` (which omit the default PrismaClient refusal); the default
+config ignores `*.realdb.test.ts`. See
+`docs/dev-log/2026-10-20-i6-real-db-acceptance.md`.
 
-**Residual / follow-ups.** At source level, every production caller of
+**Gate G status (2026-10-20).** Met. I6 is `VERIFIED`; **37.12 is unblocked.** The
+mocked suites are necessary but not sufficient; the real-DB run above is the
+evidence Gate G defines.
+
+**Residual / follow-ups.** Every production caller of
 `startWorkflow` is one of the two entry points above, and both derive `orgId`
-server-side; adding an unscoped call shape would not compile. This is asserted at
-the mocked boundary only — a real-DB cross-tenant run (Gate G) remains **OPEN**.
+server-side; adding an unscoped call shape would not compile — now asserted both
+at the mocked boundary and against the real database.
 A plain-string sentinel in a clarified
 proposal still fails `isReferenceTemplate` and can re-arm the loop
 (`workflow-proposal.ts:293,427`) — an unrelated defect, tracked separately, not
@@ -1303,15 +1316,15 @@ preview)** — complete and tested at the mocked boundary; their
 documented Verification Gates are not yet satisfied.
 
 **Current blockers:**
-- I6 — source fix complete and mocked tests green, but **real-PostgreSQL
-  cross-tenant verification is OPEN**, so the P0 is **not closed** and **37.12
-  remains BLOCKED** (reconciled 2026-10-20).
+- None at P0. **I6 is `VERIFIED` (2026-10-20)** by a real-PostgreSQL cross-tenant
+  acceptance run, so **37.12 is unblocked**. Outstanding non-P0 gates: 37.8
+  migration-applied verification, 37.11 real-DB materialization round-trip, and
+  the usual per-phase verification debt.
 
 **P0 set:** I1, I2, I6 — three separate tickets, of which **I1 and I2 are CLOSED
-(2026-09-30)** under Phases 37.0A and 37.0B. **I6 is the only open P0**: its
-source fix and mocked suites are done, but its real-DB acceptance run is not, and
-it still gates 37.12. None of the three was ever satisfied by closing either of
-the others.
+(2026-09-30)** under Phases 37.0A and 37.0B, and **I6 is now CLOSED
+(2026-10-20)** by its real-DB acceptance run. **No P0 remains open.** None of the
+three was ever satisfied by closing either of the others.
 
 **Current implementation target:** 37.11 — workflow materialization (dependency
 37.10 satisfied; F1/F2 persistence decision still open)
@@ -1369,8 +1382,10 @@ verification confirms no workflow-maintenance schedule exists.
 ### Deferred follow-ups (recorded 2026-10-20)
 
 Tracked so that deferred cleanup is not mistaken for closed work. Items 1–3 are
-ordinary deferrals; the I6 acceptance run, the 37.8 migration gate and the 37.11
-real-DB materialization gate are **blockers**, not deferrals.
+ordinary deferrals. The I6 acceptance run was **completed and passed 2026-10-20**
+(no longer a blocker); the 37.8 migration gate and the 37.11 real-DB
+materialization gate remain **gates** (and note the 37.8 migration is now applied
+— see item 6).
 
 1. **`@modal/new` route correction (deferred; config-only workaround in place).**
    `next.config.ts` carries `deprecated: { looseRouteMatching: true }` to work
@@ -1393,6 +1408,12 @@ real-DB materialization gate are **blockers**, not deferrals.
 5. **Conditional credential rotation (owner action).** No confirmed exposure —
    `forge/.env` is untracked, ignored, and absent from all commits. Rotation is
    owner hygiene, not a confirmed leak remediation.
+6. **Migration-state correction (2026-10-20).** `npx prisma migrate status`
+   reports **"Database schema is up to date!"** — all 26 migrations, including the
+   37.8 migration `20261017120000_agent_proposal_lifecycle`, are **applied** to the
+   configured database. Docs that describe that migration as "unapplied" are
+   stale. The 37.11 real-DB round-trip is therefore runnable now; its own
+   verification remains outstanding.
 
 ---
 
