@@ -1,14 +1,34 @@
 import { db } from "@/lib/prisma/db";
 import { UTApi } from "uploadthing/server";
+import { auth } from "@/lib/auth/auth";
 
 const utapi = new UTApi();
 
+// S9 (security) — this function had no authorization. It has no caller in the
+// repository today (so it is not HTTP-reachable), but it is a destructive,
+// tenant-scoped operation and is hardened defensively: the caller must be a
+// member of the organization that owns the attachment's task.
 export async function deleteAttachment(id: string) {
   try {
+    const session = await auth();
+    const userId = session?.user?.id;
+    if (!userId) {
+      throw new Error("Unauthorized");
+    }
+
     // 1. NESTED FETCH: We jump from Attachment -> Task -> Project in one query.
     // This is more efficient than multiple separate await calls.
-    const file = await db.attachment.findUnique({
-      where: { id },
+    const file = await db.attachment.findFirst({
+      where: {
+        id,
+        // Tenant scope: the attachment's task must belong to an org the caller
+        // is a member of, or this resolves to null exactly as a missing row.
+        task: {
+          project: {
+            organization: { memberships: { some: { userId } } },
+          },
+        },
+      },
       select: {
         fileKey: true,
         size: true,

@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
+import { resolveSeedPassword } from "../src/lib/security/seed-password";
 
 const connectionString = process.env.DATABASE_URL!;
 const pool = new Pool({ connectionString });
@@ -14,7 +15,13 @@ async function main() {
   // -----------------------------
   // USERS
   // -----------------------------
-  const password = "securepassword";
+  // S12 (security) — the seed password is a credential and must never be a
+  // hardcoded literal. `resolveSeedPassword` fails closed: it uses
+  // `SEED_PASSWORD` when configured, allows a fixed local-only password ONLY
+  // under the explicit `ALLOW_INSECURE_SEED=true` opt-in outside production,
+  // and otherwise throws so a production seed aborts rather than planting a
+  // known credential. The password value is never printed.
+  const password = resolveSeedPassword();
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const adminUser = await prisma.user.upsert({
@@ -224,9 +231,9 @@ async function main() {
   console.log("-----------------------------------------");
   console.log("✅ Seed complete!");
   console.log("");
-  console.log("🧪 TEST ACCOUNTS:");
-  console.log("ADMIN  → admin@forge.com / securepassword");
-  console.log("MEMBER → member@forge.com / securepassword");
+  console.log("🧪 TEST ACCOUNTS (password supplied via SEED_PASSWORD):");
+  console.log("ADMIN  → admin@forge.com");
+  console.log("MEMBER → member@forge.com");
   console.log("");
   console.log("🏢 ORGS:");
   console.log("• forge-hq (projects + tasks)");

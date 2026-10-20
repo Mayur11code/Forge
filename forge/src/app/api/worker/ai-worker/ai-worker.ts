@@ -5,12 +5,8 @@ export const aiWorkerHandler: WorkerHandler<"EMBEDDING_REQUESTED"> = async ({
 }) => {
   const { entityId, type } = event.data;
 
-  console.log("🤖 AI WORKER → EMBEDDING");
-
   // simulate AI work
   await new Promise((res) => setTimeout(res, 1000));
-
-  console.log(`Generated embedding for ${type}: ${entityId}`);
 };
 
 

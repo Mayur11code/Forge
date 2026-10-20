@@ -33,7 +33,7 @@ function processEvent(event: ForgeEvent) {
             console.log(`Task created with ID: ${event.payload.taskId} by user: ${event.payload.creatorId}`);
             break;
         case "MEMBER_INVITED":
-            console.log(`Member invited with email: ${event.payload.email} by user: ${event.payload.inviterId}`);
+            console.log(`Member invited by user: ${event.payload.inviterId}`);
             break;
         case "ORG_DELETED":
             console.log(`Organization deleted with ID: ${event.payload.orgId} for reason: ${event.payload.reason}`);

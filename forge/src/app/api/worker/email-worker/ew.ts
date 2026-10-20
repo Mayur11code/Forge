@@ -6,7 +6,6 @@ export const emailWorkerHandler: WorkerHandler<"SEND_EMAIL"> = async ({
   event,
 }) => {
   const { subject, body, userId } = event.data;
-  console.log("📧 Sending background email...");
 
   try {
     const htmlTemplate = `

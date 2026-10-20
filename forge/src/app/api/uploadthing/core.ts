@@ -10,6 +10,29 @@ const utapi = new UTApi();
 // FileRouter is the type that will be used to ensure the correct configuration
 //here f is the function that will be used to create the uploadthing instance, it can be named anything you want. The important part is that it is used to create the uploadthing instance and that it is used to define the uploadRouter.
 
+/**
+ * S4 (security) — resolve an untrusted `taskId` under an already-authorized
+ * `orgId`. Exported so the tenant predicate is unit-testable without reaching
+ * through the uploadthing builder, which does not expose its middleware.
+ *
+ * Returns false when the task does not exist OR belongs to another tenant, so a
+ * foreign id can never gate an upload into someone else's task.
+ */
+export async function assertTaskInOrg(
+  orgId: string,
+  taskId: string,
+): Promise<boolean> {
+  const task = await db.task.findFirst({
+    where: {
+      id: taskId,
+      project: { orgId },
+    },
+    select: { id: true },
+  });
+
+  return task !== null;
+}
+
 export const uploadRouter = {
   taskAttachment: f({
     //taskAttachment is the name of the route, it can be named anything you want. 
@@ -35,8 +58,16 @@ export const uploadRouter = {
         throw new Error("Unauthorized");
       }
       if (access.membership.role === "MEMBER") {
-        console.log("User does not have permission to upload attachments");
+        console.warn("User does not have permission to upload attachments");
         throw new Error("Insufficient permissions");
+      }
+
+      // S4 (security) — TENANT SCOPE. `taskId` is untrusted input. It must name a
+      // task that belongs to the organization the caller was authorized against,
+      // or an upload can be attached to another tenant's task. Checked BEFORE
+      // the quota increment so a rejected upload never needs a refund.
+      if (!(await assertTaskInOrg(access.organization.id, input.taskId))) {
+        throw new Error("Task not found in this organization");
       }
 
       //STORAGE QUOTA CHEECK, it is being done in middleware because we want to prevent the upload from happening if the user has exceeded their storage quota. This way we can save bandwidth and storage space. We check the storage limit and storage used for the organization, and if the storage used is greater than or equal to the storage limit, we throw an error and prevent the upload from happening.
