@@ -304,19 +304,24 @@ describe("I6 / Gate G — triggerWorkflowRun server action against a real databa
     expect(advanceWorkflowMock).toHaveBeenCalled();
   });
 
-  it("cannot be tricked into B's tenant by smuggling an org id in the payload", async () => {
+  it("refuses a payload that smuggles an org id, before the engine (37.12 boundary)", async () => {
     setAuthedUser(userA.id);
 
+    const before = await runCount(workflowA.id);
     const result = await triggerWorkflowRun(workflowA.id, SLUG_A, {
       projectId: `${TAG}_project`,
       orgId: orgB.id,
       organizationId: orgB.id,
     });
 
-    expect(result.success).toBe(true);
-    // The tenant actually used is A (from the verified slug); the smuggled id is
-    // opaque trigger data. No B workflow was touched.
+    // 37.12 tightened the trigger context into a data boundary: a reserved
+    // tenant/identity key is refused outright rather than silently ignored, so
+    // the action stops before any run is created. The tenant was never at risk
+    // (it is server-derived), but the explicit refusal is the stronger contract.
+    expect(result).toEqual({ success: false, error: "Invalid trigger data." });
+    expect(await runCount(workflowA.id)).toBe(before);
     expect(await runCount(workflowB.id)).toBe(0);
+    expect(advanceWorkflowMock).not.toHaveBeenCalled();
   });
 });
 
