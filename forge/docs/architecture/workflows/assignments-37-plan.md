@@ -1104,7 +1104,10 @@ materialization of an approved proposal into a persisted, triggerless `Workflow`
 (no schema change, no new migration). Real-DB round-trip OPEN (37.8 migration
 unapplied).
 Tested at the mocked boundary; their documented Verification Gates are not yet satisfied.
-Current blockers: **I6** — the one remaining P0 (gates 37.12 only).
+Current blockers: **I6** — the one remaining P0 (gates 37.12 only). Its source fix
+landed 2026-10-20 and its mocked suites are green, but the **real-PostgreSQL
+cross-tenant acceptance run is OPEN (reconciled 2026-10-20)**, so I6 is **not
+`VERIFIED`** and 37.12 stays BLOCKED.
 Current implementation target: **37.12 — execution handoff** (gated on I6).
 Later architectural decisions: **F4**. (F1/F2 resolved at 37.11; F5 resolved at 37.4.)
 
