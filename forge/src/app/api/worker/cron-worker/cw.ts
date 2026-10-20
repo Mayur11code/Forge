@@ -1,8 +1,6 @@
 import { db } from "@/lib/prisma/db";
 
 export async function cronWorkerHandler() {
-  console.log("⏰ [CRON] Running Daily Digest...");
-
   const usersWithTasks = await db.user.findMany({
     where: {
       tasks: {
@@ -21,15 +19,8 @@ export async function cronWorkerHandler() {
     },
   });
 
-  for (const user of usersWithTasks) {
-    console.log(
-      `✉️ [Email] To: ${user.email} | ${user.tasks.length} tasks`
-    );
-
-    user.tasks.forEach((task) => {
-      console.log(`   - [${task.project.name}] ${task.title}`);
-    });
-  }
-
-  console.log("✅ [CRON] Done");
+  // Do not log recipient email addresses, project names, or task titles: the
+  // digest is per-user PII and the previous per-user logging disclosed it to
+  // the log sink. A single aggregate count is enough to confirm the run.
+  console.log(`[CRON] Daily digest: ${usersWithTasks.length} user(s)`);
 }

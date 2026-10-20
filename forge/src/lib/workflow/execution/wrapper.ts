@@ -89,24 +89,11 @@ export async function wrapStepOperation(
   if (!stepRun) {
     throw new Error(`CRITICAL: StepRun ${stepId} not found for Run ${runId}`);
   }
-  console.log(kind, "kind");
-
-
-  console.log(`[${new Date().toISOString()}] 🔍 Worker: Attempting to claim step ${stepId} for ${operation}`);
-
 
   if (
     kind ===
     "TRIGGER"
   ) {
-
-
-    
-    console.log(
-      `[TRIGGER] Auto-completing ${stepId} since it's a trigger.`
-
-    );
-
 
     await db.stepRun.update({
       where: {
