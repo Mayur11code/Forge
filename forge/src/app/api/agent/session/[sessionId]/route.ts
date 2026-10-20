@@ -25,6 +25,7 @@ import { validateCriticalityDecisions } from "@/lib/workflow-types/workflow-crit
 import type { CriticalityDecisions } from "@/lib/workflow-types/workflow-criticality";
 import { getToolExecutionsForSession } from "@/lib/ai/agent/services/tool-execution-service";
 import { describeToolProposal } from "@/lib/ai/agent/tools/registry";
+import { toPublicError } from "@/lib/security/public-error";
 import { AgentToolExecutionStatus, AgentProposalState } from "@prisma/client";
 
 type RouteContext = {
@@ -278,7 +279,12 @@ export async function GET(
           toolName: execution.toolName,
           input: execution.input,
           status: execution.status,
-          error: execution.error,
+          // S5 (security) — the persisted `error` is untrusted for disclosure
+          // purposes, regardless of how it was written. `toPublicError` returns
+          // a value ONLY when it matches the application's allowlist of authored
+          // user-facing messages; anything else (a database error, a filesystem
+          // path, a provider response, a stack) collapses to a generic message.
+          error: toPublicError(execution.error),
           confirmedAt: execution.confirmedAt,
           cancelledAt: execution.cancelledAt,
           proposalState: execution.proposalState,

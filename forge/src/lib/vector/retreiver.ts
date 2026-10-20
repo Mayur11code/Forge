@@ -41,11 +41,8 @@ export async function retrieveRelevantContext(
         const searchHits = await vectorStore.query(embedding, 5);
 
         if (!searchHits.matches || searchHits.matches.length === 0) {
-            console.log(`[RETRIEVER] Zero semantic hits located for Org: ${orgId}`);
             return "";
         }
-
-        console.log(`🎯 [RETRIEVER] Successfully located ${searchHits.matches.length} matching vector fragments.`);
 
         // 4. Assemble and Format the Context Block
         const compiledContextBlocks = searchHits.matches

@@ -145,6 +145,67 @@ describe("isUnsignedWorkerAllowed", () => {
 });
 
 // ---------------------------------------------------------------------------
+// S10 — production cannot enable unsigned workers
+// ---------------------------------------------------------------------------
+describe("isUnsignedWorkerAllowed production guard", () => {
+  const NODE_ENV_KEY = "NODE_ENV";
+
+  function withEnvPair(
+    optIn: string | undefined,
+    nodeEnv: string | undefined,
+    fn: () => void,
+  ) {
+    const env = process.env as Record<string, string | undefined>;
+    const prevOptIn = env[ENV_KEY];
+    const prevNodeEnv = env[NODE_ENV_KEY];
+
+    try {
+      if (optIn === undefined) delete env[ENV_KEY];
+      else env[ENV_KEY] = optIn;
+
+      if (nodeEnv === undefined) delete env[NODE_ENV_KEY];
+      else env[NODE_ENV_KEY] = nodeEnv;
+
+      fn();
+    } finally {
+      if (prevOptIn === undefined) delete env[ENV_KEY];
+      else env[ENV_KEY] = prevOptIn;
+
+      if (prevNodeEnv === undefined) delete env[NODE_ENV_KEY];
+      else env[NODE_ENV_KEY] = prevNodeEnv;
+    }
+  }
+
+  it("refuses the opt-in when NODE_ENV is production", () => {
+    // Even an operator who deliberately set the flag cannot make a production
+    // worker accept unsigned requests. This is the enforced invariant that
+    // replaces "rely on the operator plus a warning".
+    withEnvPair("true", "production", () => {
+      expect(isUnsignedWorkerAllowed()).toBe(false);
+    });
+  });
+
+  it("honours the opt-in outside production", () => {
+    withEnvPair("true", "development", () => {
+      expect(isUnsignedWorkerAllowed()).toBe(true);
+    });
+  });
+
+  it("stays safe when the opt-in is present but NODE_ENV is unset", () => {
+    // An unset NODE_ENV is not production, so local use still works.
+    withEnvPair("true", undefined, () => {
+      expect(isUnsignedWorkerAllowed()).toBe(true);
+    });
+  });
+
+  it("stays safe in production regardless of the opt-in value", () => {
+    withEnvPair("TRUE", "production", () => {
+      expect(isUnsignedWorkerAllowed()).toBe(false);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Scheduled deliveries
 // ---------------------------------------------------------------------------
 

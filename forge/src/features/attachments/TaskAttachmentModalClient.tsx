@@ -104,8 +104,6 @@ function handleOpen() {
                             onClick={async () => {
                               const signedUrl = await getSignedDownloadUrl(file.fileKey);
 
-                              console.log("💕💕SIGNED DOWNLOAD URL:", signedUrl);
-
                               window.open(signedUrl, "_blank");
 
                             }}
