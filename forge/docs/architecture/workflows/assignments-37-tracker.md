@@ -347,7 +347,7 @@ Always use the smallest applicable status.
 | 37.12 | Execution handoff | **IMPLEMENTED** | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | 2026-10-21 — 5 new suites (5/10/5/4/5) + boundary-scope updated; full 68/1168; focused workflow+security 26/403; realdb I6 10/10 + handoff 5/5; tsc 0; eslint 0; not committed | No new executor, lock, or queue runner. Explicit authenticated Run action → `startWorkflow`; validated optional trigger context (reserved keys refused); canvas `mockProjectPayload` removed. Multiple-run behaviour preserved. **Not `VERIFIED`.** |
 | 37.13 | Prompt / DAG planning instructions | **IMPLEMENTED** | P1 | 37.12 | 37.14, 37.16 | Prompt update + version bump | Prompt references real contracts only | 2026-10-21 — new `prompt-dag-planning.test.ts` 29/29; full 69/1197; 7 relevant suites 191/191; tsc 0; eslint 0; diff-check clean; not committed | `AGENT_PROMPT_VERSION` `v5 → v6`; DAG/parallelism, local-id, capability-contract, reference-grammar, clarification, criticality, propose-only and validation-observation guidance added to `<WORKFLOW_GENERATION>`. v5 remediation text preserved. `generate-workflow/tool.ts` unchanged (out of scope). **Not `VERIFIED` — manual prompt-vs-registry review done; model obedience is a 37.16 concern.** |
 | 37.14 | Self-healing observations | **IMPLEMENTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | 2026-10-21 — `three-loop-separation.test.ts` 6/6 + `no-second-retry-controller.test.ts` 8/8 + `proposal-review-expiry.test.ts` 35/35 (10 new); agent tree 41/798; full 71/1221; tsc 0; eslint 0; diff-check clean; not committed | No second retry controller. AD-P7 resolved: `WAITING_CONFIRMATION` is the session-level human-wait marker (RUNNING→WAITING on park; cleared back to RUNNING on clarification answer, approval, decline, expiry). Distinct outcomes preserved below the session status. Proposal-review expiry discovers due proposals regardless of session status but releases the wait only when no other human act (clarification, other proposal, tool confirmation) is still pending. **Not `VERIFIED` — mocked integration only; no real-PG wait-CAS exercise, no live model call.** |
-| 37.15 | Full test matrix | **NOT_STARTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | — | Includes I1 regression test. |
+| 37.15 | Full test matrix | **IMPLEMENTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | 2026-10-21 — new `workflow-integration-diamond.test.ts` 9/9 (assembled engine); `dag-validation` +fan-in, +disconnected; full 72 suites / 1232 tests; realdb 2 suites / 15 tests; tsc 0; eslint 0; diff-check clean; not committed | Every Test Gate category has a named covering suite. **Mocked integration** — the action's `createTaskInOrg` write is mocked, so no real-PG engine run. No product source, schema, migration or prompt changed by this phase. **Not `VERIFIED`** — predecessors 37.4/37.5/37.7–37.14 are `IMPLEMENTED`, not `VERIFIED`; the live gate is 37.16's. Includes I1 regression test. |
 | 37.16 | Live capstone verification | **NOT_STARTED** | P1 | 37.15 | 37.17 | "Onboard Acme Enterprise." end-to-end | Every live check individually evidenced | — | Includes I5 verification. |
 | 37.17 | Documentation / closure | **NOT_STARTED** | P1 | 37.16 | — | Final docs + register reconciliation | All checklist items resolved | — | No issue may be closed without evidence. |
 
@@ -2921,7 +2921,7 @@ which the phase does not require and which would prejudge 37.11 materialization;
 
 ### Status
 
-**NOT_STARTED** · Priority: P1
+**IMPLEMENTED** · Priority: P1
 
 ### Objective
 
@@ -2976,70 +2976,70 @@ quietly inside this phase.
 
 ### Test Gate — contract tests
 
-- [ ] valid proposal
-- [ ] duplicate `localRef`
-- [ ] unknown action
-- [ ] malformed input
-- [ ] malformed dependency
-- [ ] oversized proposal
-- [ ] strict-schema rejection
+- [x] valid proposal
+- [x] duplicate `localRef`
+- [x] unknown action
+- [x] malformed input
+- [x] malformed dependency
+- [x] oversized proposal
+- [x] strict-schema rejection
 
 ### Test Gate — graph tests
 
-- [ ] linear chain
-- [ ] fan-out
-- [ ] fan-in
-- [ ] diamond
-- [ ] disconnected graph
-- [ ] self dependency
-- [ ] cycle
-- [ ] unknown dependency
+- [x] linear chain
+- [x] fan-out
+- [x] fan-in
+- [x] diamond
+- [x] disconnected graph
+- [x] self dependency
+- [x] cycle
+- [x] unknown dependency
 
 ### Test Gate — reference tests
 
-- [ ] valid output reference
-- [ ] unknown source step
-- [ ] unknown output
-- [ ] missing execution dependency
-- [ ] nested reference
-- [ ] malformed reference
-- [ ] unavailable runtime state
+- [x] valid output reference
+- [x] unknown source step
+- [x] unknown output
+- [x] missing execution dependency
+- [x] nested reference
+- [x] malformed reference
+- [x] unavailable runtime state
 
 ### Test Gate — human-input tests
 
-- [ ] one missing input
-- [ ] multiple missing inputs
-- [ ] user answer
-- [ ] regenerated proposal remains valid
+- [x] one missing input
+- [x] multiple missing inputs
+- [x] user answer
+- [x] regenerated proposal remains valid
 
 ### Test Gate — criticality tests
 
-- [ ] model cannot set final criticality
-- [ ] human criticality persists
-- [ ] changed criticality affects only the intended materialized policy
-- [ ] confirmed value cannot be overridden
+- [x] model cannot set final criticality
+- [x] human criticality persists
+- [x] changed criticality affects only the intended materialized policy
+- [x] confirmed value cannot be overridden
 
 ### Test Gate — confirmation tests
 
-- [ ] exact proposal approval
-- [ ] changed proposal cannot reuse old approval
-- [ ] cancel
-- [ ] expiry
-- [ ] duplicate confirmation is idempotent
+- [x] exact proposal approval
+- [x] changed proposal cannot reuse old approval
+- [x] cancel
+- [x] expiry
+- [x] duplicate confirmation is idempotent
 
 ### Test Gate — execution integration
 
-- [ ] independent A and B execute
-- [ ] fan-in C waits for both
-- [ ] output propagation A → input B
-- [ ] real action execution
-- [ ] resolver behaviour
-- [ ] parallel execution
+- [x] independent A and B execute
+- [x] fan-in C waits for both
+- [x] output propagation A → input B
+- [x] real action execution
+- [x] resolver behaviour
+- [x] parallel execution
 
 ### Test Gate — I1 regression (added in Phase 0)
 
-- [ ] cross-tenant workflow update rejected
-- [ ] same-tenant legitimate update succeeds
+- [x] cross-tenant workflow update rejected
+- [x] same-tenant legitimate update succeeds
 
 ### Verification Gate
 
@@ -3057,9 +3057,132 @@ Commit/PR:      —
 Relevant files: —
 ```
 
+### Test Gate coverage map
+
+Every checkbox above resolves to a named `it(...)` in a named file. Evidence
+class is recorded so a later reader does not mistake a mocked suite for a real
+one.
+
+| Gate | Item | Suite | Evidence class |
+|---|---|---|---|
+| contract | valid proposal | `workflow-proposal.test.ts` — "accepts a valid proposal" | unit |
+| contract | duplicate `localRef` | `workflow-proposal.test.ts` — "cannot represent a duplicate localRef" | unit |
+| contract | unknown action | `workflow-proposal.test.ts` — "rejects an action that is not a registered workflow action" | unit |
+| contract | malformed input | `workflow-proposal.test.ts` — "rejects a malformed literal value with the capability message" | unit |
+| contract | malformed dependency | `workflow-proposal.test.ts` — "rejects an invalid dependency and reports its step and index" | unit |
+| contract | oversized proposal | `workflow-proposal.test.ts` — "rejects a proposal whose serialized size exceeds the limit" | unit |
+| contract | strict-schema rejection | `workflow-proposal.test.ts` — "is strict, rejecting an unknown step field" | unit |
+| graph | linear chain | `dag-validation.test.ts` — "accepts a linear chain" | unit |
+| graph | fan-out | `dag-validation.test.ts` — "accepts a parallel fan-out" | unit |
+| graph | fan-in | `dag-validation.test.ts` — "accepts a fan-in, where a join depends on two independent roots" **(added by 37.15)** | unit |
+| graph | diamond | `dag-validation.test.ts` — "accepts a diamond, where a join depends on two branches" | unit |
+| graph | disconnected graph | `dag-validation.test.ts` — "accepts a valid graph with disconnected components as independent roots" | unit |
+| graph | self dependency | `dag-validation.test.ts` — "rejects a self-dependency" | unit |
+| graph | cycle | `dag-validation.test.ts` — "rejects a direct two-step cycle" | unit |
+| graph | unknown dependency | `dag-validation.test.ts` — "rejects a dependency on a step that does not exist" | unit |
+| reference | valid output reference | `proposal-references.test.ts` — "accepts a reference to a declared output on an existing step (whole value)" | unit |
+| reference | unknown source step | `proposal-references.test.ts` — "rejects a reference to a step that is not in the proposal" | unit |
+| reference | unknown output | `proposal-references.test.ts` — "rejects an undeclared output field" | unit |
+| reference | missing execution dependency | `proposal-references.test.ts` — "requires the referenced source in dependsOn (MISSING_DATA_DEPENDENCY)" | unit |
+| reference | nested reference | `proposal-references.test.ts` — "accepts a valid reference nested inside an input object" | unit |
+| reference | malformed reference | `proposal-references.test.ts` — "rejects a reference with a wrong namespace after a valid step" | unit |
+| reference | unavailable runtime state | `proposal-references.test.ts` — "rejects an out-of-scope runtime namespace as UNAVAILABLE_REFERENCE_SCOPE" | unit |
+| human input | one missing input | `missing-input-protocol.test.ts` — "1. One required field absent from the proposal produces a MISSING_REQUIRED_INPUT validation issue at the correct field path" | mocked-integration |
+| human input | multiple missing inputs | `missing-input-protocol.test.ts` — "2. Multiple required fields absent from the proposal are all identified" | mocked-integration |
+| human input | user answer | `clarification-continuation.test.ts` — "resumes the same session through the existing dispatch and loop code" | mocked-integration |
+| human input | regenerated proposal remains valid | `clarification-continuation.test.ts` — "resumes the same session through the existing dispatch and loop code" (re-runs the real compiler on the regenerated proposal) | mocked-integration |
+| criticality | model cannot set final criticality | `workflow-proposal.test.ts` — "is strict, rejecting an unknown step field" | unit |
+| criticality | human criticality persists | `criticality-service.test.ts` — "records the decision once, tagged by the interaction id, with no outbox event" | mocked-integration |
+| criticality | changed criticality affects only the intended materialized policy | `proposal-materialization.test.ts` — "persists a definition that preserves actions, inputs, deps and criticality" (persisted `kickoff.isCritical=false` beside `follow.isCritical=true`) | mocked-integration |
+| criticality | confirmed value cannot be overridden | `workflow-criticality.test.ts` — "refuses an approval recorded for revision A when only %s differs in revision B" | unit |
+| confirmation | exact proposal approval | `proposal-decision.test.ts` — "approves a proposal and records a self-describing audit line" | mocked-integration |
+| confirmation | changed proposal cannot reuse old approval | `proposal-decision.test.ts` — "409s REVISION_MISMATCH when the stored fingerprint disagrees with the persisted proposal" | mocked-integration |
+| confirmation | cancel | `proposal-decision.test.ts` — "declines a proposal and records the decline decision" | mocked-integration |
+| confirmation | expiry | `proposal-decision.test.ts` — "409s PROPOSAL_EXPIRED once the review window has closed" | mocked-integration |
+| confirmation | duplicate confirmation is idempotent | `proposal-decision.test.ts` — "treats a repeat of the same decision as an idempotent success with no writes" | mocked-integration |
+| execution integration | independent A and B execute | `workflow-integration-diamond.test.ts` — "dispatches independent roots A and B in the same evaluator pass" | mocked-integration |
+| execution integration | fan-in C waits for both | `workflow-integration-diamond.test.ts` — "holds the fan-in step C undispatched while B is outstanding after A has succeeded" | mocked-integration |
+| execution integration | output propagation A → input B | `workflow-integration-diamond.test.ts` — "propagates A's output into B's inputs through the real resolver and the real registered action" | mocked-integration |
+| execution integration | real action execution | `workflow-integration-diamond.test.ts` — "mocks persistence and transport only — the engine and the action are real" | mocked-integration (the action's `createTaskInOrg` write is mocked) |
+| execution integration | resolver behaviour | `workflow-integration-diamond.test.ts` — "propagates A's output into B's inputs through the real resolver and the real registered action"; `proposal-references.test.ts` — "resolves every extracted path through the real resolver (whole-string form)" | unit + mocked-integration |
+| execution integration | parallel execution | `workflow-integration-diamond.test.ts` — "creates no duplicate StepRuns and no duplicate action dispatch when the evaluator advances repeatedly"; `evaluator-concurrency.test.ts` | mocked-integration |
+| I1 regression | cross-tenant workflow update rejected | `workflow-update-scope.test.ts` — "refuses another organization's workflow and issues no write" | mocked-integration |
+| I1 regression | same-tenant legitimate update succeeds | `workflow-update-scope.test.ts` — "persists the compiled definition for the owning organization" | mocked-integration |
+
+**No 37.15 checklist item carries real-PostgreSQL evidence.** The two
+real-database suites in the repository (`i6-cross-tenant.realdb.test.ts`,
+`execution-handoff.realdb.test.ts`) belong to I6 and 37.12 and cover no 37.15
+item. The live-engine evidence is owed by 37.16.
+
+### Gaps closed by this phase
+
+1. **The engine had no assembled-path coverage.** Every pre-existing workflow
+   suite stopped at one boundary — the evaluator's decision without a step
+   running, the wrapper with the action registry mocked out, or the start
+   boundary with the engine mocked out. Nothing asserted that a root
+   dispatches, that a fan-in waits for both prerequisites, or that one step's
+   output becomes the next step's input. Those are the properties that fail
+   silently: a fan-in that fires early reads as a success, and an output that
+   never propagates reads as a step that did nothing.
+   `src/tests/workflow/workflow-integration-diamond.test.ts` closes that gap by
+   driving the real path: `startWorkflow` → `advanceWorkflow` → `POST
+   /api/workflow` → `resolveInputs` → `wrapStepOperation` → the real action
+   registry → the real `task.create` action → the real compare-and-set context
+   merge.
+2. **The graph gate had no standalone fan-in case.** Fan-in was only implicit
+   inside the diamond in the file that owns graph-shape validation, so a
+   validator that recognised only a common parent would have passed.
+   `dag-validation.test.ts` now pins the two-independent-roots shape
+   explicitly.
+
+### Boundaries of the new evidence
+
+- **Mocked:** the in-memory Prisma double, QStash `publishEvent`, the Redis
+  lock client, Pusher, and the one business boundary inside the action
+  (`createTaskInOrg`).
+- **Real:** the evaluator, the worker route, the resolver, the wrapper, the
+  context merge, the action registry, and the `task.create` action
+  implementation.
+- **Not claimed:** real-PostgreSQL engine execution (37.11 / 37.16), live
+  transport, live Gemini, deployed behaviour.
+
+### Defects exposed and their owning phase
+
+No product defect was exposed by this phase. One defect was found and fixed,
+and it belonged to the test harness rather than to a product phase:
+
+- **Test-harness defect (fixed here).** `src/tests/workflow/helpers/prisma-double.ts`
+  modelled the worker route's step-run relation as
+  `include: { run: { workflow: true } }` only. The route actually requests
+  `include: { run: { include: { workflow: true } } }`, which is the shape
+  Prisma documents. The double therefore returned a run with no `workflow` on
+  it, the route threw while reading `stepRun.run.workflow.definition`, and it
+  answered 500 — so every executed step stayed `PENDING` and the failure
+  looked exactly like a broken engine. `attachRun` now accepts all three
+  include shapes in use (`{ run: true }`, `{ run: { workflow: true } }`,
+  `{ run: { include: { workflow: true } } }`).
+
+No source, schema, migration, or prompt file was changed by this phase.
+
 ### Known Risks / Findings
 
-None. This phase aggregates.
+1. **Mocked integration, not a live engine.** The new integration suite is the
+   strongest assembled-path evidence in the repository, but the action's
+   `createTaskInOrg` write is behind a mock and persistence is the in-memory
+   double. A real-PostgreSQL engine run remains owed by 37.16.
+2. **No 37.15 checklist item has real-PostgreSQL evidence.** The repository's
+   two real-database suites cover I6 and 37.12, not 37.15.
+3. **Predecessor phases are not all `VERIFIED`.** 37.4, 37.5 and 37.7–37.14 are
+   `IMPLEMENTED`. 37.15's dependency clause asks for "each phase's own gate
+   passed"; their gates are recorded as passed at the `IMPLEMENTED` level, but
+   not one of them carries `VERIFIED`. This phase therefore records itself as
+   `IMPLEMENTED`, not `VERIFIED`.
+4. **Tracker inconsistency observed (not corrected here).** The 37.11 phase
+   detail still reads `NOT_STARTED` while the master status table reads
+   `IMPLEMENTED`. Reconciling another phase's record is not this phase's to
+   assert; it is recorded for 37.17's register reconciliation.
+5. **The issue register's phase list is stale.** Its 37.11–37.14 entries carry
+   no status, and 37.15 is blank. Left untouched for the same reason as (4).
 
 ### Decisions
 
@@ -3071,6 +3194,7 @@ Pending: none.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-21 | IMPLEMENTED | Ran the full matrix; added the assembled-engine integration suite; added the standalone fan-in graph case; repaired the Prisma double's step-run include shape | integration 9/9; dag-validation 26/26; workflow tree 21 suites / 368 tests; full 72 suites / 1232 tests; realdb 2 suites / 15 tests; tsc 0; eslint 0; diff-check clean; not committed |
 
 ---
 
@@ -3521,6 +3645,19 @@ no second dialect.
 | 2026-10-17 | 37.6 | Type check | Local - `npx tsc --noEmit` | **PASS** | exit 0 | 37.6 |
 | 2026-10-17 | 37.6 | Lint of changed files | Local - `npx eslint` | **PASS** | 0 errors, 0 warnings | 37.6 |
 | 2026-10-17 | 37.6 | Whitespace integrity | Local - `git diff --check` | **PASS** | clean | 37.6 |
+| 2026-10-21 | 37.15 | Assembled-engine integration suite — independent roots dispatched in one evaluator pass, fan-in held until both prerequisites succeed, output propagation A → input B through the real resolver, real registered action execution, real diamond join, no duplicate StepRuns or dispatches on repeated advancement | Local — `npx jest src/tests/workflow/workflow-integration-diamond.test.ts` | **PASS** | 9/9 tests | 37.15 |
+| 2026-10-21 | 37.15 | Graph gate — standalone fan-in case (two independent roots joined by one step) added to the file that owns graph-shape validation | Local — `npx jest src/tests/workflow/dag-validation.test.ts` | **PASS** | 26/26 tests (was 25) | 37.15 |
+| 2026-10-21 | 37.15 | Test-matrix audit — every Test Gate checkbox in §37.15 mapped to a named suite and `it(...)`, with evidence class recorded | Local — source inspection of `src/tests/` | **PASS** | 45/45 checkboxes mapped; 0 uncovered | 37.15 |
+| 2026-10-21 | 37.15 | No focused, skipped or todo test anywhere in the tree | Local — `Select-String` for `.only(` / `.skip(` / `xit(` / `xdescribe(` / `*.todo` across `src/tests/**` | **PASS** | 0 matches | 37.15 |
+| 2026-10-21 | 37.15 | Workflow regression suite | Local — `npx jest src/tests/workflow` | **PASS** | 21 suites, 368 tests | 37.15 |
+| 2026-10-21 | 37.15 | Full repository suite | Local — `npm test` | **PASS** | 72 suites, 1232 tests | 37.15 |
+| 2026-10-21 | 37.15 | Real-database acceptance suites (`i6-cross-tenant`, `execution-handoff`) | Local — `npx jest --config jest.realdb.config.ts` | **PASS** | 2 suites, 15 tests (real PostgreSQL) | 37.15 |
+| 2026-10-21 | 37.15 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | 37.15 |
+| 2026-10-21 | 37.15 | Lint | Local — `npm run lint` | **PASS** | exit 0 — 0 errors, 31 warnings, all pre-existing in untouched files | 37.15 |
+| 2026-10-21 | 37.15 | Whitespace integrity | Local — `git diff --check` | **PASS** | clean (exit 0; CRLF line-ending advisories only) | 37.15 |
+| 2026-10-21 | 37.15 | Product-surface integrity — no source, schema, migration or prompt file changed by this phase | Local — `git status --short` | **PASS** | 2 modified test files, 1 new test file, 1 modified tracker doc; no `src/lib`, `src/app`, `prisma/` or prompt path touched | 37.15 |
+| 2026-10-21 | 37.15 | Test-harness defect — Prisma double modelled only `include: { run: { workflow: true } }`; the worker route requests `include: { run: { include: { workflow: true } } }`, so the route read a run with no `workflow` and answered 500, leaving every executed step `PENDING` | Local — `npx jest src/tests/workflow/workflow-integration-diamond.test.ts` (before the fix) | **FAIL → PASS (fixed in the test double, not in product code)** | before: 9/9 failing on `status`/`cDispatch`/duplicate-row assertions; after: 9/9 passing | 37.15 |
+| 2026-10-21 | 37.15 | Live / deployed behaviour | — | **NOT CLAIMED** | No live transport, live Gemini, live PostgreSQL engine execution, or deployed behaviour is exercised by this phase; 37.16 owns that gate | 37.15 |
 
 ### Coverage summary
 
@@ -3539,12 +3676,33 @@ no second dialect.
 | contract / consistency | 5 |
 | documentation / inspection | 3 |
 
+> **This tally is a 37.4-era snapshot and is stale.** It was last recomputed
+> when the ledger ended at 37.4; it has not been recounted since, and the
+> "integration 0" / "database 0" rows were already wrong before 37.15 (the I6
+> real-PostgreSQL acceptance run passed on 2026-10-20). 37.15 adds 13 ledger
+> rows: 6 unit / mocked-integration suites, 1 database acceptance run, 2
+> whole-repository runs, 2 static checks, 1 whitespace check, 1
+> product-surface check, 1 harness-defect record, and 1 explicit
+> not-claimed row. A full recount of the ledger by evidence class is owed to
+> 37.17's register reconciliation; 37.15 did not silently rewrite the
+> historical tally above.
+
 **Live verification remains outstanding.** The 37.0A tenant-isolation and 37.0B
 node-validation evidence is Jest-level against the in-memory prisma double in
 `src/tests/workflow/helpers/prisma-double.ts`; 37.1's evidence is Jest-level and
 compiler-level; 37.2's evidence is Jest-level and `tsc`-level. None is a live
 database check, and Phase 37.16 remains the phase that owes one. No database,
 queue, Gemini, or real workflow execution has been exercised in this assignment.
+
+> **Correction, 2026-10-21 (37.15).** The paragraph above was accurate when
+> written but is no longer true as a statement about the whole assignment.
+> Two real-PostgreSQL runs now exist: the I6 cross-tenant acceptance run
+> (2026-10-20, 10/10) and the 37.15 re-run of both real-database suites
+> (2026-10-21, 2 suites / 15 tests). Neither exercises the *workflow engine*
+> end to end — I6 is a tenant-isolation check and `execution-handoff.realdb`
+> is 37.12's handoff boundary — so **live workflow execution, live transport,
+> live Redis/QStash, and live Gemini remain outstanding and are 37.16's.**
+> 37.15's own new evidence is mocked-integration and says so.
 37.3's evidence is Jest-level and `tsc`-level (static validator, no runtime).
 37.4's evidence is Jest-level and `tsc`-level (static compiler, no runtime; the
 compiler has no production caller until 37.5, so its production-path verification
@@ -3611,6 +3769,9 @@ of any migration — that is a 37.17 item.
 | 2026-10-01 | 37.1 | `src/lib/workflow-types/registry.ts` | `AVAILABLE_ACTIONS` projected from `ActionCapabilities`; `ACTION_FIELD_PRESENTATION` typed `Partial<Record<RegisteredActionId, …>>` with no `required` key | I4 — remove the hand-maintained second list that drifted (`comment.add`); derive requiredness/outputs | `action-capabilities.test.ts`; Mutation B fails 3/30 | VERIFIED 2026-10-01 |
 | 2026-10-01 | 37.1 | `src/tests/workflow/action-capabilities.test.ts` | Created | F3/I4 regression: totality, required/optional inputs, output fields, trusted-identity rejection, `comment.add` absence | — | 32/32 |
 | 2026-10-01 | 37.1 | `docs/architecture/workflows/assignments-37-phase-37.1-capability-catalog.md` | Created | 37.1 phase record, three boundaries, AD-P1, I7 | N/A | Reviewed |
+| 2026-10-21 | 37.15 | `src/tests/workflow/workflow-integration-diamond.test.ts` | Created — 9 cases driving the assembled engine: `startWorkflow` → `advanceWorkflow` → `POST /api/workflow` → `resolveInputs` → `wrapStepOperation` → real action registry → real `task.create` action → real context merge | 37.15 — the engine had unit coverage of every component and none of the assembly; a fan-in that fires early or an output that never propagates reads as a success | `workflow-integration-diamond.test.ts` 9/9 | 37.15 |
+| 2026-10-21 | 37.15 | `src/tests/workflow/dag-validation.test.ts` | Added "accepts a fan-in, where a join depends on two independent roots" | 37.15 — the graph gate listed fan-in as its own item, but the file that owns graph-shape validation only implied it inside the diamond | `dag-validation.test.ts` 26/26 | 37.15 |
+| 2026-10-21 | 37.15 | `src/tests/workflow/helpers/prisma-double.ts` | `attachRun` now accepts `{ run: true }`, `{ run: { workflow: true } }` and `{ run: { include: { workflow: true } } }`; added `workflowRun.create` and `workflow.findUnique` delegates with schema-aligned run defaults (`contextVersion: 0`) | 37.15 — the double did not model the include shape the worker route actually requests, so the route answered 500 and the harness failure looked like a broken engine | workflow tree 21 suites / 368 tests | 37.15 |
 
 **No Prisma schema, migration, prompt, or agent tool has been changed.** The
 execution path (`workflow-run.ts`, `execution/trigger.ts`, `execution/resolver.ts`)
@@ -3694,7 +3855,7 @@ regardless of intent.
 - [ ] 37.12 complete
 - [ ] 37.13 complete — **IMPLEMENTED 2026-10-21 (not VERIFIED)** — `AGENT_PROMPT_VERSION` v5 → v6; DAG-planning/local-id/capability-contract/reference-grammar/clarification/criticality/propose-only/validation-observation guidance added to `<WORKFLOW_GENERATION>`; v5 text preserved; `tool.ts` unchanged; new `prompt-dag-planning.test.ts` 29/29; full 69/1197; tsc/eslint/diff-check clean; manual prompt-vs-registry review done; model obedience unverified — evidence: `src/tests/agent/prompt-dag-planning.test.ts`, `docs/dev-log/2026-10-21-phase-37.13-prompt-dag-planning.md`
 - [ ] 37.14 complete
-- [ ] 37.15 complete
+- [x] 37.15 complete — **IMPLEMENTED 2026-10-21 (not VERIFIED)** — every Test Gate category mapped to a named covering suite; new assembled-engine integration suite 9/9; standalone fan-in graph case added; Prisma double's step-run include shape repaired; full 72 suites / 1232 tests; realdb 2 suites / 15 tests; tsc 0; eslint 0; diff-check clean; no product source, schema, migration or prompt changed; **not `VERIFIED`** — predecessor phases 37.4/37.5/37.7–37.14 are `IMPLEMENTED` rather than `VERIFIED`, and the live-engine gate is 37.16's — evidence: `src/tests/workflow/workflow-integration-diamond.test.ts`, `src/tests/workflow/dag-validation.test.ts`, `src/tests/workflow/helpers/prisma-double.ts`
 - [ ] 37.16 complete
 - [ ] 37.17 complete
 
@@ -3714,7 +3875,7 @@ regardless of intent.
 ### Evidence closure
 
 - [ ] Migration status verified
-- [ ] Full test suite passes
+- [x] Full test suite passes — **2026-10-21 (37.15)** — `npm test` 72 suites / 1232 tests; realdb 2 suites / 15 tests; `npx tsc --noEmit` exit 0; `npm run lint` exit 0; `git diff --check` clean — evidence: Verification Ledger rows for 37.15
 - [ ] Live capstone passes with per-check evidence
 - [ ] Final documentation complete
 
