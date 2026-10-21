@@ -3105,7 +3105,7 @@ one.
 | execution integration | output propagation A → input B | `workflow-integration-diamond.test.ts` — "propagates A's output into B's inputs through the real resolver and the real registered action" | mocked-integration |
 | execution integration | real action execution | `workflow-integration-diamond.test.ts` — "mocks persistence and transport only — the engine and the action are real" | mocked-integration (the action's `createTaskInOrg` write is mocked) |
 | execution integration | resolver behaviour | `workflow-integration-diamond.test.ts` — "propagates A's output into B's inputs through the real resolver and the real registered action"; `proposal-references.test.ts` — "resolves every extracted path through the real resolver (whole-string form)" | unit + mocked-integration |
-| execution integration | parallel execution | `workflow-integration-diamond.test.ts` — "creates no duplicate StepRuns and no duplicate action dispatch when the evaluator advances repeatedly"; `evaluator-concurrency.test.ts` | mocked-integration |
+| execution integration | parallel execution | `workflow-integration-diamond.test.ts` — "dispatches independent roots A and B in the same evaluator pass" | mocked-integration (non-serialized dispatch of independent roots; concurrent delivery is not asserted) |
 | I1 regression | cross-tenant workflow update rejected | `workflow-update-scope.test.ts` — "refuses another organization's workflow and issues no write" | mocked-integration |
 | I1 regression | same-tenant legitimate update succeeds | `workflow-update-scope.test.ts` — "persists the compiled definition for the owning organization" | mocked-integration |
 
@@ -3647,7 +3647,7 @@ no second dialect.
 | 2026-10-17 | 37.6 | Whitespace integrity | Local - `git diff --check` | **PASS** | clean | 37.6 |
 | 2026-10-21 | 37.15 | Assembled-engine integration suite — independent roots dispatched in one evaluator pass, fan-in held until both prerequisites succeed, output propagation A → input B through the real resolver, real registered action execution, real diamond join, no duplicate StepRuns or dispatches on repeated advancement | Local — `npx jest src/tests/workflow/workflow-integration-diamond.test.ts` | **PASS** | 9/9 tests | 37.15 |
 | 2026-10-21 | 37.15 | Graph gate — standalone fan-in case (two independent roots joined by one step) added to the file that owns graph-shape validation | Local — `npx jest src/tests/workflow/dag-validation.test.ts` | **PASS** | 26/26 tests (was 25) | 37.15 |
-| 2026-10-21 | 37.15 | Test-matrix audit — every Test Gate checkbox in §37.15 mapped to a named suite and `it(...)`, with evidence class recorded | Local — source inspection of `src/tests/` | **PASS** | 45/45 checkboxes mapped; 0 uncovered | 37.15 |
+| 2026-10-21 | 37.15 | Test-matrix audit — every Test Gate checkbox in §37.15 mapped to a named suite and `it(...)`, with evidence class recorded | Local — source inspection of `src/tests/` | **PASS** | 43/43 checkboxes mapped; 0 uncovered | 37.15 |
 | 2026-10-21 | 37.15 | No focused, skipped or todo test anywhere in the tree | Local — `Select-String` for `.only(` / `.skip(` / `xit(` / `xdescribe(` / `*.todo` across `src/tests/**` | **PASS** | 0 matches | 37.15 |
 | 2026-10-21 | 37.15 | Workflow regression suite | Local — `npx jest src/tests/workflow` | **PASS** | 21 suites, 368 tests | 37.15 |
 | 2026-10-21 | 37.15 | Full repository suite | Local — `npm test` | **PASS** | 72 suites, 1232 tests | 37.15 |
