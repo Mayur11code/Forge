@@ -45,7 +45,7 @@ import {
 } from "@/lib/workflow-types/workflow-criticality";
 
 import { withAgentSessionLock } from "../locks";
-import { getAgentSessionForUser } from "../session-service";
+import { getAgentSessionForUser, isHumanDecisionAcceptableStatus } from "../session-service";
 import { computeProposalCorrelationId } from "../tools/generate-workflow/execute";
 import { createMessage, getMessages } from "./message-service";
 import { getToolExecutionsForSession } from "./tool-execution-service";
@@ -419,7 +419,7 @@ export async function submitCriticalityDecision({
     };
   }
 
-  if (session.status !== "RUNNING") {
+  if (!isHumanDecisionAcceptableStatus(session.status)) {
     return {
       ok: false,
       httpStatus: 409,

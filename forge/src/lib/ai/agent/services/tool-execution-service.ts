@@ -17,6 +17,7 @@ import { JsonValue } from "../types";
 import { getAgentApprovalTimeoutMs } from "../constants";
 import { recordAgentEvent } from "../outbox";
 import { createMessage } from "./message-service";
+import { markAgentSessionWaiting, clearAgentSessionWaiting } from "../session-service";
 
 import type { ModelMessage } from "ai";
 
@@ -103,6 +104,16 @@ export async function createToolExecution({
           expectedStep: dispatchEvent.expectedStep,
         },
       });
+    }
+
+    // Assignment 37.14 (AD-P7): a confirmation-gated execution PARKS the session
+    // on a human, so the durable session status matches the durable execution
+    // status in the SAME transaction. `PENDING_CONFIRMATION` remains the
+    // authoritative record of WHICH human decision is pending; the session status
+    // only records that one is. A dispatchable execution (no confirmation) is a
+    // continuation, not a human wait, and does not park the session.
+    if (requiresConfirmation) {
+      await markAgentSessionWaiting(sessionId, tx);
     }
 
     return execution;
@@ -269,6 +280,11 @@ export async function confirmToolExecution({
       },
     });
 
+    // Assignment 37.14 (AD-P7): the human approved, so the session is no longer
+    // waiting. Cleared in the same transaction as the dispatched intent, so the
+    // session is RUNNING again by the time the worker is claimed.
+    await clearAgentSessionWaiting(sessionId, tx);
+
     return true;
   });
 }
@@ -332,6 +348,10 @@ export async function cancelToolExecutionAndContinue({
       message: buildDeclinedToolResult({ toolName, toolCallId }),
       tx,
     });
+
+    // Assignment 37.14 (AD-P7): the human declined, releasing the wait. Cleared
+    // in the same transaction as the continuation intent below.
+    await clearAgentSessionWaiting(sessionId, tx);
 
     await recordAgentEvent({
       tx,
@@ -507,6 +527,11 @@ export async function expireToolExecutionAndContinue({
       message: buildExpiredToolResult({ toolName, toolCallId }),
       tx,
     });
+
+    // Assignment 37.14 (AD-P7): the approval window closed, so the session is no
+    // longer waiting on a human. Cleared in the same transaction as the
+    // continuation intent, so the loop can claim the resumed turn.
+    await clearAgentSessionWaiting(sessionId, tx);
 
     await recordAgentEvent({
       tx,

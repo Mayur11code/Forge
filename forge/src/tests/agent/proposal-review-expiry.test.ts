@@ -37,7 +37,11 @@ jest.mock("@/lib/ai/agent/outbox", () => ({
   ),
 }));
 
-import { AgentProposalState } from "@prisma/client";
+import {
+  AgentProposalState,
+  AgentSessionStatus,
+  AgentToolExecutionStatus,
+} from "@prisma/client";
 
 import {
   prismaDouble,
@@ -469,5 +473,209 @@ describe("redriveStalledSessions — settled proposal exemption", () => {
     expect(summary.skippedWaiting).toBe(0);
     expect(summary.redriven).toBe(1);
     expect(recordEventMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Assignment 37.14 — proposal expiry while the session waits on a human
+// ---------------------------------------------------------------------------
+//
+// Candidate selection is deliberately unfiltered by session status: an expired
+// AWAITING_APPROVAL proposal must be found whether its session is parked
+// (WAITING_CONFIRMATION) or still RUNNING (legacy). What the sweep must NOT do is
+// blindly release a wait that belongs to a different human act.
+
+describe("expireStaleProposalReviews — WAITING_CONFIRMATION sessions", () => {
+  const now = new Date(6_000_000);
+
+  function seedSession(overrides: Record<string, unknown> = {}) {
+    const row: Record<string, unknown> = {
+      id: SESSION_ID,
+      orgId: "org_1",
+      userId: "user_a",
+      status: AgentSessionStatus.WAITING_CONFIRMATION,
+      currentStep: 4,
+      updatedAt: new Date(0),
+      ...overrides,
+    };
+    store.sessions.push(row);
+    return row;
+  }
+
+  it("expires a due proposal and releases the waiting session", async () => {
+    seedSession();
+    seedExecution({ expiresAt: new Date(now.getTime() - 1) });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.expired).toBe(1);
+    expect(summary.skipped).toBe(0);
+    expect(store.executions[0]!.proposalState).toBe(
+      AgentProposalState.EXPIRED,
+    );
+    expect(store.sessions[0]!.status).toBe(AgentSessionStatus.RUNNING);
+
+    // Expiry is a silent terminal transition: no loop continuation, no
+    // materialization, no new execution.
+    expect(recordEventMock).not.toHaveBeenCalled();
+    expect(store.outbox).toHaveLength(0);
+    expect(store.workflows).toHaveLength(0);
+  });
+
+  it("leaves a future-dated proposal and the waiting session untouched", async () => {
+    seedSession();
+    seedExecution({ expiresAt: new Date(now.getTime() + 1) });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.scanned).toBe(0);
+    expect(summary.expired).toBe(0);
+    expect(store.executions[0]!.proposalState).toBe(
+      AgentProposalState.AWAITING_APPROVAL,
+    );
+    expect(store.sessions[0]!.status).toBe(
+      AgentSessionStatus.WAITING_CONFIRMATION,
+    );
+    expect(recordEventMock).not.toHaveBeenCalled();
+  });
+
+  it("does not clear a clarification wait when no proposal is expirable", async () => {
+    seedSession();
+    seedExecution({
+      id: "clarification",
+      proposalState: AgentProposalState.NEEDS_CLARIFICATION,
+      expiresAt: null,
+    });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.scanned).toBe(0);
+    expect(store.sessions[0]!.status).toBe(
+      AgentSessionStatus.WAITING_CONFIRMATION,
+    );
+    expect(recordEventMock).not.toHaveBeenCalled();
+  });
+
+  it("does not clear a clarification wait when an unrelated proposal expires", async () => {
+    // The stronger isolation case: the sweep DOES expire a proposal in the same
+    // session, but the session is still waiting on a clarification. The coarse
+    // wait marker cannot distinguish the two, so the guard must not clear it.
+    seedSession();
+    seedExecution({ expiresAt: new Date(now.getTime() - 1) });
+    seedExecution({
+      id: "clarification",
+      proposalRevision: 2,
+      proposalState: AgentProposalState.NEEDS_CLARIFICATION,
+      expiresAt: null,
+    });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.expired).toBe(1);
+    expect(store.executions[0]!.proposalState).toBe(
+      AgentProposalState.EXPIRED,
+    );
+    expect(store.sessions[0]!.status).toBe(
+      AgentSessionStatus.WAITING_CONFIRMATION,
+    );
+    expect(recordEventMock).not.toHaveBeenCalled();
+  });
+
+  it("does not clear a wait held by a tool awaiting confirmation", async () => {
+    seedSession();
+    seedExecution({ expiresAt: new Date(now.getTime() - 1) });
+    seedExecution({
+      id: "tool-confirmation",
+      proposalRevision: 2,
+      status: AgentToolExecutionStatus.PENDING_CONFIRMATION,
+      proposalState: null,
+      expiresAt: new Date(now.getTime() - 1),
+    });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.expired).toBe(1);
+    expect(store.sessions[0]!.status).toBe(
+      AgentSessionStatus.WAITING_CONFIRMATION,
+    );
+  });
+
+  it("does not resurrect a terminal session", async () => {
+    seedSession({ status: AgentSessionStatus.FAILED });
+    seedExecution({ expiresAt: new Date(now.getTime() - 1) });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.expired).toBe(1);
+    expect(store.executions[0]!.proposalState).toBe(
+      AgentProposalState.EXPIRED,
+    );
+    expect(store.sessions[0]!.status).toBe(AgentSessionStatus.FAILED);
+  });
+
+  it("cannot clear the wait when the proposal CAS loses", async () => {
+    seedSession();
+    seedExecution({ expiresAt: new Date(now.getTime() - 1) });
+    prismaDouble.agentToolExecution.updateMany.mockResolvedValueOnce({
+      count: 0,
+    });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.expired).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(store.executions[0]!.proposalState).toBe(
+      AgentProposalState.AWAITING_APPROVAL,
+    );
+    expect(store.sessions[0]!.status).toBe(
+      AgentSessionStatus.WAITING_CONFIRMATION,
+    );
+    expect(recordEventMock).not.toHaveBeenCalled();
+  });
+
+  it("is safe to repeat and does not duplicate side effects", async () => {
+    seedSession();
+    seedExecution({ expiresAt: new Date(now.getTime() - 1) });
+
+    const first = await expireStaleProposalReviews({ limit: 10, now });
+    const second = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(first.expired).toBe(1);
+    expect(second.expired).toBe(0);
+    expect(second.scanned).toBe(0);
+    expect(store.sessions[0]!.status).toBe(AgentSessionStatus.RUNNING);
+    expect(store.outbox).toHaveLength(0);
+    expect(recordEventMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the existing RUNNING-session behavior", async () => {
+    seedSession({ status: AgentSessionStatus.RUNNING });
+    seedExecution({ expiresAt: new Date(now.getTime() - 1) });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.expired).toBe(1);
+    expect(store.executions[0]!.proposalState).toBe(
+      AgentProposalState.EXPIRED,
+    );
+    expect(store.sessions[0]!.status).toBe(AgentSessionStatus.RUNNING);
+  });
+
+  it("does not expire a proposal that is still awaiting criticality", async () => {
+    seedSession();
+    seedExecution({
+      proposalState: AgentProposalState.AWAITING_CRITICALITY,
+      expiresAt: new Date(now.getTime() - 1),
+    });
+
+    const summary = await expireStaleProposalReviews({ limit: 10, now });
+
+    expect(summary.scanned).toBe(0);
+    expect(store.executions[0]!.proposalState).toBe(
+      AgentProposalState.AWAITING_CRITICALITY,
+    );
+    expect(store.sessions[0]!.status).toBe(
+      AgentSessionStatus.WAITING_CONFIRMATION,
+    );
   });
 });

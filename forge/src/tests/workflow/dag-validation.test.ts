@@ -94,6 +94,22 @@ describe("WorkflowDefinitionSchema: valid graphs", () => {
     expect(issuesOf(valid)).toEqual([]);
   });
 
+  it("accepts a fan-in, where a join depends on two independent roots", () => {
+    // The inverse of the fan-out above, and the shape that differs from the
+    // diamond in exactly one way that matters: the two branches share no
+    // common ancestor. The join still has to be representable, because a
+    // validator that only recognises a common parent would reject a perfectly
+    // ordinary "wait for both of these" step.
+    const valid = graph([
+      step("a"),
+      step("b"),
+      step("c", ["a", "b"], "task.update"),
+    ]);
+
+    expect(issuesOf(valid)).toEqual([]);
+    expect(WorkflowDefinitionSchema.safeParse(valid).success).toBe(true);
+  });
+
   it("accepts a diamond, where a join depends on two branches", () => {
     const valid = graph([
       step("a"),
@@ -107,6 +123,23 @@ describe("WorkflowDefinitionSchema: valid graphs", () => {
 
   it("accepts a step with no dependencies", () => {
     expect(issuesOf(graph([step("a")]))).toEqual([]);
+  });
+
+  it("accepts a valid graph with disconnected components as independent roots", () => {
+    // Disconnectedness alone is permitted by the current DAG contract. Each
+    // component is a set of steps that satisfies the schema and graph rules;
+    // roots with no dependencies are independent and may execute in parallel.
+    // No edge is required between components and none is inferred.
+    const disconnected = graph([
+      step("a"),
+      step("b", ["a"], "task.update"),
+      step("c"),
+      step("d", ["c"], "task.update"),
+    ]);
+
+    expect(issuesOf(disconnected)).toEqual([]);
+    // No unrelated graph errors appear.
+    expect(WorkflowDefinitionSchema.safeParse(disconnected).success).toBe(true);
   });
 
   it("keeps validating step shape", () => {

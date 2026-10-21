@@ -29,10 +29,14 @@ jest.mock("@/lib/workflow/execution/trigger", () => ({
 
 jest.mock("@/lib/ai/agent/status", () => ({ publishAgentStatus: jest.fn() }));
 
-jest.mock("@/lib/ai/agent/session-service", () => ({
-  getAgentSessionForUser: jest.fn(),
-  failAgentSession: jest.fn(),
-}));
+jest.mock("@/lib/ai/agent/session-service", () => {
+  const actual = jest.requireActual("@/lib/ai/agent/session-service");
+  return {
+    ...actual,
+    getAgentSessionForUser: jest.fn(),
+    failAgentSession: jest.fn(),
+  };
+});
 
 jest.mock("@/lib/ai/agent/services/message-service", () => ({
   createMessage: jest.fn(),
