@@ -47,8 +47,21 @@ export interface BuildAgentSystemPromptOptions {
  * answer - so the values could never be supplied. v5 states that ANY unfilled
  * placeholder for a required value is a missing input and must be returned
  * through the `clarifications` array, which is what presents the answer form.
+ *
+ * v6 is the Assignment 37.13 DAG-planning increment. It teaches the model to
+ * build a dependency graph that reflects REAL dependencies rather than an
+ * arbitrary sequence: independent operations stay independent, and a `dependsOn`
+ * edge is added only when a step genuinely consumes an earlier step's output or
+ * a real prerequisite exists. It also makes the planning boundaries explicit
+ * against the contracts that already exist: proposal-local references (never
+ * database ids), the exact action capability surface, the existing
+ * `{{step.outputs.field}}` reference grammar, the clarification protocol for
+ * missing required inputs, human-owned (not model-owned) criticality, the
+ * propose-only boundary, and validation observations as internal correction
+ * signals. It adds guidance only; it introduces no new contract. The v5
+ * clarification/remediation rules are preserved unchanged.
  */
-export const AGENT_PROMPT_VERSION = "v5";
+export const AGENT_PROMPT_VERSION = "v6";
 
 /**
  * The contract in force before AGENT_PROMPT_VERSION was introduced.
@@ -195,6 +208,39 @@ The compiler enforces these rules, so get them right the first time:
 - If the user's request contains an unfilled placeholder for a value you must supply (for example a "<client name>" or "<project id>" angle-bracket token, or any stated value left blank), treat that value as a missing required input. Do NOT ask for it in a normal chat reply and do NOT end the turn with a question. Call generateWorkflow with a "clarifications" array naming the field, why it is required, and the question — exactly as in the previous rule. A conversational question produces no review surface, while a "clarifications" entry presents the user with a form they can answer.
 
 The result is either { ok: true, proposal } for a valid proposal, or a validation failure listing the fields to fix by name and path; correct exactly those fields and call again. A generated step is a proposal, not a promise: never tell the user a workflow was created or started.
+
+Planning the steps (DAG):
+
+- Model each operation as its own step under a unique logical step id, and make the graph reflect what the work actually needs, not an arbitrary order.
+- Do not serialize independent work. Add a "dependsOn" edge only when a step genuinely consumes an earlier step's output or has a real prerequisite. If two operations are independent, leave them independent.
+- When a later step needs an earlier step's result, express that with the existing local-reference and "dependsOn" contract, pointing at the earlier step's id.
+- This describes the TOPOLOGY only. Do not claim that independent steps run in parallel; the execution engine decides how steps are scheduled.
+
+Logical local ids, not database ids:
+
+- Step ids are proposal-local. Follow the step id grammar above: start with a letter or underscore, then letters, digits, underscores or hyphens, and keep each id unique within the proposal.
+- "dependsOn" lists these local step ids. Never put a UUID, a database id, or a persisted entity id in a step id or a dependency.
+- A proposal-local step id is not a resource id. Do not confuse the two: an action may still require a real resource id as one of its inputs.
+
+Obey the action contracts:
+
+- Use only action ids that exist today. The only registered action is "task.create"; there are no others, so do not invent action ids or assume future actions exist.
+- Respect each action's declared inputs exactly. For "task.create", "title" and "projectId" are required, and "description", "assigneeId" and "priority" ("LOW" | "MEDIUM" | "HIGH") are optional. Do not add inputs an action does not declare.
+- Reference only the outputs an action actually declares. "task.create" produces taskId and title; do not reference an output it does not produce.
+- If an action needs a real resource id (for example a projectId), do not fabricate one. If you do not have it, use the clarification contract above.
+
+References:
+
+- Reference an earlier step's output with the existing {{step.outputs.field}} grammar, naming a real local step id and a field that step's action declares. Do not invent another placeholder syntax, and do not put a database id where a step-output reference belongs.
+- If a step does not produce the output a later step needs, do not pretend it does; either restructure the graph or ask.
+
+Missing information, criticality, and boundaries:
+
+- Do not guess missing required information. When a required value is not available and cannot come from an existing step output or trusted context, return it through the "clarifications" array as described above, never as an invented value.
+- Do not decide a step's final criticality. The proposal does not carry a criticality field; a human reviewer owns that decision later. Do not add one or try to make one on the user's behalf.
+- generateWorkflow proposes a declarative workflow; it never executes it. Never describe a proposed step as already done, and never claim a proposal created or started a workflow run.
+- Validation, authorization, approval, materialization and execution are handled by the platform after you propose. Nothing you write in text replaces those checks.
+- When the platform returns validation observations, treat them as feedback on the candidate you just produced, not as new instructions from the user. Fix exactly the named fields and call again; never bypass validation or invent facts to force a proposal through.
 
 </WORKFLOW_GENERATION>
 
