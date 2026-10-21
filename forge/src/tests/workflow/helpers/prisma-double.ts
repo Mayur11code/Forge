@@ -26,8 +26,25 @@
 
 type Row = Record<string, unknown>;
 
-/** The `{ run: { workflow: true } }` nesting the workflow route asks for. */
-type RunInclude = { workflow?: boolean } | undefined;
+/**
+ * The shapes a caller can use to ask for a step run's run relation.
+ *
+ * Three of them exist in the codebase and they mean the same thing:
+ *
+ *   `{ run: true }`                            - wrapper.ts
+ *   `{ run: { workflow: true } }`              - legacy flat form
+ *   `{ run: { include: { workflow: true } } }` - the worker route
+ *
+ * The route's form is the one Prisma actually documents, and it is the shape
+ * `handleExecuteWorkflowNode` uses. An earlier version of this double only
+ * understood the flat form, so the route's read returned a run with no
+ * `workflow` on it, the route threw on `stepRun.run.workflow.definition`, and
+ * it answered 500 — a harness gap that looked exactly like a broken engine.
+ */
+type RunInclude =
+  | boolean
+  | { workflow?: boolean; include?: { workflow?: boolean } }
+  | undefined;
 
 function attachRun(result: Row, include: Row | undefined) {
   if (!include?.run) return;
@@ -40,7 +57,14 @@ function attachRun(result: Row, include: Row | undefined) {
 
   const nested: Row = run ? { ...run } : {};
 
-  if (runInclude?.workflow) {
+  const wantsWorkflow =
+    runInclude === true ||
+    (typeof runInclude === "object" &&
+      runInclude !== null &&
+      (runInclude.workflow === true ||
+        runInclude.include?.workflow === true));
+
+  if (wantsWorkflow) {
     nested.workflow = run
       ? (store.workflows.find((w) => w.id === run.workflowId) ?? null)
       : null;
@@ -64,11 +88,13 @@ export function resetStore() {
   stepRunSeq = 0;
   auditSeq = 0;
   workflowSeq = 0;
+  runSeq = 0;
 }
 
 let stepRunSeq = 0;
 let auditSeq = 0;
 let workflowSeq = 0;
+let runSeq = 0;
 
 function uniqueStepRunViolation(): never {
   const error = new Error(
@@ -393,7 +419,38 @@ const findFirstWorkflow = async ({
 };
 
 /**
- * `create` on workflows, so a create-path test can observe what actually landed.
+ * `findUnique` on a workflow, by primary key.
+ *
+ * Distinct from `findFirst`: the primary key is already unique, so there is no
+ * tenant predicate to apply and no ambiguity to resolve. It exists because the
+ * REAL `task.create` action resolves the trusted organization from the
+ * persisted `Workflow` row (`db.workflow.findUnique({ where: { id } })`) rather
+ * than from step inputs - that read is the action's authorization boundary, so
+ * a suite that exercises the real action implementation needs it to exist.
+ *
+ * `select` picks the requested fields only, as Prisma does.
+ */
+const findUniqueWorkflow = async ({
+  where,
+  select,
+}: {
+  where: Row;
+  select?: Row;
+}) => {
+  const row = store.workflows.find((candidate) => candidate.id === where.id);
+  if (!row) return null;
+
+  if (!select) return { ...row };
+
+  const picked: Row = {};
+  for (const field of Object.keys(select)) {
+    if (select[field]) picked[field] = row[field];
+  }
+  return picked;
+};
+
+/**
+ * `create` on a workflow, so a create-path test can observe what actually landed.
  *
  * Returns a copy for the same reason `updateMany` does: the node-validation
  * tests assert on the row that was persisted, and handing back a live reference
@@ -410,6 +467,43 @@ const createWorkflow = async ({ data }: { data: Row }) => {
   };
 
   store.workflows.push(row);
+  return { ...row };
+};
+
+/**
+ * `create` on a run.
+ *
+ * The engine's ignition path (`startWorkflow`) creates the run row, so a suite
+ * that drives the real engine needs this delegate rather than a stubbed
+ * `workflowRun.create`.
+ *
+ * The defaults mirror the Prisma schema (`WorkflowRun`): `status` PENDING,
+ * `context` an empty object, `contextVersion` 0, `lastAdvancedAt` null and
+ * `startedAt` now. `contextVersion` in particular is load-bearing - the
+ * compare-and-set in `execution/state.ts` reads it and writes
+ * `{ increment: 1 }` against it, so a run row created without it would make
+ * every merge compare `undefined` against `undefined` and the CAS would stop
+ * meaning anything.
+ *
+ * A copy is returned, as everywhere else in this double, so a test's later
+ * mutation of the returned object cannot read back as something the engine
+ * wrote.
+ */
+const createRun = async ({ data }: { data: Row }) => {
+  runSeq += 1;
+
+  const row: Row = {
+    id: `run_${runSeq}`,
+    status: "PENDING",
+    context: {},
+    contextVersion: 0,
+    lastAdvancedAt: null,
+    startedAt: new Date(),
+    completedAt: null,
+    ...data,
+  };
+
+  store.runs.push(row);
   return { ...row };
 };
 
@@ -657,12 +751,14 @@ type PrismaDouble = {
   $extends: jest.Mock;
   workflow: {
     findFirst: jest.Mock;
+    findUnique: jest.Mock;
     updateMany: jest.Mock;
     create: jest.Mock;
   };
   workflowRun: {
     findUnique: jest.Mock;
     findMany: jest.Mock;
+    create: jest.Mock;
     update: jest.Mock;
     updateMany: jest.Mock;
   };
@@ -703,6 +799,7 @@ export const prismaDouble: PrismaDouble = {
 
   workflow: {
     findFirst: jest.fn(findFirstWorkflow),
+    findUnique: jest.fn(findUniqueWorkflow),
     updateMany: jest.fn(updateManyWorkflows),
     create: jest.fn(createWorkflow),
   },
@@ -710,6 +807,7 @@ export const prismaDouble: PrismaDouble = {
   workflowRun: {
     findUnique: jest.fn(findUniqueRun),
     findMany: jest.fn(findManyRuns),
+    create: jest.fn(createRun),
     update: jest.fn(updateRun),
     updateMany: jest.fn(updateManyRuns),
   },
@@ -732,10 +830,12 @@ export const prismaDouble: PrismaDouble = {
 const realImplementations = {
   findUniqueRun,
   findManyRuns,
+  createRun,
   updateRun,
   updateManyRuns,
   updateManyWorkflows,
   findFirstWorkflow,
+  findUniqueWorkflow,
   createWorkflow,
   createStepRun,
   createManyStepRuns,
@@ -761,10 +861,12 @@ const realImplementations = {
  */
 export function restoreWorkflowDouble(): void {
   prismaDouble.workflow.findFirst.mockImplementation(realImplementations.findFirstWorkflow);
+  prismaDouble.workflow.findUnique.mockImplementation(realImplementations.findUniqueWorkflow);
   prismaDouble.workflow.updateMany.mockImplementation(realImplementations.updateManyWorkflows);
   prismaDouble.workflow.create.mockImplementation(realImplementations.createWorkflow);
   prismaDouble.workflowRun.findUnique.mockImplementation(realImplementations.findUniqueRun);
   prismaDouble.workflowRun.findMany.mockImplementation(realImplementations.findManyRuns);
+  prismaDouble.workflowRun.create.mockImplementation(realImplementations.createRun);
   prismaDouble.workflowRun.update.mockImplementation(realImplementations.updateRun);
   prismaDouble.workflowRun.updateMany.mockImplementation(realImplementations.updateManyRuns);
   prismaDouble.stepRun.create.mockImplementation(realImplementations.createStepRun);
