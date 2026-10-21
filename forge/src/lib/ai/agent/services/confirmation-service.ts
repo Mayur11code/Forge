@@ -31,7 +31,7 @@ import {
   AgentToolExecutionStatus,
 } from "@prisma/client";
 
-import { getAgentSessionForUser } from "../session-service";
+import { getAgentSessionForUser, isHumanDecisionAcceptableStatus } from "../session-service";
 import { getToolExecutionInSession } from "./tool-execution-service";
 
 export type ConfirmationTarget =
@@ -166,7 +166,13 @@ export function decideConfirmation({
   sessionStatus: AgentSessionStatus;
 }): ConfirmationDecision {
   if (executionStatus === AgentToolExecutionStatus.PENDING_CONFIRMATION) {
-    if (sessionStatus !== AgentSessionStatus.RUNNING) {
+    // Assignment 37.14 (AD-P7): a session parked on a confirmation is
+    // WAITING_CONFIRMATION. That is a legitimate state from which a human may
+    // still confirm or cancel - it is not a terminal state - so the liveness
+    // check accepts it alongside RUNNING (for park timing and legacy rows).
+    // Every terminal status (COMPLETED/FAILED/CANCELLED) remains a CONFLICT, so
+    // a settled session can never gain a new side effect.
+    if (!isHumanDecisionAcceptableStatus(sessionStatus)) {
       return {
         kind: "CONFLICT",
         httpStatus: 409,

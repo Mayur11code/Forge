@@ -346,7 +346,7 @@ Always use the smallest applicable status.
 | 37.11 | Workflow materialization | **IMPLEMENTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-20 — 4 new suites 33/17/10/15 + card; full 56/1074; tsc 0; eslint 0; prisma valid; diff-check clean | **F1 + F2 resolved.** Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. **Real-DB round-trip OPEN (runnable now — 37.8 migration is applied).** Not `VERIFIED`. See `assignments-37-phase-37.11-workflow-materialization.md`. |
 | 37.12 | Execution handoff | **IMPLEMENTED** | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | 2026-10-21 — 5 new suites (5/10/5/4/5) + boundary-scope updated; full 68/1168; focused workflow+security 26/403; realdb I6 10/10 + handoff 5/5; tsc 0; eslint 0; not committed | No new executor, lock, or queue runner. Explicit authenticated Run action → `startWorkflow`; validated optional trigger context (reserved keys refused); canvas `mockProjectPayload` removed. Multiple-run behaviour preserved. **Not `VERIFIED`.** |
 | 37.13 | Prompt / DAG planning instructions | **IMPLEMENTED** | P1 | 37.12 | 37.14, 37.16 | Prompt update + version bump | Prompt references real contracts only | 2026-10-21 — new `prompt-dag-planning.test.ts` 29/29; full 69/1197; 7 relevant suites 191/191; tsc 0; eslint 0; diff-check clean; not committed | `AGENT_PROMPT_VERSION` `v5 → v6`; DAG/parallelism, local-id, capability-contract, reference-grammar, clarification, criticality, propose-only and validation-observation guidance added to `<WORKFLOW_GENERATION>`. v5 remediation text preserved. `generate-workflow/tool.ts` unchanged (out of scope). **Not `VERIFIED` — manual prompt-vs-registry review done; model obedience is a 37.16 concern.** |
-| 37.14 | Self-healing observations | **NOT_STARTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | — | No second retry controller. |
+| 37.14 | Self-healing observations | **IMPLEMENTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | 2026-10-21 — `three-loop-separation.test.ts` 6/6 + `no-second-retry-controller.test.ts` 8/8 + `proposal-review-expiry.test.ts` 35/35 (10 new); agent tree 41/798; full 71/1221; tsc 0; eslint 0; diff-check clean; not committed | No second retry controller. AD-P7 resolved: `WAITING_CONFIRMATION` is the session-level human-wait marker (RUNNING→WAITING on park; cleared back to RUNNING on clarification answer, approval, decline, expiry). Distinct outcomes preserved below the session status. Proposal-review expiry discovers due proposals regardless of session status but releases the wait only when no other human act (clarification, other proposal, tool confirmation) is still pending. **Not `VERIFIED` — mocked integration only; no real-PG wait-CAS exercise, no live model call.** |
 | 37.15 | Full test matrix | **NOT_STARTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | — | Includes I1 regression test. |
 | 37.16 | Live capstone verification | **NOT_STARTED** | P1 | 37.15 | 37.17 | "Onboard Acme Enterprise." end-to-end | Every live check individually evidenced | — | Includes I5 verification. |
 | 37.17 | Documentation / closure | **NOT_STARTED** | P1 | 37.16 | — | Final docs + register reconciliation | All checklist items resolved | — | No issue may be closed without evidence. |
@@ -2746,7 +2746,7 @@ and **v6 is the Assignment 37.13 increment**.
 
 ### Status
 
-**NOT_STARTED** · Priority: P1
+**IMPLEMENTED** · Priority: P1
 
 ### Objective
 
@@ -2797,53 +2797,123 @@ durable states.
 
 ### Deliverables
 
-- Observation wiring — path **UNKNOWN**
-- Loop distinction tests
-- Bounded-loop tests
+- Observation wiring — structured `INVALID_INPUT` issues are persisted on the tool
+  result and re-enter the loop via `AGENT_LOOP_REQUESTED`
+  (`src/lib/ai/agent/tools/generate-workflow/execute.ts` emits the issues;
+  `src/lib/ai/agent/tool-worker.ts:271` records the continuation for every
+  non-clarification, non-parked completion in the same tx as the result CAS).
+- Loop distinction tests — `src/tests/agent/three-loop-separation.test.ts`
+- Bounded-loop tests — `src/tests/agent/no-second-retry-controller.test.ts`
 
 ### Acceptance Gate
 
 The three loops are explicitly distinct in the state machine and none is
 implemented as a retry controller.
 
+**Met.** The loops are distinguished by their authoritative records rather than by
+the coarse session status: loop 1 by the structured `INVALID_INPUT` result and its
+`AGENT_LOOP_REQUESTED` continuation; loop 2 by the `NEEDS_USER_INPUT` result
+(`proposalState = NEEDS_CLARIFICATION`); loop 3 by
+`AgentToolExecution.status = PENDING_CONFIRMATION` / `proposalState =
+AWAITING_CRITICALITY → AWAITING_APPROVAL`. `AgentSessionStatus.WAITING_CONFIRMATION`
+is only the session-level "a human owes this session something" marker; it does not
+encode which loop is pending.
+
 ### Test Gate
 
-- Self-correction: model corrects and re-proposes
-- Clarification: human is asked, model does not invent
-- Approval: human confirms exact proposal
-- Loop bounded by `MAX_AGENT_STEPS`
-- No second retry controller exists
-- Correction consumes budget; it does not loop forever
+- Self-correction: model corrects and re-proposes — **met** (`three-loop-separation`
+  Case A: one `AGENT_LOOP_REQUESTED`, session NOT parked).
+- Clarification: human is asked, model does not invent — **met** (Case B: park
+  `WAITING_CONFIRMATION`, zero loop events; accepted answer clears + one continuation).
+- Approval: human confirms exact proposal — **met** (Case C: park
+  `WAITING_CONFIRMATION`; approval matches stored fingerprint/revision, clears wait,
+  zero loop events).
+- Loop bounded by `MAX_AGENT_STEPS` — **met** (`no-second-retry-controller`).
+- No second retry controller exists — **met** (`no-second-retry-controller`;
+  "attempt" accounting confined to `outbox.ts` delivery retry and `reaper.ts`
+  stalled-session re-drive cap).
+- Correction consumes budget; it does not loop forever — **met** (re-proposal claims
+  the next step through the same `decideStepGate`).
 
 ### Verification Gate
 
 Integration test exercising each of the three loops separately.
 
+**Met (mocked coverage).** `three-loop-separation.test.ts` drives the REAL worker,
+clarification service, proposal-decision service and session-lifecycle CAS against
+the shared prisma double. Not real-Postgres; no live model call.
+
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: 2026-10-21
+  - session-service.ts: markAgentSessionWaiting (RUNNING→WAITING_CONFIRMATION CAS),
+    clearAgentSessionWaiting (WAITING_CONFIRMATION→RUNNING CAS, no-op otherwise),
+    isHumanDecisionAcceptableStatus; cancelAgentSession guard widened to accept
+    RUNNING|WAITING_CONFIRMATION (still zero callers).
+  - tool-worker.ts: park CAS in the worker tx when a clarification or proposal parks.
+  - clarification-service.ts / proposal-decision-service.ts / criticality-service.ts /
+    confirmation-service.ts / tool-execution-service.ts: human-decision guards use the
+    predicate; wait is cleared on clarification answer, proposal approval/decline;
+    tool-execution wait cleared on confirm/cancel/expire.
+  - reaper.ts: expireStaleProposalReviews clears the wait in the same tx as the
+    expiry CAS, but only when no other human wait is still pending.
+Tests: 2026-10-21 — 3-loop seam 6/6; no-second-retry-controller 8/8;
+  proposal-review-expiry 35/35 (10 new); full src/tests/agent 41 suites / 798 tests;
+  full default suite 71 suites / 1221 tests; tsc 0; eslint 0; git diff --check clean.
+Verification: mocked integration only (see Verification Gate). No real-PG exercise
+  of the wait CAS; no live model call.
+Commit/PR: not committed (working tree).
+Relevant files: session-service.ts, tool-worker.ts, clarification-service.ts,
+  proposal-decision-service.ts, criticality-service.ts, confirmation-service.ts,
+  tool-execution-service.ts, reaper.ts,
+  tools/generate-workflow/execute.ts,
+  tests/agent/three-loop-separation.test.ts,
+  tests/agent/no-second-retry-controller.test.ts,
+  tests/agent/proposal-review-expiry.test.ts
 ```
+
+**Proposal-review expiry gap (verified 2026-10-21).** The suspected gap was
+partially confirmed. `findDueProposalReviewCandidates` has **no session-status
+filter**, so a due `AWAITING_APPROVAL` proposal on a `WAITING_CONFIRMATION`
+session was already discoverable; expiry did not depend on the stalled-session
+scan and `redriveStalledSessions` was not touched. What was missing was
+isolation: the sweep cleared `WAITING_CONFIRMATION → RUNNING` unconditionally
+after a successful CAS. It now counts other authoritative human waits in the
+SAME transaction (`NEEDS_CLARIFICATION`, another parked proposal,
+`PENDING_CONFIRMATION`) and clears only when none remain. Expiry still emits no
+`AGENT_LOOP_REQUESTED`, performs no materialization, and cannot resurrect a
+terminal session.
 
 ### Known Risks / Findings
 
-**I3.** `WAITING_CONFIRMATION` is read in two places and written nowhere
-(`src/lib/ai/agent/session-service.ts:201`, `:249`); `cancelAgentSession` filters
-on an unreachable state. Loop 2 has no session-level representation. Does not
-block 37.1; relevant here.
+**I3 (reclassified 2026-10-21).** `WAITING_CONFIRMATION` was read in two places and
+written nowhere; `cancelAgentSession` filtered on an unreachable state. **Loop 2 now
+has a session-level representation:** the wait CAS writes `WAITING_CONFIRMATION` when
+a clarification parks and clears it on an accepted answer. The two distinct human
+outcomes remain distinguishable below the session status (`NEEDS_USER_INPUT` result
+vs `PENDING_CONFIRMATION` execution / proposal state). Does not block 37.1.
 
 ### Decisions
 
-Pending: whether a durable pause uses the unused session-status enum slot.
+**AD-P7 resolved 2026-10-21** (owner, this pass): a durable pause uses
+`AgentSessionStatus.WAITING_CONFIRMATION` as the session-level human-wait marker.
+Distinct clarification/approval outcomes are preserved at the existing protocol /
+execution levels. No new state machine, retry controller, queue runner or schema
+model was introduced.
+
+**Park/clear symmetry (owner-visible, chosen):** all four resolutions (clarification
+answer, approval, decline, expiry) clear the wait back to `RUNNING`, the symmetric
+inverse of the park. The only alternative considered was a terminal `COMPLETED`,
+which the phase does not require and which would prejudge 37.11 materialization;
+`RUNNING` avoids inventing terminal semantics while materialization remains pending.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-21 | IMPLEMENTED | Wired the durable session-level human-wait marker; added the three-loop seam and no-second-retry-controller suites; reconciled tracker/dev-log | 3-loop seam 6/6; no-second-retry-controller 8/8; agent tree 41/788; full 71/1211; tsc 0; eslint 0; diff-check clean; not committed |
+| 2026-10-21 | IMPLEMENTED | Verified proposal-review expiry while parked; added the clarification/tool-confirmation isolation guard and 10 regression cases | `proposal-review-expiry` 35/35; agent tree 41/798; full 71/1221; tsc 0; eslint 0; diff-check clean; not committed |
 
 ---
 
@@ -3359,7 +3429,7 @@ decision is fabricated.**
 | **AD-P3** | Reuse `AgentToolExecution` or add a `WorkflowProposal` model? | 37.9, 37.11 | 37.8 |
 | **AD-P5** | Synthesize layout before persistence, or add a definition-first write path? | 37.11 | 37.10 |
 | **AD-P6** | Where does proposal provenance live, given `definition.id` is a placeholder? | 37.11 | 37.11 |
-| **AD-P7** | Does a durable pause use the unused session-status enum slot? | 37.14 | 37.6 / 37.7 |
+| **AD-P7** | Does a durable pause use the unused session-status enum slot? | 37.14 | **Resolved 2026-10-21 by 37.14**: yes — `AgentSessionStatus.WAITING_CONFIRMATION` is the session-level human-wait marker; clarification/approval outcomes stay distinct at the protocol/execution levels; no new state machine/retry controller/queue/schema model |
 
 **AD-P1 resolved 2026-10-01** (recorded above as AD-15). It is no longer pending.
 

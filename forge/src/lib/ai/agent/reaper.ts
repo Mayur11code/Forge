@@ -25,7 +25,11 @@
 // a side effect that was about to succeed. The Redis lock heartbeat cannot
 // substitute for this - it is process-local state this sweep cannot observe.
 
-import { AgentSessionStatus, AgentToolExecutionStatus } from "@prisma/client";
+import {
+  AgentProposalState,
+  AgentSessionStatus,
+  AgentToolExecutionStatus,
+} from "@prisma/client";
 
 import { prisma } from "@/lib/prisma/extended";
 // The RAW client for the redelivery sweep's transactional intent write. The
@@ -39,7 +43,7 @@ import {
 } from "./outbox";
 import { publishAgentStatus } from "./status";
 import { withAgentSessionLock } from "./locks";
-import { sessionSelect } from "./session-service";
+import { sessionSelect, clearAgentSessionWaiting } from "./session-service";
 import type { AgentTerminalReason } from "./types";
 import {
   AGENT_ORPHANED_EXECUTION_AGE_MS,
@@ -56,6 +60,7 @@ import {
 import { getAgentSessionForWorker } from "./session-service";
 import { hasPendingClarification } from "./services/clarification-service";
 import {
+  PENDING_HUMAN_PROPOSAL_STATES,
   expireProposalReview,
   findDueProposalReviewCandidates,
   hasPendingProposal,
@@ -243,6 +248,14 @@ export type ExpireProposalReviewsResult = {
  * so overlapping passes and a partially completed pass both behave correctly.
  * A race with a human who approves just as the timeout fires resolves in the
  * human's favour, because the CAS no longer matches AWAITING_APPROVAL.
+ *
+ * Assignment 37.14 (AD-P7): candidate selection is deliberately NOT filtered by
+ * session status. A proposal whose session parked at `WAITING_CONFIRMATION` is
+ * exactly the case this sweep exists for, so it must remain discoverable; the
+ * same is true of a still-`RUNNING` legacy session. Session status never decides
+ * whether a proposal is due - the proposal's own state and deadline do.
+ * Resolving the session wait afterwards is conditional, because the coarse
+ * marker does not say which human act is pending.
  */
 export async function expireStaleProposalReviews({
   limit = AGENT_MAINTENANCE_BATCH_SIZE,
@@ -264,13 +277,57 @@ export async function expireStaleProposalReviews({
       // The CAS and (nothing else) commit together. There is no transcript write
       // and no outbox intent: the durable proposal state IS the record, and the
       // session read route surfaces EXPIRED from it after a restart.
-      const didExpire = await db.$transaction((tx) =>
-        expireProposalReview(tx, {
+      //
+      // Assignment 37.14 (AD-P7): a closed review also releases the session's
+      // human-wait marker, in the same transaction as the CAS. The proposal is
+      // no longer waiting on a human, so the session must not keep claiming it
+      // is. This does NOT re-enter the model: a proposal review expiry is a
+      // silent terminal transition (owner decision C), not a loop continuation.
+      const didExpire = await db.$transaction(async (tx) => {
+        const expired = await expireProposalReview(tx, {
           executionId: candidate.id,
           sessionId: candidate.sessionId,
           now,
-        }),
-      );
+        });
+
+        if (!expired) {
+          return false;
+        }
+
+        // Assignment 37.14 (AD-P7): the coarse wait marker does not record WHY
+        // the session is parked, so a successful proposal expiry alone does not
+        // prove the wait belongs to this proposal. A session still waiting on a
+        // different human act - a pending clarification (`NEEDS_CLARIFICATION`),
+        // another parked proposal, or a tool awaiting confirmation - must stay
+        // parked: clearing it would resume a session the expiry sweep never
+        // answered. The expired row is excluded so its own pre-expiry state can
+        // never masquerade as a competing wait. This is a read in the SAME
+        // transaction as the CAS, so it sees exactly the state the expiry left
+        // behind.
+        const otherHumanWaits = await tx.agentToolExecution.count({
+          where: {
+            sessionId: candidate.sessionId,
+            id: { not: candidate.id },
+            OR: [
+              {
+                proposalState: {
+                  in: [
+                    ...PENDING_HUMAN_PROPOSAL_STATES,
+                    AgentProposalState.NEEDS_CLARIFICATION,
+                  ],
+                },
+              },
+              { status: AgentToolExecutionStatus.PENDING_CONFIRMATION },
+            ],
+          },
+        });
+
+        if (otherHumanWaits === 0) {
+          await clearAgentSessionWaiting(candidate.sessionId, tx);
+        }
+
+        return true;
+      });
 
       if (didExpire) {
         expired += 1;
