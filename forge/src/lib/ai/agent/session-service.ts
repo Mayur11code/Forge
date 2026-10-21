@@ -246,10 +246,104 @@ export async function cancelAgentSession(
       id: sessionId,
       orgId,
       userId,
-      status: AgentSessionStatus.WAITING_CONFIRMATION,
+      // Assignment 37.14 (AD-P7): a human-wait session is now reachable as
+      // WAITING_CONFIRMATION, and a session that parked before this status was
+      // written is still RUNNING. Both are legitimately cancellable, so the
+      // guard accepts either rather than filtering on a single state. Terminal
+      // states (COMPLETED/FAILED/CANCELLED) remain unmatched, so a cancel can
+      // never resurrect or overwrite an ended session.
+      status: {
+        in: [
+          AgentSessionStatus.RUNNING,
+          AgentSessionStatus.WAITING_CONFIRMATION,
+        ],
+      },
     },
     data: {
       status: AgentSessionStatus.CANCELLED,
     },
   });
+}
+
+/**
+ * Assignment 37.14 (AD-P7) — durable session-level human-wait.
+ *
+ * `WAITING_CONFIRMATION` records that the session is parked waiting on a human.
+ * It deliberately does NOT say WHICH human decision is pending: clarification is
+ * still identified by the persisted `NEEDS_USER_INPUT` tool result, and approval
+ * by `AgentToolExecution.status = PENDING_CONFIRMATION` plus the proposal state.
+ * The three loops stay distinguishable in those authoritative records; this
+ * session status is only the coarse "a human owes this session an answer" marker.
+ *
+ * The write is a compare-and-swap on the CURRENT state, so it can never move an
+ * already-terminal session into a wait, and a duplicate delivery of the same
+ * park loses cleanly instead of re-asserting the status.
+ */
+export async function markAgentSessionWaiting(
+  sessionId: string,
+  tx?: Prisma.TransactionClient,
+) {
+  const client = tx ?? prisma;
+
+  return client.agentSession.updateMany({
+    where: {
+      id: sessionId,
+      status: AgentSessionStatus.RUNNING,
+    },
+    data: {
+      status: AgentSessionStatus.WAITING_CONFIRMATION,
+    },
+  });
+}
+
+/**
+ * Clear the human-wait marker and return the session to RUNNING.
+ *
+ * Used when the human act that the session was waiting on has been accepted and
+ * the loop is either resuming (clarification) or simply no longer blocked
+ * (proposal decision/expiry). The CAS only matches a session that is currently
+ * WAITING_CONFIRMATION, so:
+ *   - a stale or duplicate clear cannot overwrite a newer terminal state, and
+ *   - clearing a session that never parked (still RUNNING) is a no-op, which
+ *     keeps the transition safe for legacy sessions created before this status
+ *     was written.
+ *
+ * This does NOT itself schedule the loop; callers that must resume (clarification)
+ * record their `AGENT_LOOP_REQUESTED` in the same transaction, so the session is
+ * RUNNING again by the time the continuation is claimed.
+ */
+export async function clearAgentSessionWaiting(
+  sessionId: string,
+  tx?: Prisma.TransactionClient,
+) {
+  const client = tx ?? prisma;
+
+  return client.agentSession.updateMany({
+    where: {
+      id: sessionId,
+      status: AgentSessionStatus.WAITING_CONFIRMATION,
+    },
+    data: {
+      status: AgentSessionStatus.RUNNING,
+    },
+  });
+}
+
+/**
+ * Session states from which a human answer or proposal decision may be accepted.
+ *
+ * A session parked on a human is WAITING_CONFIRMATION (Assignment 37.14, AD-P7).
+ * A session created before that status was written, or one whose park landed
+ * while the human ingress was already in flight, is still RUNNING. Both are
+ * legitimately able to accept the human act, so both are accepted here. Every
+ * other state (COMPLETED, FAILED, CANCELLED) is rejected by the callers, which
+ * keeps a terminal session from gaining a new side effect.
+ */
+export function isHumanDecisionAcceptableStatus(
+  status: AgentSessionStatus,
+): boolean {
+  return (
+    status === AgentSessionStatus.RUNNING ||
+    status === AgentSessionStatus.WAITING_CONFIRMATION
+  );
 }

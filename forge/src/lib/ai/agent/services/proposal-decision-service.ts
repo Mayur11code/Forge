@@ -35,7 +35,7 @@ import { AgentProposalState, AgentToolExecutionStatus } from "@prisma/client";
 import { db } from "@/lib/prisma/db";
 
 import { withAgentSessionLock } from "../locks";
-import { getAgentSessionForUser } from "../session-service";
+import { getAgentSessionForUser, clearAgentSessionWaiting, isHumanDecisionAcceptableStatus } from "../session-service";
 import { computeProposalCorrelationId } from "../tools/generate-workflow/execute";
 import { createMessage } from "./message-service";
 import {
@@ -157,7 +157,7 @@ export async function submitProposalDecision({
     };
   }
 
-  if (session.status !== "RUNNING") {
+  if (!isHumanDecisionAcceptableStatus(session.status)) {
     return {
       ok: false,
       httpStatus: 409,
@@ -311,6 +311,15 @@ export async function submitProposalDecision({
         message: { role: "user", content },
         tx,
       });
+
+      // Assignment 37.14 (AD-P7): the recorded decision releases the human-wait
+      // marker in the SAME transaction as the CAS and the audit line, so the
+      // session is no longer WAITING_CONFIRMATION exactly when the proposal
+      // leaves AWAITING_APPROVAL. This does NOT re-enter the model: approval and
+      // decline are terminal human outcomes, and the loop is resumed only by a
+      // clarification answer or the deferred materialization (37.11). The clear
+      // is a no-op for a legacy RUNNING session, whose status was never parked.
+      await clearAgentSessionWaiting(sessionId, tx);
 
       return true;
     });

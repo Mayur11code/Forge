@@ -44,13 +44,17 @@ jest.mock("@/lib/ai/agent/loop-runner", () => ({
   runAgentLoop: jest.fn(),
 }));
 
-jest.mock("@/lib/ai/agent/session-service", () => ({
-  getAgentSessionForWorker: jest.fn(),
-  claimNextAgentStep: jest.fn(),
-  completeAgentSession: jest.fn(),
-  failAgentSession: jest.fn(),
-  terminateAgentSessionForMaxSteps: jest.fn(),
-}));
+jest.mock("@/lib/ai/agent/session-service", () => {
+  const actual = jest.requireActual("@/lib/ai/agent/session-service");
+  return {
+    ...actual,
+    getAgentSessionForWorker: jest.fn(),
+    claimNextAgentStep: jest.fn(),
+    completeAgentSession: jest.fn(),
+    failAgentSession: jest.fn(),
+    terminateAgentSessionForMaxSteps: jest.fn(),
+  };
+});
 
 jest.mock("@/lib/ai/agent/services/message-service", () => ({
   createMessage: jest.fn(),

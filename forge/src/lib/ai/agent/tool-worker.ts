@@ -16,7 +16,7 @@ import { recordAgentEvent } from "./outbox";
 // intercepted, and the outbox is infrastructure rather than a domain event.
 import { db } from "@/lib/prisma/db";
 import { createMessage } from "./services/message-service";
-import { failAgentSession } from "./session-service";
+import { failAgentSession, markAgentSessionWaiting } from "./session-service";
 import { publishAgentStatus } from "./status";
 import { AgentProposalState } from "@prisma/client";
 import {
@@ -268,6 +268,19 @@ export async function handleToolExecution({
           // continuations. Re-driving the loop for either would send the model
           // straight back to the input it is already waiting on. Every other
           // completion records the intent to continue.
+          //
+          // Assignment 37.14 (AD-P7): a halt parks the SESSION too. The session
+          // moves RUNNING -> WAITING_CONFIRMATION in this same transaction, so the
+          // coarse human-wait marker is durable exactly when the halt is. Which
+          // decision is pending stays distinguishable: a clarification through the
+          // NEEDS_USER_INPUT result just persisted, a proposal through the
+          // PENDING_CONFIRMATION execution status and the parked proposal state.
+          // The status is written only for genuine halts - a correctable
+          // INVALID_INPUT never parks the session, because the model continues.
+          if (clarification || parksProposal) {
+            await markAgentSessionWaiting(execution.sessionId, tx);
+          }
+
           if (!clarification && !parksProposal) {
             await recordAgentEvent({
               tx,

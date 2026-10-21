@@ -26,7 +26,7 @@
 
 import { db } from "@/lib/prisma/db";
 import { withAgentSessionLock } from "../locks";
-import { getAgentSessionForUser } from "../session-service";
+import { getAgentSessionForUser, clearAgentSessionWaiting, isHumanDecisionAcceptableStatus } from "../session-service";
 import { createMessage, getMessages } from "./message-service";
 import { recordAgentEvent } from "../outbox";
 import {
@@ -344,7 +344,7 @@ export async function submitClarificationAnswer({
     };
   }
 
-  if (session.status !== "RUNNING") {
+  if (!isHumanDecisionAcceptableStatus(session.status)) {
     return {
       ok: false,
       httpStatus: 409,
@@ -470,6 +470,15 @@ export async function submitClarificationAnswer({
           message: { role: "user", content },
           tx,
         });
+
+        // Assignment 37.14 (AD-P7): the accepted answer releases the human-wait
+        // marker in the SAME transaction that records the continuation, so the
+        // session is RUNNING again by the time the loop turn is claimed. Clear
+        // before recording the intent: the continuation is only safe once the
+        // session can actually advance. A session that never parked (legacy
+        // RUNNING) is a no-op here because the CAS matches WAITING_CONFIRMATION
+        // only.
+        await clearAgentSessionWaiting(sessionId, tx);
 
         await recordAgentEvent({
           tx,
