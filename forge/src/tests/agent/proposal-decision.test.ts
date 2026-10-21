@@ -30,9 +30,13 @@ jest.mock("@/lib/ai/agent/locks", () => ({
   withAgentSessionLock: jest.fn(),
 }));
 
-jest.mock("@/lib/ai/agent/session-service", () => ({
-  getAgentSessionForUser: jest.fn(),
-}));
+jest.mock("@/lib/ai/agent/session-service", () => {
+  const actual = jest.requireActual("@/lib/ai/agent/session-service");
+  return {
+    ...actual,
+    getAgentSessionForUser: jest.fn(),
+  };
+});
 
 jest.mock("@/lib/ai/agent/services/message-service", () => ({
   createMessage: jest.fn(),
