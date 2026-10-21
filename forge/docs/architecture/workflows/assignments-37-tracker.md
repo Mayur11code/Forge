@@ -2,9 +2,9 @@
 
 ```text
 Last Updated:     2026-10-21
-Current Phase:    37.12  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 IMPLEMENTED; 37.12 IMPLEMENTED)
-Overall Status:   READY  (I6 VERIFIED — real-PostgreSQL acceptance run passed; 37.12 handoff IMPLEMENTED, not yet VERIFIED)
-Next Action:      Verify 37.12 (handoff IMPLEMENTED — mocked + real-DB suites green) and verify 37.11 (real-DB round-trip)
+Current Phase:    37.13  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11, 37.12, 37.13 IMPLEMENTED)
+Overall Status:   READY  (I6 VERIFIED — real-PostgreSQL acceptance run passed; 37.12 handoff and 37.13 prompt IMPLEMENTED, not yet VERIFIED)
+Next Action:      Verify 37.13 (prompt text vs 37.1 capability surface) and 37.12 (handoff mocked + real-DB suites green); verify 37.11 (real-DB round-trip)
 ```
 
 > **I6 VERIFIED 2026-10-20 (real-database acceptance).** The cross-tenant
@@ -345,7 +345,7 @@ Always use the smallest applicable status.
 | 37.10 | UI graph projection / deterministic layout | **IMPLEMENTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout + read-only preview | Projection is deterministic and Gemini-free | 2026-10-19 — 4 focused suites 33/7/19/19; full 53/1005; tsc 0; eslint 0; prisma valid; 3 mutations reverted | **F1 open** (ordering recorded as AD-11). Moved ahead of materialization. Layout hand-rolled; no layout library. See `assignments-37-phase-37.10-ui-graph-projection.md`. Not `VERIFIED`. |
 | 37.11 | Workflow materialization | **IMPLEMENTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-20 — 4 new suites 33/17/10/15 + card; full 56/1074; tsc 0; eslint 0; prisma valid; diff-check clean | **F1 + F2 resolved.** Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. **Real-DB round-trip OPEN (runnable now — 37.8 migration is applied).** Not `VERIFIED`. See `assignments-37-phase-37.11-workflow-materialization.md`. |
 | 37.12 | Execution handoff | **IMPLEMENTED** | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | 2026-10-21 — 5 new suites (5/10/5/4/5) + boundary-scope updated; full 68/1168; focused workflow+security 26/403; realdb I6 10/10 + handoff 5/5; tsc 0; eslint 0; not committed | No new executor, lock, or queue runner. Explicit authenticated Run action → `startWorkflow`; validated optional trigger context (reserved keys refused); canvas `mockProjectPayload` removed. Multiple-run behaviour preserved. **Not `VERIFIED`.** |
-| 37.13 | Prompt / DAG planning instructions | **NOT_STARTED** | P1 | 37.12 | 37.16 | Prompt update + version bump | Prompt references real contracts only | — | Only after 37.1. Version explicitly tracked. |
+| 37.13 | Prompt / DAG planning instructions | **IMPLEMENTED** | P1 | 37.12 | 37.14, 37.16 | Prompt update + version bump | Prompt references real contracts only | 2026-10-21 — new `prompt-dag-planning.test.ts` 29/29; full 69/1197; 7 relevant suites 191/191; tsc 0; eslint 0; diff-check clean; not committed | `AGENT_PROMPT_VERSION` `v5 → v6`; DAG/parallelism, local-id, capability-contract, reference-grammar, clarification, criticality, propose-only and validation-observation guidance added to `<WORKFLOW_GENERATION>`. v5 remediation text preserved. `generate-workflow/tool.ts` unchanged (out of scope). **Not `VERIFIED` — manual prompt-vs-registry review done; model obedience is a 37.16 concern.** |
 | 37.14 | Self-healing observations | **NOT_STARTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | — | No second retry controller. |
 | 37.15 | Full test matrix | **NOT_STARTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | — | Includes I1 regression test. |
 | 37.16 | Live capstone verification | **NOT_STARTED** | P1 | 37.15 | 37.17 | "Onboard Acme Enterprise." end-to-end | Every live check individually evidenced | — | Includes I5 verification. |
@@ -2630,7 +2630,7 @@ uniqueness, a partial index, or a run lock at the handoff.
 
 ### Status
 
-**NOT_STARTED** · Priority: P1
+**IMPLEMENTED** · Priority: P1
 
 ### Objective
 
@@ -2704,26 +2704,41 @@ Review of prompt text against the 37.1 capability surface.
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
+Implementation: AGENT_PROMPT_VERSION v5 -> v6; DAG-planning guidance added to
+                <WORKFLOW_GENERATION> (topology, local ids, action contracts,
+                reference grammar, clarification, criticality, propose-only,
+                validation observations). generate-workflow/tool.ts unchanged.
+Tests:          src/tests/agent/prompt-dag-planning.test.ts (29/29);
+                full default suite 69 suites / 1197 tests; 7 relevant suites
+                191/191; tsc exit 0; eslint exit 0; git diff --check clean.
+Verification:   Manual prompt-vs-registry review performed (only task.create is
+                named; inputs/outputs match ActionCapabilities). NOT a proof of
+                model obedience in live generation.
 Commit/PR:      —
-Relevant files: —
+Relevant files: src/lib/ai/agent/prompts/system-prompt.ts
+                src/tests/agent/prompt-dag-planning.test.ts
 ```
 
 ### Known Risks / Findings
 
 None. Sequencing risk only: writing the prompt before 37.1 would describe
-contracts that do not exist.
+contracts that do not exist — 37.1 is VERIFIED, so the prompt describes only the
+capability surface that exists (`task.create`). Model obedience is unverified by
+design and belongs to the 37.16 capstone.
 
 ### Decisions
 
-Pending: prompt version identifier for this increment.
+Resolved: prompt version identifier for this increment is **`v6`**. The v5
+clarification/remediation text and the `v4 → v5` bump are preserved unchanged;
+37.13 adds its own increment on top rather than relabelling history. v5 is not
+relabelled and Git history is not rewritten: v5 stays the remediation contract,
+and **v6 is the Assignment 37.13 increment**.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-21 | IMPLEMENTED | Prompt version bumped `v5 → v6`; DAG-planning, local-id, capability-contract, reference-grammar, clarification, criticality, propose-only and validation-observation guidance added to `<WORKFLOW_GENERATION>`; v5 text preserved; `tool.ts` untouched. New `prompt-dag-planning.test.ts` (29 cases) covers prompt content, capability/contract drift vs `CAPABILITY_ACTION_IDS`+`ActionRegistry`, trusted-context absence and version provenance. Full default suite 69 suites / 1197 tests; tsc exit 0; eslint 0; `git diff --check` clean. **Not `VERIFIED`** (verification gate is a manual prompt review; model obedience is unverified). | `docs/dev-log/2026-10-21-phase-37.13-prompt-dag-planning.md` |
 
 ---
 
@@ -3607,7 +3622,7 @@ regardless of intent.
 - [ ] 37.10 complete — **IMPLEMENTED 2026-10-19 (not VERIFIED)** — deterministic projection + hand-rolled layered layout + read-only preview; server-side revision binding; 33/7/19/19 focused tests; full 53/1005; tsc/eslint/prisma clean; F1 still open (AD-11 ordering) — evidence: `src/tests/workflow/proposal-ui-projection.test.ts`, `assignments-37-phase-37.10-ui-graph-projection.md`
 - [ ] 37.11 complete
 - [ ] 37.12 complete
-- [ ] 37.13 complete
+- [ ] 37.13 complete — **IMPLEMENTED 2026-10-21 (not VERIFIED)** — `AGENT_PROMPT_VERSION` v5 → v6; DAG-planning/local-id/capability-contract/reference-grammar/clarification/criticality/propose-only/validation-observation guidance added to `<WORKFLOW_GENERATION>`; v5 text preserved; `tool.ts` unchanged; new `prompt-dag-planning.test.ts` 29/29; full 69/1197; tsc/eslint/diff-check clean; manual prompt-vs-registry review done; model obedience unverified — evidence: `src/tests/agent/prompt-dag-planning.test.ts`, `docs/dev-log/2026-10-21-phase-37.13-prompt-dag-planning.md`
 - [ ] 37.14 complete
 - [ ] 37.15 complete
 - [ ] 37.16 complete
