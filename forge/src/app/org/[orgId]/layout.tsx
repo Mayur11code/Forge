@@ -1,6 +1,9 @@
 // src/app/org/[orgId]/layout.tsx
 // Global styles for the entire app
+import { notFound } from "next/navigation";
+
 import { OrgProvider } from "@/contexts/OrgContext";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { RealtimeListener } from "@/features/organizations/components/pusher/RealtimeListener";
 import { Sidebar } from "@/features/organizations/components/Sidebar";
 
@@ -13,11 +16,14 @@ export default async function OrgLayout({
   params: Promise<{ orgId: string }>;
 }) {
   const { orgId } = await params;
+  const access = await getOrgAccess(orgId);
+
+  if (!access) notFound();
 
   return (
     // Main wrapper: Deep zinc background for a professional "Dark Mode" feel
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans antialiased">
-      <RealtimeListener orgId={orgId} /> {/* Real-time listener for this org */}
+      <RealtimeListener organizationId={access.organization.id} /> {/* Real-time listener for this org */}
       {/* Sidebar Area: Border-r separates it with a subtle dark stroke */}
       <aside className="border-r border-zinc-800/50 bg-zinc-900/30 backdrop-blur-xl">
         <Sidebar orgId={orgId} />
@@ -45,7 +51,7 @@ export default async function OrgLayout({
         {/* Content: Smooth scrolling with subtle padding adjustment */}
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           <div className="max-w-7xl mx-auto p-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-            <OrgProvider orgSlug={(await params).orgId}>
+            <OrgProvider orgSlug={orgId}>
               {children}
             </OrgProvider>
 

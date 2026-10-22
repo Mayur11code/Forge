@@ -2,14 +2,19 @@
 
 import { useEffect } from "react";
 import { getPusherClient } from "@/lib/pusher/pusher-client";
+import { organizationChannelName } from "@/lib/pusher/org-channel";
 import { toast } from "sonner"; // or whatever toast library you use
 
-export function RealtimeListener({ orgId }: { orgId: string }) {
+export function RealtimeListener({
+  organizationId,
+}: {
+  organizationId: string;
+}) {
   useEffect(() => {
     const pusher = getPusherClient();
     if (!pusher) return;
 
-    const channelName = `org-${orgId}`;
+    const channelName = organizationChannelName(organizationId);
     // 1. Subscribe to the isolated channel
     const channel = pusher.subscribe(channelName);
 
@@ -28,7 +33,7 @@ export function RealtimeListener({ orgId }: { orgId: string }) {
       channel.unbind_all();
       channel.unsubscribe();
     };
-  }, [orgId]);
+  }, [organizationId]);
 
   return null; // This component doesn't render anything visually
 }
