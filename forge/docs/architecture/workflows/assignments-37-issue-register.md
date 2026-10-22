@@ -853,6 +853,99 @@ capstone rather than during it.
 
 ---
 
+### I9 — Cross-tenant workflow-run page had no membership check
+
+**Classification:** P1 preflight blocker, found 2026-10-22 during the 37.16 audit.
+Fixed in source; runtime/live verification is pending.
+
+**Observed.** `src/app/org/[orgId]/runs/[runId]/page.tsx` fetched a run by
+`runId` and the URL's `orgId` slug only. It did not call `getOrgAccess`. The
+`/org` middleware checks authentication, not organization membership
+(`src/middleware.ts`), so any authenticated user could request another
+organization's run page if they knew the slug and run id.
+
+**Fix.** The page now calls `getOrgAccess(orgId)` and returns `notFound()` when
+access is absent. The query is scoped by the authorized
+`access.organization.id`, not the URL slug. `run-page-tenant-scope.test.ts`
+asserts zero database access before authorization, the authorized-org predicate,
+and the same 404 behavior for missing and foreign-tenant runs.
+
+**Residual.** This is a source fix plus mocked-boundary evidence, not a live
+cross-tenant exploit test. The middleware remains login-only; page-level
+authorization is still required. No test-user credentials were available for a
+real-session probe.
+
+---
+
+### I10 — `SEND_EMAIL` recipient was hardcoded; task-create actor is not deliverable
+
+**Classification:** P1 preflight blocker, found 2026-10-22 during the 37.16 audit.
+Worker mitigated; the producer/recipient contract remains open.
+
+**Observed.** `src/app/api/worker/email-worker/ew.ts` delivered every
+`SEND_EMAIL` event to one developer's personal address. The payload identifies
+`orgId` and `userId`, not a recipient. The registered `task.create` path
+publishes `TASK_CREATED` with the synthetic actor `userId: "system-cdc"`
+(`src/lib/prisma/extended.ts`), and the cron path falls back to `"system"`
+(`src/lib/events/event-bus.ts`). Neither actor is a deliverable member.
+`communication.send_email` is not a registered workflow action, so it does not
+supply another producer contract.
+
+**Fix.** The worker resolves the recipient through the composite membership key
+`(userId, orgId)`, validates it with `z.email()`, and fails closed when no
+membership or valid email exists. The fixed personal address and the stale
+"no orgId" comments were removed. `email-recipient-scope.test.ts` covers the
+valid member path, ignored client-smuggled recipient fields, wrong-organization
+membership, invalid email, the `system-cdc` actor, the cron fallback's
+`system` actor, a missing recipient identity, and the absence of the old
+fixed-address fallback. Existing worker/QStash retry semantics are unchanged.
+
+**Residual / blocker.** Task-created and cron-fallback `SEND_EMAIL` events still
+have no trustworthy recipient. They now fail closed instead of leaking to a
+personal inbox, but that is a failure, not delivery. Do not record this finding
+as live-verified.
+
+**Decision required.** The owner must define what `TASK_CREATED` email is meant
+to notify and who receives it. The only persisted candidate is the optional
+`Task.assigneeId`; `Task` has no creator column, the UI/triage `userId` is not
+persisted, and the workflow path has no interactive user. The owner must choose
+the assignee, the authenticated creator, organization owners/admins, or no
+email. For `CRON_DAILY_DIGEST`, the owner must either define a per-user producer
+(no live producer currently dispatches this event) or state that no digest
+email is intended. No producer change was made by assumption.
+
+---
+
+### I11 - Organization notification channel used different identifiers on each side
+
+**Classification:** P1 preflight blocker, found 2026-10-22 during the 37.16 audit.
+Fixed in source; live Pusher verification is pending.
+
+**Observed.** `src/app/api/worker/email-worker/ew.ts` published to
+`org-${userId}`, while
+`src/features/organizations/components/pusher/RealtimeListener.tsx` subscribed
+to `org-${orgId}` where the layout passed the URL slug. The worker and client
+therefore never shared a channel: correct delivery was impossible even for an
+authorized member. The event payload itself already carried the persisted
+`Organization.id`.
+
+**Fix.** A shared `organizationChannelName()` helper now builds `org-<id>`.
+The worker uses `event.data.orgId`; the organization layout resolves the URL
+slug through `getOrgAccess(orgSlug)` and passes `access.organization.id` to the
+listener. A caller without organization membership is rejected by the layout
+before the listener mounts. `org-channel.test.ts` covers the identifier and
+separation between organizations; `org-layout-realtime-channel.test.tsx` proves
+the layout passes the persisted id rather than the slug.
+
+**Residual.** The `org-` channel is still a public Pusher channel. A matching
+name prevents misrouting, and the layout prevents a non-member from obtaining
+the id through the UI, but public channels are not subscription-authorized.
+Whether to keep that behavior or convert the organization stream to a private,
+membership-authorized channel is an owner decision; no channel privacy or
+payload behavior was changed here. Not live-verified against Pusher.
+
+---
+
 ## 5. P2 Later Architectural Findings
 
 > **[RESOLVED — 37.11, 2026-10-20]** **F1 and F2 are CLOSED** by
@@ -1073,6 +1166,9 @@ execution. Conditional routing is **not** claimed to work end-to-end. See
 | **F5** schema is not the production semantic gate | **P1** | **37.4** | Deterministic, structured proposal compilation; AD-P4 | No — **CLOSED 2026-10-12** |
 | **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7 / 37.8** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | **Open** — protocol scope VERIFIED 37.6 (2026-10-17, AD-18); persistence deferred to 37.8 |
 | **I5** maintenance schedule unknown | **P1-CHECK** | **37.16** | Capstone recovery verification; only if confirmed absent | Only if confirmed absent |
+| **I9** cross-tenant run-page read | **P1** | **37.16 preflight** | Run-page read confidentiality; fixed in source, not live-verified | No |
+| **I10** hardcoded `SEND_EMAIL` recipient | **P1** | **37.16 preflight** | Email delivery safety; worker mitigated, producer recipient contract open | No — producer decision required |
+| **I11** organization channel identifier mismatch | **P1** | **37.16 preflight** | Notification routing; fixed in source, not live-verified; public channel decision open | No - channel privacy decision required |
 | **F1** canvas-first persistence | **P2** | **37.10 / 37.11** | Materialization ordering; layout strategy | No — **CLOSED 2026-10-20** (37.11, Option 1: synthesize layout before persistence through the shared boundary) |
 | **F2** definition id/name are placeholders | **P2** | **37.11** | Provenance; correct human-facing name placement | No — **CLOSED 2026-10-20** (37.11: `Workflow.name` = proposal name; provenance = `AgentToolExecution.id`; no new migration) |
 | **I3** `WAITING_CONFIRMATION` unreachable | **P2/P3** | Later state-machine cleanup | Nothing in 37.1–37.5 | No |
@@ -1378,6 +1474,20 @@ prompt, or execution path. The Phase 0 audit remains unmodified.
 
 **I5 remains unverified** and is not listed as a blocker. It becomes one only if
 verification confirms no workflow-maintenance schedule exists.
+
+**Recorded by the 2026-10-22 37.16 preflight audit:**
+- **I9** — cross-tenant run-page read authorization was missing; fixed in source
+  and covered by focused tests. Not live-verified.
+- **I10** — `SEND_EMAIL` had a hardcoded recipient; the worker now resolves by
+  membership and fails closed. Task-create/cron events still lack a deliverable
+  actor, so the producer contract remains open. Not live-verified.
+
+- **I11** - organization notification channel used different identifiers; fixed
+  in source on the persisted organization id, with focused producer/layout
+  tests. The channel remains public, so private-channel authorization is an
+  owner decision. Not live-verified.
+
+These source fixes do not change the 37.15 or I5 status. 37.16 remains `NOT_STARTED`.
 
 ### Deferred follow-ups (recorded 2026-10-20)
 

@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/prisma/db";
+import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import type {
   AppNode,
   AppEdge,
@@ -22,13 +23,17 @@ export default async function WorkflowRunPage({
 }: RunPageProps) {
  const { runId, orgId } = await params;
 
-  // Fetch workflow run + graph
+  const access = await getOrgAccess(orgId);
+  if (!access) {
+    notFound();
+  }
+
 const run = await db.workflowRun.findFirst({
   where: {
     id: runId,
     workflow: {
       organization: {
-        slug: orgId,
+        id: access.organization.id,
       },
     },
   },
