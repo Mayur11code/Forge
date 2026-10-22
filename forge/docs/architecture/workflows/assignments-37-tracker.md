@@ -3325,14 +3325,53 @@ Relevant files: —
 
 **I5** — P1-CHECK. Not an active blocker until verification confirms absence.
 
+**I9 — run-page tenant check (found 2026-10-22, fixed in source).** The workflow
+run page scoped its query with the URL's organization slug and never called
+`getOrgAccess`, so an authenticated user could read another organization's run
+by knowing its slug and run id. The page now authorizes with `getOrgAccess` and
+queries by the authorized organization id. Evidence:
+`run-page-tenant-scope.test.ts` (4 tests). This is mocked-boundary evidence, not
+a live exploit test.
+
+**I10 — `SEND_EMAIL` recipient (found 2026-10-22, worker mitigated; contract
+open).** The email worker sent every event to one hardcoded personal address.
+It now resolves a membership by `(userId, orgId)`, validates the email, and
+fails closed. However, `task.create` emits `userId: "system-cdc"` and the cron
+fallback emits `"system"`, so those events have no deliverable recipient and
+will fail rather than send. A producer/contract decision is required. Evidence:
+`email-recipient-scope.test.ts` (8 tests, including both synthetic actors and missing identity).
+Existing retry semantics are unchanged.
+
+**Decision required (I10).** The owner must define the intended
+`TASK_CREATED` recipient: the optional persisted assignee, the authenticated
+creator, organization owners/admins, or no email. `Task` has no creator column
+and no notification-recipient contract, so choosing one now would invent a
+product rule. For `CRON_DAILY_DIGEST`, the owner must either define a per-user
+producer (the current cron handler dispatches no such event) or state that no
+digest email is intended. Until then both producer paths fail closed.
+
+**I11 - organization notification channel mismatch (found 2026-10-22, fixed in
+source).** The email worker published to `org-${userId}` while the client
+subscribed to `org-${orgSlug}`. Neither side used the persisted organization
+id, so a correctly-authorized member could never receive the event. Both sides
+now use `organizationChannelName(access.organization.id)`; the organization
+layout resolves the URL slug through `getOrgAccess` before subscribing.
+Evidence: `org-channel.test.ts` (3 tests) and
+`org-layout-realtime-channel.test.tsx` (2 tests). The channel remains public;
+matching names prevent misrouting but do not authorize subscription.
+
 ### Decisions
 
-Pending: none.
+Pending owner decision: I10 recipient contract (task-created recipient and
+whether cron email exists) and I11 public-vs-private organization channel.
+No implementation choice was made by assumption.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-22 | NOT_STARTED | Read-only 37.16 preflight audit found I9/I10 and recorded remaining gates. I9 fixed in source; I10 worker fails closed, producer recipient gap open. Capstone not run. | Audit report; focused suites 2/10; security/workflow/worker-routing regression 30/446; `tsc` 0; ESLint 0; `git diff --check` clean |
+| 2026-10-22 | NOT_STARTED | Follow-up: organization channel unified on the persisted org id (I11) and UI/layout route tests added. I10 still requires an owner recipient decision; no producer guess and no live email. Capstone not run. | Focused suites 3/13; security/workflow/worker-routing regression 32/454; full 78/1265; `tsc` 0; ESLint 0 changed files / 0 errors and 31 pre-existing warnings repo-wide; `git diff --check` clean |
 
 ---
 
