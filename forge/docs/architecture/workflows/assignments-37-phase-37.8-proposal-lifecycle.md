@@ -2,11 +2,11 @@
 
 ```text
 Phase:            37.8 — Durable proposal persistence and restart survival
-Status:           IMPLEMENTED (2026-10-17 — submitted for independent acceptance; F4 open)
+Status:           VERIFIED (2026-10-23 — real-PostgreSQL 2-process restart survival acceptance suite 10/10 PASS)
 Classification:   P1
-Depends on:       37.5 IMPLEMENTED (`generateWorkflow` tool); 37.6 VERIFIED (missing-input protocol); 37.7 IMPLEMENTED (human criticality)
+Depends on:       37.5 VERIFIED (`generateWorkflow` tool); 37.6 VERIFIED (missing-input protocol); 37.7 VERIFIED (human criticality)
 Blocks:           37.9 (approval), 37.10 (UI representation), 37.11 (materialization)
-Resolves:         F4 (decision recorded; F4 NOT closed)
+Resolves:         F4 (CLOSED 2026-10-23 via Option 1 AgentToolExecution lifecycle extension)
 Writes workflows: No
 Writes anything:  Adds durable proposal lifecycle columns on `AgentToolExecution`; persists human clarification/criticality decisions
 Runtime changed:  No
@@ -17,9 +17,12 @@ Schema migration: Yes (offline-generated; see §5)
 Companion documents: `assignments-37-plan.md`, `assignments-37-tracker.md`,
 `assignments-37-issue-register.md`, `../agent/decisions.md`.
 
-**Status — `IMPLEMENTED`, not `VERIFIED`.** Phase 2 of 37.8 is implemented and
-locally verified; it is submitted for independent acceptance. **F4 remains
-open.** This document does not self-accept.
+**Status — `VERIFIED` (2026-10-23).** Phase 37.8 is formally verified against real
+PostgreSQL. Acceptance Gate and Verification Gate are satisfied by the independent
+two-process cold restart harness (`src/tests/agent/proposal-lifecycle.realdb.test.ts`,
+10/10 PASS in 66s). **F4 is resolved and closed.** Option 1 (extending
+`AgentToolExecution`) is implemented and migration `20261017120000_agent_proposal_lifecycle`
+is applied.
 
 ---
 

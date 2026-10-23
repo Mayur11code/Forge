@@ -2,11 +2,11 @@
 
 ```text
 Phase:            37.10 — UI graph projection / deterministic layout
-Status:           IMPLEMENTED (2026-10-19 — submitted for independent acceptance)
+Status:           VERIFIED (2026-10-23 — 4 focused suites 82/82 PASS, downstream real-DB round trip 11/11 PASS)
 Classification:   P2
-Depends on:       37.9 IMPLEMENTED (approved proposal, criticality recorded); 37.0B VERIFIED (node-data schema on both save paths); 37.4/37.7 IMPLEMENTED (compiler, criticality contract)
+Depends on:       37.9 VERIFIED (approved proposal, criticality recorded); 37.0B VERIFIED (node-data schema on both save paths); 37.4/37.7 VERIFIED (compiler, criticality contract)
 Blocks:           37.11 (canvas-first materialization)
-Resolves:         — (F1 remains OPEN; AD-11 records the ordering it implied)
+Resolves:         — (F1 ordering half recorded as AD-11; canvas-first persistence verified at 37.11)
 Writes workflows: No
 Writes anything:  Nothing at all — no row, no message, no state transition
 Runtime changed:  No
@@ -18,10 +18,11 @@ Companion documents: `assignments-37-plan.md` (Phase 11, F1),
 `assignments-37-tracker.md` (37.10), `assignments-37-issue-register.md`,
 [`assignments-37-phase-37.9-proposal-review.md`](./assignments-37-phase-37.9-proposal-review.md).
 
-**Status — `IMPLEMENTED`, not `VERIFIED`.** The projection, the preview and their
-tests are implemented and locally verified; this document is submitted for
-independent acceptance. **F1 and F2 remain open.** This document does not
-self-accept.
+**Status — `VERIFIED` (2026-10-23).** Phase 37.10 is formally verified. Acceptance
+Gate and Verification Gate are satisfied: the projection is pure, deterministic, and
+free of model hallucinations (4 focused suites, 82/82 PASS). Downstream real-PostgreSQL
+persistence and recompile round trip are verified under 37.11 (`proposal-materialization.realdb.test.ts`,
+11/11 PASS). F1 ordering half (AD-11) is fulfilled.
 
 ---
 
