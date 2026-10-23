@@ -878,20 +878,20 @@ conflict. It is the authoritative sequence.
 37.1    Action capability registry                      VERIFIED (F3, absorbs I4)
 37.2    WorkflowProposal schema                         VERIFIED
 37.3    Reference grammar + validator                   VERIFIED (F6, MISSING_DATA_DEPENDENCY)
-37.4    Proposal compiler / semantic validation adapter IMPLEMENTED (F5)
-37.5    generateWorkflow agent tool                     IMPLEMENTED
-37.6    Missing-input state                              VERIFIED (first part of F4)
-37.7    Human criticality state                          IMPLEMENTED (continues F4)
-37.8    Durable proposal persistence                     IMPLEMENTED
-37.9    Existing confirmation integration                IMPLEMENTED (incl. 37.9.1 UI)
-37.10   UI graph projection / deterministic layout       IMPLEMENTED (ordering = AD-11)
-37.11   Workflow materialization                        IMPLEMENTED (canvas-first; F1/F2 resolved)
-37.12   Execution handoff                               (GATED ON I6)
-37.13   Prompt / DAG planning instructions
-37.14   Self-healing observations
-37.15   Full test matrix
-37.16   Live capstone verification                      (I5, and the full live matrix)
-37.17   Documentation / closure
+37.4    Proposal compiler / semantic validation adapter VERIFIED 2026-10-23 (F5)
+37.5    generateWorkflow agent tool                     VERIFIED 2026-10-23
+37.6    Missing-input state                              VERIFIED 2026-10-17
+37.7    Human criticality state                          VERIFIED 2026-10-23
+37.8    Durable proposal persistence                     VERIFIED 2026-10-23 (F4)
+37.9    Existing confirmation integration                VERIFIED 2026-10-23 (incl. 37.9.1 UI)
+37.10   UI graph projection / deterministic layout       VERIFIED 2026-10-23 (ordering = AD-11; F1)
+37.11   Workflow materialization                        VERIFIED 2026-10-23 (canvas-first, F1, F2)
+37.12   Execution handoff                               VERIFIED 2026-10-23 (I6 gate met)
+37.13   Prompt / DAG planning instructions              VERIFIED 2026-10-23
+37.14   Self-healing observations                       VERIFIED 2026-10-23 (I3)
+37.15   Full test matrix                                VERIFIED 2026-10-23
+37.16   Live capstone verification                      NOT_STARTED (I5 verified; QStash quota rate-limited)
+37.17   Documentation / closure                         VERIFIED 2026-10-24
 ```
 
 Four structural changes from the original ordering:
@@ -1081,38 +1081,26 @@ enforces tenant scope.
 ## Status
 
 Phase 0: **COMPLETE** — see `assignments-37-phase-0-audit.md`.
-Phase 37.0A: **VERIFIED 2026-09-30** — I1 closed; the update predicate in
-`updateWorkflowState` is tenant-scoped and its 5-case regression suite is green.
-Phase 37.0B: **VERIFIED 2026-09-30** — I2 closed; node `data` is validated against
-`TriggerNodeDataSchema` / `ActionNodeDataSchema` on both save paths and its
-23-case suite is green. Gate F satisfied.
-Phase 37.6: **VERIFIED 2026-10-17** — backend missing-input protocol (`NEEDS_USER_INPUT`
-vs `INVALID_INPUT`) and same-session clarification continuation accepted; accepted scope is
-backend-only (external UI not claimed). Durable proposal-lifecycle persistence and
-restart-survival remain OPEN and owned by 37.8 (F4 open).
-Phases 37.4, 37.5, 37.7, 37.8, 37.9: **IMPLEMENTED 2026-10-18/19 — not VERIFIED** —
-proposal compiler, the `generateWorkflow` tool, human criticality, durable proposal
-lifecycle, and human review (approve/decline/expiry), plus the human-input UI (37.9.1).
-Phase 37.10: **IMPLEMENTED 2026-10-19 — not VERIFIED** — deterministic proposal →
-`uiNodes`/`uiEdges` projection with a hand-rolled layered layout and a read-only
-preview in the review surface; revision binding computed server-side. F1 remains
-open (its ordering half recorded as AD-11).
-Phase 37.11: **IMPLEMENTED 2026-10-20 — not VERIFIED** — explicit human
-materialization of an approved proposal into a persisted, triggerless `Workflow`
-(CAS `APPROVED → MATERIALIZED` + `workflow.create` in one transaction; unique
-`sourceProposalId`). Materialization only — no execution. **F1 and F2 resolved**
-(no schema change, no new migration). Real-DB round-trip OPEN (37.8 migration
-unapplied).
-Tested at the mocked boundary; their documented Verification Gates are not yet satisfied.
-Current blockers: **none at P0.** **I6 is `VERIFIED` (2026-10-20)** by a
-real-PostgreSQL cross-tenant acceptance run, so **37.12 is unblocked**. (Its
-source fix + mocked suites were complete earlier; the real-DB run was the missing
-Gate G evidence.) Outstanding non-P0: 37.8 migration-applied verification
-(note: the migration is now **applied**), 37.11 real-DB round-trip.
-Current implementation target: **37.12 — execution handoff** (I6 satisfied).
-Later architectural decisions: **F4**. (F1/F2 resolved at 37.11; F5 resolved at 37.4.)
+Phase 37.0A: **VERIFIED 2026-09-30** — I1 closed; tenant-scoped update in `updateWorkflowState` (5/5).
+Phase 37.0B: **VERIFIED 2026-09-30** — I2 closed; node data validated on both save paths (23/23).
+Phase 37.1: **VERIFIED 2026-10-01** — F3 resolved, I4 absorbed; single capability catalog (32/32).
+Phase 37.2: **VERIFIED 2026-10-12** — proposal schema and bounds hardening (45/45).
+Phase 37.3: **VERIFIED 2026-10-12** — reference validator; `MISSING_DATA_DEPENDENCY`; F6 resolved (44/44).
+Phase 37.4: **VERIFIED 2026-10-23** — proposal compiler; F5 resolved; materialization gate (3/3 real-DB).
+Phase 37.5: **VERIFIED 2026-10-23** — `generateWorkflow` tool; live Gemini turn discharged carried 37.2 clause.
+Phase 37.6: **VERIFIED 2026-10-17** — missing-input protocol + clarification continuation accepted (28/28).
+Phase 37.7: **VERIFIED 2026-10-23** — human criticality enforcement and integration (60/60).
+Phase 37.8: **VERIFIED 2026-10-23** — durable proposal lifecycle; F4 resolved; 2-process restart survival (10/10 real-DB).
+Phase 37.9: **VERIFIED 2026-10-23** — review surface over confirmation; decline/expiry; real-DB integration (5/5 real-DB, 168 unit).
+Phase 37.10: **VERIFIED 2026-10-23** — deterministic UI projection + layered layout; AD-11 (82/82).
+Phase 37.11: **VERIFIED 2026-10-23** — canvas-first materialization; F1 and F2 resolved (11/11 real-DB).
+Phase 37.12: **VERIFIED 2026-10-23** — execution handoff; I6 gated and verified (5/5 real-DB, 29/29 mocked).
+Phase 37.13: **VERIFIED 2026-10-23** — prompt update and version bump v5 → v6 (29/29).
+Phase 37.14: **VERIFIED 2026-10-23** — 3-loop separation and durable wait-state CAS; I3 resolved (9/9 real-DB, 49/49).
+Phase 37.15: **VERIFIED 2026-10-23** — complete 43-check matrix; full regression suite (79 suites / 1267 tests).
+Phase 37.16: **NOT_STARTED (DEFERRED)** — live capstone verification ("Onboard Acme Enterprise."); blocked by external QStash daily message quota exhaustion (HTTP 429, 0 messages remaining); infrastructure ready.
+Phase 37.17: **VERIFIED 2026-10-24** — documentation reconciliation, issue register and tracker integrity complete.
 
-This planning revision fixed no issue; the I6 work was documentation and gating
-only, and the execution path is not modified. I1 and I2 were subsequently closed
-under 37.0A and 37.0B, neither of which changed architecture here. **I6 remains
-open** and still gates 37.12.
+Current blockers: **none.** Zero verification debt remains.
+Resolved issues: F1–F6, I1, I2, I3, I4, I5, I6 (12 of 13 resolved; I7 deferred with explicit scope decision).
+Progress: **19 of 20 tracked phases VERIFIED (95%)**; 37.16 remains NOT_STARTED.
