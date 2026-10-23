@@ -266,7 +266,7 @@ Scoped ESLint over the changed agent code — clean. No test constructs a real
 | `agent/` `maintenance.test.ts` | All five duties, per-duty failure isolation, bounded limits, partial-failure retry, payload contract, identifier-free logging. |
 | `agent/` `worker-auth.test.ts` | Signature enforcement, the explicit opt-in, and per-delivery CloudEvent `id`/`time` derivation for schedule bodies. |
 | `agent/` `queue-publish.test.ts` | Deterministic ids, dedup keys, delay-unit conversion, regional `baseUrl`. |
-| `agent/` `provider-binding.test.ts` | `googleProvider` singleton, `gemini-2.5-flash`, `GEMINI_API_KEY` fail-closed. |
+| `agent/` `provider-binding.test.ts` | `googleProvider` singleton, `gemini-3.6-flash`, `GEMINI_API_KEY` fail-closed. |
 | `agent/` `worker-auth.test.ts` | Signature required by default; `ALLOW_UNSIGNED_LOCAL_WORKER === "true"` is the only bypass, and `"0"`/`"false"` do not enable it. |
 | `agent/` `queue-publish.test.ts` | Delay conversion to seconds, deterministic ids, `deduplicationId`. |
 | `agent/` `loop-policy.test.ts` | Step budget and one-call-per-turn policy. |
