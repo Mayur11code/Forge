@@ -35,6 +35,7 @@
 import { AgentToolExecutionStatus } from "@prisma/client";
 
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 import {
   WorkflowProposalSchema,
   type WorkflowProposal,
@@ -567,7 +568,7 @@ export async function submitCriticalityDecision({
       });
 
       return true;
-    });
+    }, AGENT_TRANSACTION_OPTIONS);
 
     if (!applied) {
       return {
