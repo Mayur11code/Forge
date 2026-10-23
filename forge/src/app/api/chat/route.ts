@@ -134,7 +134,7 @@ export async function POST(req: Request) {
     );
 
     const result = streamText({
-      model: googleProvider('gemini-2.5-flash'),
+      model: googleProvider('gemini-3.6-flash'),
       system: `You are the Engineered Forge AI assistant.
 You must answer the user's query strictly using the organizational context provided below.
 If the answer is not contained in the context, politely say that you do not have that information. Do not hallucinate data.

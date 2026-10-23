@@ -66,7 +66,7 @@ if (!projectId) {
     }
 
     const result = await generateObject({
-      model: googleProvider('gemini-2.5-flash'),
+      model: googleProvider('gemini-3.6-flash'),
       schema: triageSchema,
       system:
         'You are an automated issue-triage service. Extract metadata only from the submitted bug report. Do not invent details that are unsupported by the report.',
