@@ -2,9 +2,9 @@
 
 ```text
 Phase:            37.5 — generateWorkflow agent tool
-Status:           IMPLEMENTED (not yet VERIFIED — real-model-path clause open)
+Status:           VERIFIED (2026-10-23 — real-model-path clause discharged live)
 Classification:   P1
-Depends on:       37.4 IMPLEMENTED (compiler boundary); 37.0A VERIFIED (Gate E, I1)
+Depends on:       37.4 VERIFIED (compiler boundary); 37.0A VERIFIED (Gate E, I1)
 Blocks:           37.6, 37.7, 37.8
 Resolves:         Tool access classification — AD-17 (READ_ONLY)
 Writes workflows: No
@@ -23,11 +23,14 @@ This phase registers one additional agent tool. It does not write a workflow, do
 not execute an action, does not touch the runtime, and **does not modify
 `src/lib/workflow-types/*` or `src/lib/workflow/execution/resolver.ts`**.
 
-**Status — `IMPLEMENTED` (2026-10-12).** The tool is registered and covered by 24
-focused tests (§8). It is deliberately **not** marked `VERIFIED`: the verification
-gate carries a clause reassigned from 37.2 requiring that a proposal produced by the
-**real model path** parses without a compiler fix-up. The mocked/scripted path is
-shown to be a single step with no fix-up; a live-model run is still owed.
+**Status — `VERIFIED` (2026-10-23).** The tool is registered and covered by
+focused tests (§8; 35 now). The verification gate carries a clause reassigned from
+37.2 requiring that a proposal produced by the **real model path** parses without
+a compiler fix-up. That clause was discharged live on 2026-10-23 against
+`gemini-3.6-flash`: the emitted proposal validated, compiled and executed with
+byte-identical input at every stage (no fix-up, no repair). The mocked/scripted
+path remains the regression baseline; the live check claims a model parse path
+only, not a database, transport or capstone run.
 
 ---
 
@@ -164,7 +167,9 @@ produce) are **thrown**, never coerced into `INVALID_INPUT`.
 - `src/lib/ai/agent/tools/shared-output.ts` — `buildStructuredValidationFailure`
   added; `buildValidationFailure` refactored to share `failureFromIssues` (output
   unchanged; existing tests untouched and green).
-- `src/tests/agent/generate-workflow.test.ts` — **new**, 24 cases.
+- `src/tests/agent/generate-workflow.test.ts` — **new**, 24 cases (35 now).
+- `src/tests/agent/generate-workflow.live.test.ts` — live-model clause test
+  (untracked working tree; 2026-10-23 harness mocks added).
 - Documentation: this record; `assignments-37-tracker.md`;
   `assignments-37-issue-register.md` (sequence line).
 
@@ -204,9 +209,10 @@ prompt text and the version constant. The tool is nevertheless present in
 
 ## 7. Known limitations and deferred decisions
 
-1. **Not `VERIFIED`.** The 37.2 real-model-path clause is discharged only for the
-   mocked/scripted path (§10). A live-model run remains and is a condition of
-   `VERIFIED`.
+1. **`VERIFIED` (2026-10-23).** The 37.2 real-model-path clause is discharged for
+   the mocked/scripted path and on a live Gemini turn (§8.2, §10). The live check
+   proves the model's emitted proposal needs no compiler fix-up; it does not claim
+   a live database, transport or capstone.
 2. **Describer is unused.** `READ_ONLY` never enters the confirmation path; see §5.
 3. **`TYPE_MISMATCH`** remains unimplemented, inherited from 37.3/37.4. Not part of
    this phase's gate.
@@ -216,7 +222,7 @@ prompt text and the version constant. The tool is nevertheless present in
 
 ## 8. Test coverage and verification evidence
 
-`src/tests/agent/generate-workflow.test.ts` — 24 focused tests across six groups:
+`src/tests/agent/generate-workflow.test.ts` — 35 focused tests (the original record counted 24) across six groups:
 
 - **Registration / policy.** Present in `agentTools`; `agentTools` and
   `resolveToolPolicy` exercised; `requiresToolConfirmation("generateWorkflow")` is
@@ -244,15 +250,30 @@ prompt text and the version constant. The tool is nevertheless present in
 ### 8.1 Evidence
 
 ```text
-npx jest generate-workflow                                     -> 24/24
-npx jest src/tests/agent                                       -> 18 suites / 321 tests (was 17 / 297)
-npx jest src/tests/workflow                                    -> 13 suites / 287 tests
-npx jest                                                       -> 35 suites / 628 tests (was 34 / 604)
+npx jest src/tests/agent/generate-workflow.test.ts              -> 1 suite / 35 tests PASS
+npx jest src/tests/agent                                       -> 43 suites / 814 tests PASS
+npx jest src/tests/workflow                                    -> 21 suites / 369 tests PASS
+npx jest                                                       -> 78 suites / 1265 tests PASS
 npx tsc --noEmit                                               -> exit 0
-npx eslint (generate-workflow/, registry.ts, shared-output.ts, test) -> 0 errors, 0 warnings
-git diff --check                                               -> clean
+npm run lint                                                   -> exit 0 (0 errors, 31 pre-existing warnings)
+git diff --check                                               -> exit 0 (CRLF advisories only)
 git diff -- src/lib/workflow/execution/resolver.ts             -> empty
 git diff -- src/lib/workflow-types/workflow.ts                 -> empty
+```
+
+Verification pass 2026-10-23:
+
+```text
+Live model:   npx jest --config jest.live.config.ts
+                src/tests/agent/generate-workflow.live.test.ts --runInBand
+              -> 1 suite / 1 test PASS (gemini-3.6-flash; 2 steps; task.create)
+              -> input byte-identical through validate/compile/execute (no fix-up)
+Harness fix:  added prisma/extended + prisma/db double mocks to the live test
+              (registry imports projects.ts/Prisma); db guard retained; no
+              production source changed
+Evidence:     live-model parse path + unit/mocked integration. No live DB,
+              QStash, Redis, Pusher, action execution or capstone claimed; 37.16
+              owns that gate.
 ```
 
 ### 8.2 The 37.2 real-model-path clause
@@ -262,9 +283,16 @@ model path** parses without a compiler fix-up step. What is evidenced here: the 
 invokes `compileWorkflowProposal` once, directly, with no repair, retry, or
 pre-normalisation between the model arguments and the compiler — the test asserts the
 executor's first and only substantive call. This is proven on the **mocked/scripted**
-model path. A live model was not called; no overclaim is made that a live model
-produces only valid proposals. The clause is therefore recorded as partially
-discharged and 37.5 stays `IMPLEMENTED`.
+model path. **Discharged live 2026-10-23:** the `generate-workflow.live.test.ts`
+suite ran through the production `agentModel` (`gemini-3.6-flash`), the registered
+system prompt, registered tool definition and registered executor. The model
+emitted a two-step `task.create` proposal; `validateWorkflowProposal`,
+`compileWorkflowProposal` and `executeGenerateWorkflow` all succeeded with the
+input bytes unchanged through each stage and no field repaired or defaulted. The
+suite mocks only the Prisma boundary required for import (and keeps the database
+guard installed); it does not exercise a live database, transport, action or
+workflow write. No overclaim is made that a live model always produces valid
+proposals — the gate is satisfied for this real turn. 37.5 is `VERIFIED`.
 
 ---
 
@@ -281,3 +309,4 @@ made a mistake".
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-12 | IMPLEMENTED | Module + registry entry + shared failure helper + describer; `READ_ONLY` (AD-17) | 24/24 focused; full 35/628; tsc exit 0; eslint 0; `git diff --check` clean; resolver/canvas/runtime diffs empty |
+| 2026-10-23 | **VERIFIED** | Carried 37.2 real-model-path clause discharged live against `gemini-3.6-flash` through production model/prompt/registered tool/executor; input validated, compiled and executed unchanged (no fix-up). Focused, agent, workflow and full regressions green; harness fix test-only | Live 1/1; focused 35/35; agent 43/814; workflow 21/369; full 78/1265; `tsc` 0; `npm run lint` 0 errors; `git diff --check` clean |

@@ -36,6 +36,7 @@ import { prisma } from "@/lib/prisma/extended";
 // outbox is infrastructure, and routing that write through the extended
 // client's `task` interceptors would be wrong.
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 import {
   buildOutboxIdempotencyKey,
   recordAgentEvent,
@@ -327,7 +328,7 @@ export async function expireStaleProposalReviews({
         }
 
         return true;
-      });
+      }, AGENT_TRANSACTION_OPTIONS);
 
       if (didExpire) {
         expired += 1;
@@ -506,7 +507,7 @@ export async function redeliverStalledConfirmedExecutions({
           expectedStep: execution.session.currentStep,
         },
       });
-    });
+    }, AGENT_TRANSACTION_OPTIONS);
 
     redelivered.push(execution.id);
   }
@@ -747,7 +748,7 @@ export async function redriveStalledSessions({
             expectedStep: session.currentStep,
           },
         });
-      });
+      }, AGENT_TRANSACTION_OPTIONS);
 
       const rearm = await rearmOutboxEvent({
         idempotencyKey: buildOutboxIdempotencyKey(

@@ -27,7 +27,10 @@ const config = {
   // Real-database acceptance suites are named `*.realdb.test.ts` and run under
   // jest.realdb.config.ts instead (which does not install the guard). They must
   // not be picked up here or the guard fails the default run by design.
-  testPathIgnorePatterns: ['\\.realdb\\.test\\.ts$'],
+  // Live-model suites are named `*.live.test.ts` and run under
+  // jest.live.config.ts instead (each run spends real model quota and needs
+  // network access, so they are never part of the default run).
+  testPathIgnorePatterns: ['\\.realdb\\.test\\.ts$', '\\.live\\.test\\.ts$'],
   transform: {},
 }satisfies Config;
 

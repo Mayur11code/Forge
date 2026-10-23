@@ -34,7 +34,7 @@ function stripComments(source: string): string {
 
 describe("agent model provider binding", () => {
   it("resolves to the shared provider's model for the same model id", () => {
-    const shared = googleProvider("gemini-2.5-flash");
+    const shared = googleProvider("gemini-3.6-flash");
 
     // Compared on identity fields rather than `toBe`, because the provider
     // factory returns a new model wrapper per call - reference equality would
@@ -48,7 +48,7 @@ describe("agent model provider binding", () => {
   });
 
   it("uses the intended model", () => {
-    expect(agentModel.modelId).toBe("gemini-2.5-flash");
+    expect(agentModel.modelId).toBe("gemini-3.6-flash");
   });
 
   it("does not import the bare @ai-sdk/google provider", () => {

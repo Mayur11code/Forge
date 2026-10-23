@@ -15,4 +15,4 @@ import { googleProvider } from "@/lib/ai/provider";
  * chat route, triage, stream-audit and the vector retriever all share this
  * one singleton so credential handling has exactly one implementation.
  */
-export const agentModel = googleProvider("gemini-2.5-flash");
+export const agentModel = googleProvider("gemini-3.6-flash");

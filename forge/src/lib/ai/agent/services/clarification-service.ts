@@ -25,6 +25,7 @@
 // durability gate in the phase record.
 
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 import { withAgentSessionLock } from "../locks";
 import { getAgentSessionForUser, clearAgentSessionWaiting, isHumanDecisionAcceptableStatus } from "../session-service";
 import { createMessage, getMessages } from "./message-service";
@@ -495,7 +496,7 @@ export async function submitClarificationAnswer({
         });
 
         return true;
-      });
+      }, AGENT_TRANSACTION_OPTIONS);
 
       if (!applied) {
         return {
