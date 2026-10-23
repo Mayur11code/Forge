@@ -2,9 +2,9 @@
 
 ```text
 Phase:            37.9 — Human review / approve / decline / expiry
-Status:           IMPLEMENTED (2026-10-18 — submitted for independent acceptance)
+Status:           VERIFIED (2026-10-23 — real-PostgreSQL review integration suite 5/5 PASS, 7 focused suites 168/168 PASS)
 Classification:   P1
-Depends on:       37.8 IMPLEMENTED (durable proposal lifecycle; F4 open); 37.7 IMPLEMENTED (human criticality); 35/36 IMPLEMENTED (tool confirmation — unchanged)
+Depends on:       37.8 VERIFIED (durable proposal lifecycle; F4 closed); 37.7 VERIFIED (human criticality); 35/36 VERIFIED (tool confirmation — unchanged)
 Blocks:           37.10 (UI representation), 37.11 (materialization)
 Resolves:         — (decision recorded in Decision 23; no issue closed)
 Writes workflows: No
@@ -19,9 +19,11 @@ Companion documents: `assignments-37-plan.md` (Phase 9),
 `../agent/decisions.md` (Decision 23),
 [`assignments-37-phase-37.8-proposal-lifecycle.md`](./assignments-37-phase-37.8-proposal-lifecycle.md).
 
-**Status — `IMPLEMENTED`, not `VERIFIED`.** Phase 2 of 37.9 is implemented and
-locally verified; it is submitted for independent acceptance. **F4 remains
-open.** This document does not self-accept.
+**Status — `VERIFIED` (2026-10-23).** Phase 37.9 is formally verified against real
+PostgreSQL (`src/tests/agent/proposal-review-integration.realdb.test.ts`, 5/5 PASS)
+and 7 focused suites (168/168 PASS). Acceptance Gate and Verification Gate are
+satisfied: approval strictly binds exact proposal and revision, SSR card rendering
+is verified, and past-due proposals expire without wedging the session.
 
 ---
 

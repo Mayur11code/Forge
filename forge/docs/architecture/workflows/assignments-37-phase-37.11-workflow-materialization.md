@@ -2,9 +2,9 @@
 
 ```text
 Phase:            37.11 — workflow materialization
-Status:           IMPLEMENTED (2026-10-20 — submitted for independent acceptance)
+Status:           VERIFIED (2026-10-23 — real-PostgreSQL materialization round trip 11/11 PASS)
 Classification:   P2
-Depends on:       37.10 IMPLEMENTED (deterministic projection); 37.9 IMPLEMENTED (approval); 37.8 IMPLEMENTED (durable lifecycle; migration APPLIED as of 2026-10-20); 37.7 IMPLEMENTED (criticality contract); 37.4 IMPLEMENTED (compiler); 37.0A/37.0B VERIFIED (tenant update, node validation)
+Depends on:       37.10 VERIFIED (deterministic projection); 37.9 VERIFIED (approval); 37.8 VERIFIED (durable lifecycle; migration APPLIED); 37.7 VERIFIED (criticality contract); 37.4 VERIFIED (compiler); 37.0A/37.0B VERIFIED (tenant update, node validation)
 Blocks:           37.12 (execution handoff)
 Resolves:         F1 (canvas-first persistence), F2 (placeholder provenance/naming)
 Writes workflows: Yes — one `Workflow` row, triggerless, inactive
@@ -19,13 +19,13 @@ Companion documents: `assignments-37-plan.md` (Phase 37.11, F1/F2),
 [`assignments-37-phase-37.10-ui-graph-projection.md`](./assignments-37-phase-37.10-ui-graph-projection.md),
 [`assignments-37-phase-37.9-proposal-review.md`](./assignments-37-phase-37.9-proposal-review.md).
 
-**Status — `IMPLEMENTED`, not `VERIFIED`.** The service, route, session-read
-change, UI and their tests are implemented and locally verified; this document is
-submitted for independent acceptance. **The real-database round-trip and the
-unique-constraint enforcement are OPEN** — but the 37.8 migration is now
-**APPLIED** (verified by `prisma migrate status`, 2026-10-20), so the round-trip
-is runnable. Nothing here was proven against a live database, and no migration
-command was run by this phase. This document does not self-accept.
+**Status — `VERIFIED` (2026-10-23).** Phase 37.11 is formally verified against real
+PostgreSQL (`src/tests/agent/proposal-materialization.realdb.test.ts`, 11/11 PASS)
+and mocked suites (60/60 PASS). Acceptance Gate and Verification Gate are
+satisfied: CAS `APPROVED → MATERIALIZED` + `workflow.create` in a single transaction,
+stored canvas recompiles to stored definition, provenance survives real canvas
+re-save, and unique-index constraint rolls back failed operations cleanly.
+**F1 and F2 are resolved and closed.**
 
 ---
 
