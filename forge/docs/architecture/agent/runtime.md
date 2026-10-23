@@ -175,7 +175,7 @@ flowchart TD
     G -->|STOP_MAX_STEPS| MX[LoopResult MAX_STEPS_EXCEEDED]
     G -->|RUN| MS[getMessages + buildModelMessages]
     MS --> PR[buildAgentSystemPrompt organizationName]
-    PR --> GT[generateText gemini-2.5-flash tools=agentTools]
+    PR --> GT[generateText gemini-3.6-flash tools=agentTools]
     GT --> D{decideToolCalls}
     D -->|TOO_MANY_CALLS| FC[FAILED MULTIPLE_TOOL_CALLS — nothing persisted]
     D -->|EMPTY / NO_CALLS while expecting| FN[FAILED NO_TOOL_CALL — nothing persisted]

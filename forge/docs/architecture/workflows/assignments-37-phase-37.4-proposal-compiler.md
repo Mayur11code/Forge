@@ -2,7 +2,7 @@
 
 ```text
 Phase:            37.4 — Proposal compiler / semantic validation adapter
-Status:           IMPLEMENTED (not yet VERIFIED — no production caller until 37.5)
+Status:           VERIFIED (2026-10-23 — production-path gate discharged via 37.11 materialization)
 Classification:   P1
 Depends on:       37.2 VERIFIED (WorkflowProposal), 37.3 VERIFIED (reference validator)
 Blocks:           37.5 (generateWorkflow)
@@ -21,11 +21,20 @@ This phase adds one deterministic compilation boundary. It writes no workflows,
 changes no runtime, and **does not modify `src/lib/workflow/execution/resolver.ts`
 or `src/lib/workflow-types/workflow.ts`**.
 
-**Status — `IMPLEMENTED` (2026-10-12).** The compiler is implemented and covered by
-25 focused tests (§10). It is deliberately **not** marked `VERIFIED`: the
-verification gate requires a production-path check that the chosen gate runs on
-materialization, and the compiler has no production caller until 37.5. The
-unit-tested half of the gate is satisfied; the production-path half is deferred.
+**Status — `VERIFIED` (2026-10-23).** The compiler was implemented 2026-10-12 and
+covered by 25 focused tests (A–10), but was deliberately **not** marked
+`VERIFIED` then: the verification gate requires a production-path check that the
+chosen gate runs on materialization, and neither a production caller nor a
+materialization path existed. Both arrived — 37.5 supplies
+`executeGenerateWorkflow`'s `compileWorkflowProposal` call, and 37.11's
+`materializeProposal` routes every approved proposal through
+`projectProposalToUIGraph` → `compileWorkflowProposal` →
+`collectWorkflowDefinitionIssues`. The real-Postgres suite
+`src/tests/agent/proposal-compiler-materialization.realdb.test.ts` (3/3) now
+proves that chain is load-bearing: a cyclic `dependsOn` (which the proposal
+schema accepts and the reference validator never examines) is refused at
+materialization as `PROJECTION_FAILED` with no `Workflow` row and the lifecycle
+left `APPROVED`, while the same fixture with the cycle removed materializes.
 
 ---
 
@@ -256,10 +265,15 @@ git diff -- src/lib/workflow-types/workflow.ts               -> empty
 
 ## 11. Next phase
 
-37.5 (`generateWorkflow`) becomes the compiler's first production caller. Its
+37.5 (`generateWorkflow`) became the compiler's first production caller. Its
 model-path clause (a real generated proposal parsing without a compiler fix-up,
-reassigned from 37.2) is where the deferred production-path verification for 37.4
-lands.
+reassigned from 37.2) is 37.5's **own** condition and is unrelated to this
+phase's gate.
+
+The deferred production-path verification for 37.4 **no longer lands on 37.5**: it
+was discharged on 2026-10-23 through 37.11's materialization path, which invokes
+the same compiler before any `Workflow` row is written. Both halves of the gate
+are now satisfied and 37.4 is `VERIFIED`.
 
 ---
 
@@ -268,3 +282,4 @@ lands.
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-12 | IMPLEMENTED | Compiler module + 25 tests; `ProposalIssueCode` extended; F5 + AD-P4 resolved | 25/25 focused; workflow 13/287; tsc exit 0; eslint 0; `git diff --check` clean; resolver + workflow.ts diffs empty |
+| 2026-10-23 | VERIFIED | Production-path half of the gate discharged (production caller + materialization path both now exist); new real-Postgres suite added | `proposal-compiler-materialization.realdb.test.ts` 3/3 (refusal with no write + structured CYCLE issue + acyclic control); focused 25/25; workflow 21/369; full 78/1265; tsc 0; eslint 0; `git diff --check` clean; no production source changed |

@@ -730,52 +730,38 @@ all seven collector codes).
 
 ### F4 — `AgentToolExecution` cannot represent the complete workflow proposal lifecycle
 
-**Classification:** P1 · design decision required at **37.6 / 37.7** ·
-**no preemptive migration**.
+**Classification:** P1 · **RESOLVED (2026-10-23)** under Assignment 37.8.
 
 **Current columns** (`prisma/schema.prisma`, `model AgentToolExecution`):
 `id`, `sessionId`, `toolCallId` (`@unique`), `toolName`, `input` (Json),
 `error` (Text?), `status`, `confirmedAt?`, `cancelledAt?`, `expiresAt?`,
-`expiredAt?`, `createdAt`, `updatedAt`. Indexes: `[sessionId, createdAt]`,
+`expiredAt?`, `createdAt`, `updatedAt`, `result` (Json?), `proposalState` (`AgentProposalState?`),
+`proposalFingerprint` (String?), `proposalRevision` (Int?), `criticalityDecisions` (Json?),
+`clarificationAnswer` (Json?). Indexes: `[sessionId, createdAt]`,
 `[sessionId, status]`, `[status, expiresAt]`.
 
 **Current status enum** (`AgentToolExecutionStatus`): `PENDING`, `RUNNING`,
 `COMPLETED`, `FAILED`, `PENDING_CONFIRMATION`, `CANCELLED`, `EXPIRED`.
 
-**Absence of a result column.** There is no `result` field. Completed tool output
-is written into `AgentMessage` rows, not onto the execution. The durable
-per-execution record is what was proposed (`input`), an error string, and a
-status.
+**Absence of a result column.** Resolved by migration `20261017120000_agent_proposal_lifecycle`. Completed proposal output is durably persisted directly on the `AgentToolExecution` row in `result`.
 
-**Absence of proposal-lifecycle states.** No `VALIDATING`, `NEEDS_INPUT`, or
-`AWAITING_CRITICALITY`. The only wired gate is `PENDING_CONFIRMATION`, entered
-when policy requires it and exited by confirm/cancel/expire.
+**Absence of proposal-lifecycle states.** Resolved. `AgentProposalState` represents the human decision lifecycle: `AWAITING_CRITICALITY`, `AWAITING_APPROVAL`, `NEEDS_CLARIFICATION`, `CLARIFICATION_ACCEPTED`, `APPROVED`, `DECLINED`, `EXPIRED`, `SUPERSEDED`, `INVALID`, `MATERIALIZED`.
 
-**Current `PENDING_CONFIRMATION` mechanism, for contrast.** It is already a good
-fit for a different problem: the confirm endpoint takes no request body by design
-(`app/api/agent/session/[sessionId]/executions/[executionId]/confirm/route.ts:5-8`),
-so the executed arguments are exactly those persisted in `input`;
-`loadConfirmationTarget` + `decideConfirmation` enforce auth, ownership and
-transition; `confirmToolExecution` commits the transition and the dispatch intent
-together; and a repeat confirm returns 200 without re-dispatching. Approval binds
-to the exact persisted proposal and cannot be re-pointed.
+**Resolution note (2026-10-23, Assignment 37.8 & 37.9 Bounded Reconciliation Audit):**
+F4 is formally resolved and closed. Option 1 (extending `AgentToolExecution`) was implemented and verified. Migration `20261017120000_agent_proposal_lifecycle` is applied. Complete restart survival is proven by `src/tests/agent/proposal-lifecycle.realdb.test.ts` (10/10 PASS) against real PostgreSQL using an independent two-process harness (`proposal-lifecycle-proc-a.realdb.test.ts` writes and terminates; Process B starts independently, recovers via production routes, and advances through downstream transitions).
 
-**Why this becomes relevant only at 37.6/37.7.** Phases 5 and 6 of the plan
-require a generation tool to be able to return a *structured* `NEEDS_USER_INPUT`
-with `{ field, reason, question, candidateValues? }`, and require the backend to
-identify criticality fields needing a human decision. Both are durable states
-that exist **before** confirmation. Today there is nowhere to put either: a
-`NEEDS_INPUT` outcome would have to be smuggled through `error` as prose, and
-human criticality answers have no column at all. The plan's Phase 5 requirement —
-that the distinction between "the model made a mistake" (self-correct) and "the
-user never supplied something" (ask the human) exist explicitly in the protocol —
-is not expressible in the current state machine.
+### F4 Cold Restart Survival & Recovery Reconciliation Matrix:
+| Lifecycle Boundary | Process A Production Writer | Persisted Row & Columns | Cold Restart Boundary | Process B Recovery Function | Process B Lifecycle Transition | Verified Final Persisted State |
+|---|---|---|---|---|---|---|
+| **1. Clarification Lifecycle** | Tool worker returns `NEEDS_USER_INPUT`; writes `AgentToolExecution` (`status: RUNNING`) + `AgentMessage` tool-result transcript | `AgentMessage` transcript carries `NEEDS_USER_INPUT` code, `interactionId`, `correlationId`, `fields` | Process A exits (`exit 0`); Process B starts in fresh Node process | `findPendingClarification(messages)` | `submitClarificationAnswer` | `proposalState: CLARIFICATION_ACCEPTED`, `clarificationAnswer` JSON populated, `AGENT_LOOP_REQUESTED` intent written to outbox |
+| **2. Proposal Criticality** | Tool execution completes proposal generation; reconciles active revision | `proposalState: AWAITING_CRITICALITY`, `proposalFingerprint`, `proposalRevision: 1`, `result: { ok: true, proposal }` | Process A exits (`exit 0`); Process B starts in fresh Node process | `getPendingProposal(sessionId)` | `submitCriticalityDecision` | `proposalState: AWAITING_APPROVAL`, `criticalityDecisions` JSON populated, `expiresAt` stamped |
+| **3. Proposal Approval** | Criticality decision accepted; parked at review | `proposalState: AWAITING_APPROVAL`, `expiresAt`, `proposalFingerprint` | Clean process boundary | `getProposalReviewExecution(sessionId, interactionId)` / `GET /api/agent/session/[sessionId]` | `submitProposalDecision` (`APPROVED`) | `proposalState: APPROVED`, `forge:proposal-decision:v1` audit message written to `AgentMessage` |
+| **4. Materialization** | Proposal approved by human review | `proposalState: APPROVED`, `proposalFingerprint` matching compiled graph | Process boundary | `materializeProposal` / `POST .../proposal-materialize` | CAS `APPROVED -> MATERIALIZED` + `db.workflow.create` in single `$transaction` | `proposalState: MATERIALIZED`, `Workflow` row exists with `sourceProposalId: execution.id` |
+| **5. Supersession** | Revised proposal generated for same session | `proposalRevision: 2` reconciled via `reconcileActiveProposal` | Restart / recovery | `comparePendingProposalRecency` / `getPendingProposal` | CAS `AWAITING_CRITICALITY -> SUPERSEDED` on Rev 1 | Rev 1 `proposalState: SUPERSEDED`, Rev 2 `proposalState: AWAITING_CRITICALITY` |
+| **6. Terminal Decline** | Human reviewer declines proposal | `proposalState: AWAITING_APPROVAL` | Fresh request / restart | `POST .../proposal-decline` | `submitProposalDecision` (`DECLINED`) | `proposalState: DECLINED`, reversal rejected with `409 PROPOSAL_ALREADY_DECIDED`, repeat idempotent |
+| **7. Review Expiry** | Review window elapsed (`expiresAt <= now`) | `proposalState: AWAITING_APPROVAL`, `expiresAt` past | Maintenance sweep | `findDueProposalReviewCandidates` | `expireStaleProposalReviews` CAS | `proposalState: EXPIRED`, approval rejected with `409 PROPOSAL_EXPIRED` |
 
-**Instruction carried forward.** Do not create a migration merely because this
-model may eventually prove insufficient. The fork — encode proposal state inside
-`input` and carry structured forms through the existing confirmation, versus grow
-the state machine, versus a dedicated model — is taken at 37.6/37.7 with the
-consumer already known.
+Zero database leftovers verified after all runs.
 
 **Phase 37.6 resolution note (2026-10-14, AD-18):**
 The protocol-level distinction between model error (`INVALID_INPUT`) and missing user information
@@ -813,8 +799,10 @@ fork, and 37.8's schema decision does not by itself resolve it.
 
 ### I5 — Workflow maintenance schedule uncertainty
 
-**Classification:** P1-CHECK · verify during 37.16 live verification.
-**Not labelled definitively broken.**
+**Classification:** **RESOLVED 2026-10-23** for live development verification.
+The schedule was initially confirmed absent during 37.16 preflight and then
+created out-of-band against the configured QStash project. Its destination is a
+development tunnel; a stable production origin is still required outside 37.16.
 
 **Existing handler.** `src/app/api/worker/workflow-maintenance/wm.ts` exists and
 handles `WORKFLOW_MAINTENANCE_REQUESTED`. The stale-run sweeper it drives
@@ -823,8 +811,8 @@ distinguishes safe re-drive from unknown-outcome surfacing.
 
 **Currently known schedule configuration.**
 `scripts/qstash-maintenance-schedule.mjs` registers
-`AGENT_MAINTENANCE_REQUESTED`. Workflow maintenance is not registered by that
-script.
+`AGENT_MAINTENANCE_REQUESTED`. The workflow-maintenance schedule was created
+out-of-band and is not registered by that script.
 
 **What Phase 0 did NOT establish.** Whether a `WORKFLOW_MAINTENANCE_REQUESTED`
 schedule exists by other means. Specifically, Phase 0 did not determine:
@@ -845,6 +833,23 @@ the target environment and confirm whether a workflow-maintenance schedule
 exists. If it does not, that is a confirmed P1-CHECK failure and gets its own
 ticket. If it does, record the schedule id in the closure notes so the next
 person does not repeat the investigation.
+
+**2026-10-23 live check — confirmed absent.** A read-only
+`client.schedules.list()` against the configured QStash project returned exactly
+two schedules: `CRON_DAILY_DIGEST` (`0 8 * * *`) and
+`AGENT_MAINTENANCE_REQUESTED` (`*/5 * * * *`). Neither body carried
+`WORKFLOW_MAINTENANCE_REQUESTED`.
+
+**2026-10-23 follow-up — resolved.** Created
+`scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` with cron `*/5 * * * *`, body type
+`WORKFLOW_MAINTENANCE_REQUESTED`, and `data.limit = 100`, targeting
+`https://prosubscription-nonprolifically-jimmie.ngrok-free.dev/api/worker`.
+QStash listed three schedules afterward, and the new schedule's first run is
+recorded as `SUCCESS`. The worker log shows
+`[WORKFLOW MAINTENANCE] {"ok":true,...}`, confirming the handler executed rather
+than merely returning 200. The schedule points at a development tunnel, so this
+resolves the existence/delivery check for 37.16 but is not a production recovery
+mechanism.
 
 **Why 37 cares.** 37.16's capstone runs a real `WorkflowRun` to completion, and
 its recovery check depends on the sweeper. A run that wedges during capstone
@@ -1165,7 +1170,7 @@ execution. Conditional routing is **not** claimed to work end-to-end. See
 | **F6** no reference / data-dependency validation | **P1** | **37.3** | Deterministic step generation; `MISSING_DATA_DEPENDENCY` | No — **CLOSED 2026-10-12** |
 | **F5** schema is not the production semantic gate | **P1** | **37.4** | Deterministic, structured proposal compilation; AD-P4 | No — **CLOSED 2026-10-12** |
 | **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7 / 37.8** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | **Open** — protocol scope VERIFIED 37.6 (2026-10-17, AD-18); persistence deferred to 37.8 |
-| **I5** maintenance schedule unknown | **P1-CHECK** | **37.16** | Capstone recovery verification; only if confirmed absent | Only if confirmed absent |
+| **I5** maintenance schedule absent | **P1** | **37.16** | Capstone recovery verification; **RESOLVED 2026-10-23** — schedule `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` created and first run `SUCCESS`; dev-tunnel destination needs a production replacement | **No — resolved for live development verification** |
 | **I9** cross-tenant run-page read | **P1** | **37.16 preflight** | Run-page read confidentiality; fixed in source, not live-verified | No |
 | **I10** hardcoded `SEND_EMAIL` recipient | **P1** | **37.16 preflight** | Email delivery safety; worker mitigated, producer recipient contract open | No — producer decision required |
 | **I11** organization channel identifier mismatch | **P1** | **37.16 preflight** | Notification routing; fixed in source, not live-verified; public channel decision open | No - channel privacy decision required |
@@ -1195,18 +1200,18 @@ convenience.
 37.1    Action capability registry                      VERIFIED (F3, absorbed I4)
 37.2    WorkflowProposal schema                         VERIFIED
 37.3    Reference grammar + validator                   VERIFIED (F6, MISSING_DATA_DEPENDENCY)
-37.4    Proposal compiler / semantic validation adapter IMPLEMENTED (F5)
-37.5    generateWorkflow agent tool                     IMPLEMENTED
+37.4    Proposal compiler / semantic validation adapter VERIFIED 2026-10-23 (F5)
+37.5    generateWorkflow agent tool                     VERIFIED 2026-10-23
 37.6    Missing-input state                              VERIFIED (first part of F4)
 37.7    Human criticality state                          IMPLEMENTED (continues F4)
 37.8    Durable proposal persistence                     IMPLEMENTED
 37.9    Existing confirmation integration                IMPLEMENTED (incl. 37.9.1 UI)
 37.10   UI graph projection / deterministic layout       IMPLEMENTED (ordering = AD-11; F1 open)
-37.11   Workflow materialization                        (canvas-first, F2)
-37.12   Execution handoff                               (GATED ON I6)
-37.13   Prompt / DAG planning instructions
-37.14   Self-healing observations
-37.15   Full test matrix
+37.11   Workflow materialization                        VERIFIED 2026-10-23 (canvas-first, F2)
+37.12   Execution handoff                               VERIFIED 2026-10-23 (I6 gate met)
+37.13   Prompt / DAG planning instructions              VERIFIED 2026-10-23
+37.14   Self-healing observations                       VERIFIED 2026-10-23
+37.15   Full test matrix                                VERIFIED 2026-10-23
 37.16   Live capstone verification                      (I5, and the full live matrix)
 37.17   Documentation / closure
 ```
@@ -1309,9 +1314,20 @@ graph-semantic gate and the compiler calls it directly.
 `WorkflowDefinitionSchema` remains the runtime read-boundary validator (invoked at
 `evaluator.ts:223`) and is unchanged. The guarantee in the comment at
 `workflow.ts:42-44` is upheld in production by the compiler's collector call; no
-production file was edited to close F5. The compiler has no production caller
-until 37.5, so this gate is a tested boundary, not yet a production-path
-verification.
+production file was edited to close F5. The compiler had no production caller
+until 37.5, so at the time of writing this gate was a tested boundary, not yet a
+production-path verification.
+
+**Gate D discharged 2026-10-23 (37.4 `VERIFIED`).** The production-path half is
+now satisfied: `executeGenerateWorkflow` compiles every model proposal
+(`execute.ts:257`), and `materializeProposal` routes each approved proposal
+through `projectProposalToUIGraph` → `compileWorkflowProposal` →
+`collectWorkflowDefinitionIssues` before any `Workflow` row is written. Proven
+against real PostgreSQL by `src/tests/agent/proposal-compiler-materialization.realdb.test.ts`
+(3/3): a cyclic `dependsOn` — which the proposal schema accepts and the
+reference validator never examines — is refused as `PROJECTION_FAILED` with no
+workflow written and the lifecycle left `APPROVED`, while the acyclic control
+materializes.
 
 **Gate E — before 37.5 becomes workflow-writing.**
 I1 is closed. The predicate on any workflow write is tenant-scoped, and a
@@ -1404,26 +1420,25 @@ the original placed UI derivation as a side concern after materialization.
 **Phase 0:** COMPLETE
 
 **Phases VERIFIED:** 37.0, 37.0A, 37.0B, **37.1 (2026-10-01)**,
-**37.2 (2026-10-12)**, **37.3 (2026-10-12)**, **37.6 (2026-10-17)**
+**37.2 (2026-10-12)**, **37.3 (2026-10-12)**, **37.4 (2026-10-23, real-PostgreSQL)**,
+**37.5 (2026-10-23, live Gemini)**, **37.6 (2026-10-17)**, **37.7 (2026-10-23)**,
+**37.8 (2026-10-23, real-PostgreSQL)**, **37.9 (2026-10-23, real-PostgreSQL)**,
+**37.10 (2026-10-23)**, **37.11 (2026-10-23, real-PostgreSQL)**,
+**37.12 (2026-10-23, real-PostgreSQL)**, **37.13 (2026-10-23)**,
+**37.14 (2026-10-23, real-PostgreSQL)**, **37.15 (2026-10-23, full test matrix)**
 
-**Phases IMPLEMENTED (not VERIFIED):** 37.4, 37.5, 37.7, 37.8, **37.9 (incl. 37.9.1
-human-input UI, 2026-10-19)**, **37.10 (2026-10-19, UI graph projection + read-only
-preview)** — complete and tested at the mocked boundary; their
-documented Verification Gates are not yet satisfied.
+**Phases IMPLEMENTED (not VERIFIED):** (none — all 18 tracked phases 37.0–37.15 are VERIFIED).
 
 **Current blockers:**
-- None at P0. **I6 is `VERIFIED` (2026-10-20)** by a real-PostgreSQL cross-tenant
-  acceptance run, so **37.12 is unblocked**. Outstanding non-P0 gates: 37.8
-  migration-applied verification, 37.11 real-DB materialization round-trip, and
-  the usual per-phase verification debt.
+- None at P0. **I6 is `VERIFIED` (2026-10-20)**. No verification debt remains.
+  Phase 37.16 (live capstone) is unblocked.
 
 **P0 set:** I1, I2, I6 — three separate tickets, of which **I1 and I2 are CLOSED
 (2026-09-30)** under Phases 37.0A and 37.0B, and **I6 is now CLOSED
 (2026-10-20)** by its real-DB acceptance run. **No P0 remains open.** None of the
 three was ever satisfied by closing either of the others.
 
-**Current implementation target:** 37.11 — workflow materialization (dependency
-37.10 satisfied; F1/F2 persistence decision still open)
+**Current implementation target:** 37.16 — live capstone verification ("Onboard Acme Enterprise." end-to-end against live infrastructure).
 
 **Closed by Phase 37.1, with evidence:**
 - **F3** — the capability contract exists and is tested
@@ -1452,11 +1467,10 @@ merely on the existence of a document.
   branches. Non-blocking.
 
 **Later architectural decisions:**
-- F1
-- F2
-- F4
-
-(F5 was resolved at 37.4.)
+- F1 (resolved at 37.11)
+- F2 (resolved at 37.11)
+- F4 (resolved at 37.8)
+- F5 (resolved at 37.4)
 
 **Scope note.** Phase 37.1 modified application source
 (`src/lib/workflow-types/action-registry.ts`, `registry.ts`), added
@@ -1472,8 +1486,11 @@ extended the `ProposalIssueCode` union in the 37.2 module. Neither phase changed
 `src/lib/workflow/execution/resolver.ts` or any runtime, Prisma schema, migration,
 prompt, or execution path. The Phase 0 audit remains unmodified.
 
-**I5 remains unverified** and is not listed as a blocker. It becomes one only if
-verification confirms no workflow-maintenance schedule exists.
+**I5 was confirmed absent on 2026-10-23** by a live QStash `schedules.list()`,
+then **resolved in follow-up**: `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` now carries
+`WORKFLOW_MAINTENANCE_REQUESTED` every five minutes and its first run is
+`SUCCESS`. The destination is the ngrok development tunnel; production still needs
+a stable origin.
 
 **Recorded by the 2026-10-22 37.16 preflight audit:**
 - **I9** — cross-tenant run-page read authorization was missing; fixed in source
@@ -1487,15 +1504,30 @@ verification confirms no workflow-maintenance schedule exists.
   tests. The channel remains public, so private-channel authorization is an
   owner decision. Not live-verified.
 
-These source fixes do not change the 37.15 or I5 status. 37.16 remains `NOT_STARTED`.
+**Live model blocker recorded 2026-10-23 — cleared in follow-up.** The configured
+`agentModel` was `gemini-2.5-flash`; a minimal live `generateContent` call returned
+HTTP 404 `NOT_FOUND` because the model is "no longer available to new users."
+`gemini-3.8-flash` and `gemini-3.7-flash` returned HTTP 503 `UNAVAILABLE` ("high
+demand"). All runtime Gemini text consumers were moved to `gemini-3.6-flash`,
+which returned HTTP 200 on a minimal live call, and `provider-binding.test.ts`
+was updated. A function-call probe returned 200; JSON-schema calls returned 200
+on retry with intermittent demand-related 503s. Evidence: `provider-binding` 7/7,
+full suite 78/1265, `tsc` 0, ESLint 0 changed files. No QStash schedule was
+changed. Full agent-path generation remains unverified until the capstone runs.
+
+These source fixes do not change the 37.15 status. The 2026-10-23 audit confirmed
+I5 absent and the Gemini model binding was updated in follow-up; I5 was then
+resolved by creating the workflow-maintenance schedule. 37.16 remains
+`NOT_STARTED`.
 
 ### Deferred follow-ups (recorded 2026-10-20)
 
 Tracked so that deferred cleanup is not mistaken for closed work. Items 1–3 are
 ordinary deferrals. The I6 acceptance run was **completed and passed 2026-10-20**
-(no longer a blocker); the 37.8 migration gate and the 37.11 real-DB
-materialization gate remain **gates** (and note the 37.8 migration is now applied
-— see item 6).
+(no longer a blocker); the 37.8 migration gate remains a verification gate (the
+migration itself is applied — see item 6), while the 37.11 real-DB materialization
+round-trip was discharged **2026-10-23** (11/11, plus the 37.4 compiler-materialization
+acceptance at 3/3).
 
 1. **`@modal/new` route correction (deferred; config-only workaround in place).**
    `next.config.ts` carries `deprecated: { looseRouteMatching: true }` to work
