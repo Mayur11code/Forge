@@ -51,6 +51,7 @@ import "server-only";
 import { AgentProposalState, AgentToolExecutionStatus } from "@prisma/client";
 
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 import { projectProposalToUIGraph } from "@/lib/workflow-types/proposal-ui-projection";
 import {
   expectValidMaterializationPayload,
@@ -332,7 +333,7 @@ export async function materializeProposal({
           },
           data: { proposalState: AgentProposalState.MATERIALIZED },
         });
-      });
+      }, AGENT_TRANSACTION_OPTIONS);
 
       return {
         ok: true as const,
@@ -435,7 +436,7 @@ export async function materializeProposal({
         });
 
         return created.id;
-      });
+      }, AGENT_TRANSACTION_OPTIONS);
 
       if (workflowId === null) {
         // The CAS lost: another caller materialized concurrently (or the row
