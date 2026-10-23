@@ -33,6 +33,7 @@
 import { AgentProposalState, AgentToolExecutionStatus } from "@prisma/client";
 
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 
 import { withAgentSessionLock } from "../locks";
 import { getAgentSessionForUser, clearAgentSessionWaiting, isHumanDecisionAcceptableStatus } from "../session-service";
@@ -322,7 +323,7 @@ export async function submitProposalDecision({
       await clearAgentSessionWaiting(sessionId, tx);
 
       return true;
-    });
+    }, AGENT_TRANSACTION_OPTIONS);
 
     if (!applied) {
       return {

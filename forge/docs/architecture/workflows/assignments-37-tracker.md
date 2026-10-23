@@ -1,11 +1,28 @@
 # Assignment 37 — Master Phase Tracker
 
 ```text
-Last Updated:     2026-10-21
-Current Phase:    37.13  (37.0, 37.0A, 37.0B, 37.1, 37.2, 37.3, 37.6 VERIFIED; 37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11, 37.12, 37.13 IMPLEMENTED)
-Overall Status:   READY  (I6 VERIFIED — real-PostgreSQL acceptance run passed; 37.12 handoff and 37.13 prompt IMPLEMENTED, not yet VERIFIED)
-Next Action:      Verify 37.13 (prompt text vs 37.1 capability surface) and 37.12 (handoff mocked + real-DB suites green); verify 37.11 (real-DB round-trip)
+Last Updated:     2026-10-23
+Current Phase:    37.16 (37.0, 37.0A, 37.0B, 37.1-37.15 VERIFIED; 37.16 NOT_STARTED)
+Overall Status:   READY (I6 plus 37.4/37.5, 37.7-37.15 VERIFIED; 37.15 verified, all gates passed for 37.16)
+Next Action:      Begin Phase 37.16 (live capstone verification) against live infrastructure.
 ```
+
+> **37.11 / 37.12 / 37.13 VERIFIED 2026-10-23 (verification pass).** The
+> verification gates were completed against the current source and the real
+> database, not inferred from a green overall suite. 37.13's prompt was reviewed
+> against the real `ActionCapabilities` / `ActionRegistry` surface (only
+> `task.create`, matching inputs/outputs), and `prompt-dag-planning.test.ts`
+> passed 29/29. 37.12's handoff suites passed (mocked 29/29 across four suites,
+> real-PostgreSQL handoff 5/5, I6 real-PostgreSQL 10/10) and the assembled-engine
+> diamond suite passed 9/9; the real-DB handoff suite mocks `advanceWorkflow`, so
+> it proves run creation and tenant scope, not live QStash dispatch. 37.11 now
+> has a real-PostgreSQL acceptance suite
+> (`src/tests/agent/proposal-materialization.realdb.test.ts`, 11/11) covering the
+> round trip (materialize -> load -> recompile), provenance surviving a real
+> canvas re-save, transaction rollback on the unique index, concurrency,
+> idempotency and tenant isolation. Real execution dispatch remains a 37.15/37.16
+> concern and is not claimed here. See the Verification Ledger rows dated
+> 2026-10-23.
 
 > **I6 VERIFIED 2026-10-20 (real-database acceptance).** The cross-tenant
 > *execution* entrypoint is fixed and now has real-PostgreSQL evidence: a new
@@ -230,21 +247,21 @@ constraint discovered in Phase 0 quietly disappears in Phase 7.
 ```text
 ASSIGNMENT 37 STATUS
 
-Overall:                     READY (I6 VERIFIED — real-PostgreSQL acceptance run passed 2026-10-20)
-Current Phase:               37.12  (Execution handoff)
-Previous Completed Phase:    37.11  (Workflow materialization — IMPLEMENTED)
-Next Phase:                  37.12  (Execution handoff — precondition I6 satisfied)
-Blocking Issue:              (none — I6 VERIFIED via real-DB acceptance run)
+Overall:                     READY (I6 plus 37.4/37.5, 37.7-37.15 VERIFIED - no open P0)
+Current Phase:               37.16 (Live capstone verification - NOT_STARTED)
+Previous Completed Phase:    37.15 (Full test matrix - VERIFIED 2026-10-23)
+Next Phase:                  37.16 (Live capstone verification)
+Blocking Issue:              (none - all predecessor gates satisfied)
 Security Prerequisites:      I1 VERIFIED, I2 VERIFIED, I6 VERIFIED
-Architecture Decision Pending: F4   (F1/F2 resolved at 37.11; F5 resolved at 37.4; AD-11)
-Recorded scope decisions:    I7     (conditional routing — non-blocking)
-Verification debt:           37.4, 37.5, 37.7, 37.8, 37.9, 37.10, 37.11 (IMPLEMENTED, not VERIFIED)
-Last Verification:           2026-10-20 — I6 real-DB cross-tenant acceptance VERIFIED
-                             (10/10; zero leftover fixtures)
-Last Updated:                2026-10-20
+Architecture Decision Pending: (none — F1/F2 resolved at 37.11; F4 resolved at 37.8; F5 resolved at 37.4; AD-11; AD-P7)
+Recorded scope decisions:    I7     (conditional routing - non-blocking)
+Verification debt:           (none - all 18 tracked phases 37.0-37.15 VERIFIED)
+Last Verification:           2026-10-23 - 37.15 Full test matrix verification completed
+                             (43/43 matrix checks verified; full default Jest suite 79 suites / 1267 tests; tsc 0; eslint 0)
+Last Updated:                2026-10-23
 
 Progress:
-[███████░░░░░░░░░░░░░] 35%   (7 of 20 tracked phases VERIFIED)
+[██████████████████░░] 90%   (18 of 20 tracked phases VERIFIED)
 ```
 
 ### Why `BLOCKED` and not `IN_PROGRESS`
@@ -268,10 +285,11 @@ is unblocked**. I6 never stopped any phase through 37.11, because a tenant-scope
 execution entrypoint is only required at the handoff. **I7** is recorded as a scope
 decision, not a blocker; it likewise does not stop 37.10/37.11.
 
-Separately, five phases are `IMPLEMENTED` but not `VERIFIED` — **37.4, 37.5, 37.7,
-37.8, 37.9**. They are complete and tested at the mocked boundary, but their
-documented Verification Gates are not yet satisfied, so they do not advance the
-progress figure below. This is verification debt, not a blocker.
+All 18 tracked predecessor phases through **37.15** are now **VERIFIED**
+(37.0, 37.0A, 37.0B, 37.1–37.15). Zero verification debt remains. Phase 37.15's
+complete 43-check matrix is verified across all 8 categories, and the full regression
+suite (79 suites, 1267 tests) passes cleanly. Phase 37.16 (live capstone) is the next
+and final implementation phase.
 
 ### Progress calculation
 
@@ -336,18 +354,18 @@ Always use the smallest applicable status.
 | 37.1 | Action capability registry | **VERIFIED** | **P1** | 37.0A, 37.0B (isolation sufficient) | 37.2, 37.3, 37.4 | One authoritative planner-facing capability source | Planner obtains authoritative metadata for every generatable action | 2026-10-01 — 32-case suite + full run 31/490 + tsc clean | Resolves F3, absorbs I4. AD-P1 decided. Responsive `ActionCapabilities` typed against `RegisteredActionId`. |
 | 37.2 | WorkflowProposal schema | **VERIFIED** | P1 | 37.1 | 37.3, 37.4 | `WorkflowProposal` Zod schema | Static A / B→A / C→A,B parses; malformed fails structurally | 2026-10-12 - 45-case suite + full run 32/535 + tsc clean | localRef IDs; no DB IDs, no coordinates, no criticality. Enforces I4. Bounds hardened (bounded depth before serialization; no throw). **Real-model-path parse reassigned to 37.5.** |
 | 37.3 | Reference grammar + validator | **VERIFIED** | P1 | 37.2 | 37.4, 37.5 | Reference validator over existing `{{…}}` grammar | Unordered data reference cannot pass validation | 2026-10-12 — 44-case suite + full run 33/579 + tsc clean; resolver diff empty | Resolves F6. Adds `MISSING_DATA_DEPENDENCY`, `UNKNOWN_REFERENCE_SOURCE`, `UNKNOWN_OUTPUT`, `MALFORMED_REFERENCE`, `UNAVAILABLE_REFERENCE_SCOPE`, `UNSAFE_REFERENCE_PATH`, `SELF_REFERENCE`. **No new syntax; resolver unchanged.** Trigger fields fail closed. |
-| 37.4 | Proposal compiler / semantic validation adapter | **IMPLEMENTED** | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | 2026-10-12 — 25-case suite + workflow 13 suites / 287 tests + tsc clean; resolver diff empty | Resolves F5 (AD-P4). Now consumed in production by 37.5. Not independently `VERIFIED`. |
-| 37.5 | `generateWorkflow` agent tool | **IMPLEMENTED** | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | 2026-10-12 — 24-case suite + full 35/628 + tsc clean; resolver/canvas/runtime diff empty | **Gate E: I1 VERIFIED.** Policy `READ_ONLY` (AD-17). Propose-only, no workflow-domain writes. **Real-model-path parse clause (carried from 37.2) not yet satisfied — hence not `VERIFIED`.** Prompt enumeration deferred to 37.13. |
+| 37.4 | Proposal compiler / semantic validation adapter | **VERIFIED** (2026-10-23) | P1 | 37.3 | 37.5, 37.11 | Single deterministic compiler boundary | Proposal + DAG validation form one boundary; issue codes preserved | 2026-10-12 — 25-case suite + workflow 13 suites / 287 tests + tsc clean; resolver diff empty. 2026-10-23 — real-DB production-path test `proposal-compiler-materialization.realdb.test.ts` 3/3 proves the collector gate runs on materialization (PROJECTION_FAILED, no Workflow row, lifecycle unchanged); focused 25/25; workflow 21 suites / 369 tests; full 78 suites / 1265 tests; realdb 3/3; tsc 0; eslint 0; `git diff --check` clean | **VERIFIED (2026-10-23).** Resolves F5 (AD-P4); `collectWorkflowDefinitionIssues` is the canonical gate and is reused, not duplicated. Production callers proven in code: `execute.ts` (`generateWorkflow`, the 37.5 caller) and `proposal-ui-projection.ts` → `proposal-materialization-service.ts` (the 37.11 path). Deferred production-path half of the gate now discharged. |
+| 37.5 | `generateWorkflow` agent tool | **VERIFIED** (2026-10-23) | P1 | 37.4, **37.0A VERIFIED** | 37.6, 37.7, 37.8 | Macro agent tool, proposal-only | Tool registered, proposes only, executes nothing | 2026-10-12 — 24-case suite + full 35/628 + tsc clean; resolver/canvas/runtime diff empty. 2026-10-23 — real-model clause discharged: `generate-workflow.live.test.ts` 1/1 against `gemini-3.6-flash`; focused 35/35; agent 43/814; workflow 21/369; full 78/1265; tsc 0; eslint 0; diff-check clean | **VERIFIED (2026-10-23).** Gate E precondition met (I1 VERIFIED); not exercised because the tool is `READ_ONLY` (AD-17), propose-only, no workflow-domain writes. The carried 37.2 real-model-path clause is now discharged by a live Gemini turn: the emitted input validated, compiled and executed unchanged (no fix-up). Live model call only — no live database or transport; the Prisma boundary is mocked. 37.16 owns the capstone. |
 | 37.6 | Missing-input state | **VERIFIED** | P1 | 37.5 | 37.7, 37.8 | Durable `NEEDS_USER_INPUT` state | Model error and missing user info are distinguishable in the protocol | 2026-10-17 — 28-case suite + durability reaper exemption + generate-workflow 24; 36 suites / 672 tests; full suite 692; tsc exit 0; eslint 0; `git diff --check` clean; Prisma schema untouched. 2026-10-20 — +3 tests (10b/10c/10d); full suite 56 suites / 1077; tsc exit 0; eslint 0. 2026-10-20 — live round-trip verified against the DB end-to-end (clarification → answers → `ok:true` → criticality → approved → materialized), no execution (`WorkflowRun` count 0) | F4 part 1. No preemptive migration. Worker halts (no `AGENT_LOOP_REQUESTED`), publishes `CLARIFICATION_REQUESTED`; `POST .../clarification` ingress; `interactionId`+`correlationId` binding; idempotent continuation under lock; reaper `skippedWaiting`. **VERIFIED (2026-10-17)** for backend protocol + same-session continuation; external UI not claimed. Durability/restart survival deferred to 37.8; F4 open. **REMEDIATION 2026-10-20 (`7bc05a7`, `c7809f2`):** live-testing defect — a clarification could not survive an `UNKNOWN_REFERENCE_SOURCE` placeholder on the same field, so the loop retried to the step cap; executor now demotes that issue to human-resolvable (narrow; all other issue codes still force correction), and a prompt rule routes unfilled placeholders to the clarification field. **Crosses the "no prompt change — deferred to 37.13" boundary: `AGENT_PROMPT_VERSION` v4 → v5; recorded, reviewer call.** **Live-verified 2026-10-20; residual unfixed: a plain-string sentinel (`<…>`) still yields `INVALID_INPUT` on a clarified path (candidate follow-up).** |
-| 37.7 | Human criticality state | **IMPLEMENTED** | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | 2026-10-18 — backend criticality service + routes; UI controls added by 37.9.1 | F4 part 2. Not `VERIFIED`. Consumed unchanged by 37.9.1's `ProposalReviewCard` criticality controls. |
-| 37.8 | Durable proposal persistence | **IMPLEMENTED** | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | 2026-10-18 — durable lifecycle on amended (unapplied) migration | **NOT VERIFIED; durability/restart survival not yet exercised against the DB (F4).** Migration amended in place; `prisma migrate status` (2026-10-20) reports schema up to date, so `20261017120000_agent_proposal_lifecycle` is **applied**. See `assignments-37-phase-37.8-proposal-lifecycle.md`. |
-| 37.9 | Existing confirmation integration | **IMPLEMENTED** | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | 2026-10-19 — 37.9 backend + 37.9.1 UI; 3 focused suites 19/11/15; agent 34/647; full 51/954; tsc clean; eslint 0 changed; prisma valid | Proposal-specific approve/decline/expiry ingress (37.9); human-criticality controls + workflow-builder panel + clarification answer card (37.9.1). Not `VERIFIED`; F4 open. See `assignments-37-phase-37.9-proposal-review.md` §14. |
-| 37.10 | UI graph projection / deterministic layout | **IMPLEMENTED** | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout + read-only preview | Projection is deterministic and Gemini-free | 2026-10-19 — 4 focused suites 33/7/19/19; full 53/1005; tsc 0; eslint 0; prisma valid; 3 mutations reverted | **F1 open** (ordering recorded as AD-11). Moved ahead of materialization. Layout hand-rolled; no layout library. See `assignments-37-phase-37.10-ui-graph-projection.md`. Not `VERIFIED`. |
-| 37.11 | Workflow materialization | **IMPLEMENTED** | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-20 — 4 new suites 33/17/10/15 + card; full 56/1074; tsc 0; eslint 0; prisma valid; diff-check clean | **F1 + F2 resolved.** Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. **Real-DB round-trip OPEN (runnable now — 37.8 migration is applied).** Not `VERIFIED`. See `assignments-37-phase-37.11-workflow-materialization.md`. |
-| 37.12 | Execution handoff | **IMPLEMENTED** | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | 2026-10-21 — 5 new suites (5/10/5/4/5) + boundary-scope updated; full 68/1168; focused workflow+security 26/403; realdb I6 10/10 + handoff 5/5; tsc 0; eslint 0; not committed | No new executor, lock, or queue runner. Explicit authenticated Run action → `startWorkflow`; validated optional trigger context (reserved keys refused); canvas `mockProjectPayload` removed. Multiple-run behaviour preserved. **Not `VERIFIED`.** |
-| 37.13 | Prompt / DAG planning instructions | **IMPLEMENTED** | P1 | 37.12 | 37.14, 37.16 | Prompt update + version bump | Prompt references real contracts only | 2026-10-21 — new `prompt-dag-planning.test.ts` 29/29; full 69/1197; 7 relevant suites 191/191; tsc 0; eslint 0; diff-check clean; not committed | `AGENT_PROMPT_VERSION` `v5 → v6`; DAG/parallelism, local-id, capability-contract, reference-grammar, clarification, criticality, propose-only and validation-observation guidance added to `<WORKFLOW_GENERATION>`. v5 remediation text preserved. `generate-workflow/tool.ts` unchanged (out of scope). **Not `VERIFIED` — manual prompt-vs-registry review done; model obedience is a 37.16 concern.** |
-| 37.14 | Self-healing observations | **IMPLEMENTED** | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | 2026-10-21 — `three-loop-separation.test.ts` 6/6 + `no-second-retry-controller.test.ts` 8/8 + `proposal-review-expiry.test.ts` 35/35 (10 new); agent tree 41/798; full 71/1221; tsc 0; eslint 0; diff-check clean; not committed | No second retry controller. AD-P7 resolved: `WAITING_CONFIRMATION` is the session-level human-wait marker (RUNNING→WAITING on park; cleared back to RUNNING on clarification answer, approval, decline, expiry). Distinct outcomes preserved below the session status. Proposal-review expiry discovers due proposals regardless of session status but releases the wait only when no other human act (clarification, other proposal, tool confirmation) is still pending. **Not `VERIFIED` — mocked integration only; no real-PG wait-CAS exercise, no live model call.** |
-| 37.15 | Full test matrix | **IMPLEMENTED** | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | 2026-10-21 — new `workflow-integration-diamond.test.ts` 9/9 (assembled engine); `dag-validation` +fan-in, +disconnected; full 72 suites / 1232 tests; realdb 2 suites / 15 tests; tsc 0; eslint 0; diff-check clean; not committed | Every Test Gate category has a named covering suite. **Mocked integration** — the action's `createTaskInOrg` write is mocked, so no real-PG engine run. No product source, schema, migration or prompt changed by this phase. **Not `VERIFIED`** — predecessors 37.4/37.5/37.7–37.14 are `IMPLEMENTED`, not `VERIFIED`; the live gate is 37.16's. Includes I1 regression test. |
+| 37.7 | Human criticality state | **VERIFIED** (2026-10-23) | P1 | 37.6 | 37.8, 37.9 | Durable human criticality decision | Model cannot set or override final `isCritical` | 2026-10-18 — backend criticality service + routes; UI controls added by 37.9.1. 2026-10-23 — integration suite `src/tests/agent/criticality-integration.test.ts` 2/2 proves model cannot set/smuggle `isCritical`, human decision persists and differs from model defaults, later turn cannot override, and stored policy on materialization matches human decision; focused 4 suites / 60 tests; tsc 0; eslint 0; `git diff --check` clean | **VERIFIED (2026-10-23).** F4 part 2 resolved. The stored execution policy comes from the human decision. Model output cannot set or override `isCritical`. Integration gate proven by `criticality-integration.test.ts` (2/2) alongside focused suites (60/60). Real PostgreSQL persistence verified under 37.11 (`proposal-materialization.realdb.test.ts`). |
+| 37.8 | Durable proposal persistence | **VERIFIED** (2026-10-23) | P1 | 37.7 | 37.9, 37.11 | Chosen proposal persistence lifecycle | Full lifecycle survives process restart | 2026-10-18 — durable lifecycle on amended migration. 2026-10-23 — real-PG acceptance suite `src/tests/agent/proposal-lifecycle.realdb.test.ts` 10/10 proves complete lifecycle restart survival across two independent processes (Process A writes and exits; Process B loads via production recovery, advances through criticality -> approval -> materialization), state-specific recovery paths, deterministic supersession, reaper exemption, and CAS idempotency with zero leftovers; focused unit suite 37/37; criticality 23/23; missing input 35/35; tsc 0; eslint 0; diff-check clean | **VERIFIED (2026-10-23).** Resolves F4. Lifecycle persisted directly on `AgentToolExecution` with `proposalState`, `proposalFingerprint`, `proposalRevision`, `criticalityDecisions`, `clarificationAnswer`, `expiresAt`, `result`. Genuine cold process restart proven against real PostgreSQL. |
+| 37.9 | Existing confirmation integration | **VERIFIED** (2026-10-23) | P1 | 37.8 | 37.11 | Review surface over existing 35/36 gate | Approval binds exact proposal; changed proposal cannot reuse it | 2026-10-19 — 37.9 backend + 37.9.1 UI; 3 focused suites 19/11/15; agent 34/647; full 51/954. 2026-10-23 — real-PG acceptance suite `src/tests/agent/proposal-review-integration.realdb.test.ts` 5/5 proves end-to-end review surface, Kahn-ordered steps, React SSR rendering, atomic CAS approval & decline, transcript audit messages, supersession safety, review expiry, and zero DB leftovers; 7 focused unit/integration suites 168/168 pass; tsc 0; eslint 0; diff-check clean | **VERIFIED (2026-10-23).** Verification Gate satisfied: end-to-end review-surface test with a real pending proposal against real PostgreSQL. Approval strictly binds exact proposal and revision; changed/superseded proposal cannot reuse it. Review expiry sweeps past-due proposals to EXPIRED. |
+| 37.10 | UI graph projection / deterministic layout | **VERIFIED** (2026-10-23) | P2 | 37.9, 37.0B VERIFIED | 37.11 | Deterministic `uiNodes`/`uiEdges` + layout + read-only preview | Projection is deterministic and Gemini-free | 2026-10-19 — 4 focused suites 33/7/19/19; full 53/1005; tsc 0; eslint 0; prisma valid; 3 mutations reverted. 2026-10-23 — verified gate satisfied: 4 focused suites (82/82 PASS) prove pure determinism, longest-path layering, `dependsOn`-derived edges, node-data schema validity, server-side revision binding; downstream real-PostgreSQL materialization suite `src/tests/agent/proposal-materialization.realdb.test.ts` (11/11 PASS) proves projected graph persists through shared boundary and recompiles to canonical definition; tsc 0; eslint 0; diff-check clean | **VERIFIED (2026-10-23).** Acceptance Gate satisfied: pure, deterministic projection without Gemini coordinates. Node schema conforms to `ActionNodeDataSchema` / `IncomingNodesSchema`. Layout uses longest-path layers with `PROPOSAL_UI_LAYOUT`. Downstream persistence and round-trip recompilation verified against real PostgreSQL under 37.11. |
+| 37.11 | Workflow materialization | **VERIFIED** (2026-10-23) | P2 | 37.10 | 37.12 | `Workflow` row with compiled definition | Persisted workflow is executable and name/provenance correct | 2026-10-23 — real-PG `proposal-materialization.realdb.test.ts` 11/11 (round trip, re-save provenance, rollback, concurrency, tenant isolation); mocked 3 suites 60/60; tsc 0; eslint 0; diff-check clean | **F1 + F2 resolved.** Real-DB round trip closes the former open gate: stored canvas recompiles to the stored definition, provenance survives a real save, and a failed insert rolls the CAS back. Explicit human "Create workflow" action; CAS+create tx; unique `sourceProposalId`; triggerless (`eventId:null`/`isActive:false`). Materialization only — no execution. |
+| 37.12 | Execution handoff | **VERIFIED** (2026-10-23) | P1 | 37.11, **I6 VERIFIED (Gate G, 2026-10-20)** | 37.16 | Handoff to existing evaluator | Generated workflow runs in the existing engine | 2026-10-23 — mocked handoff/context/invariant/scope suites 29/29; real-PG handoff 5/5; I6 real-PG 10/10; assembled-engine diamond 9/9; tsc 0; eslint 0; diff-check clean | No new executor, lock, or queue runner. Explicit authenticated Run action → `startWorkflow`; validated optional trigger context (reserved keys refused); canvas `mockProjectPayload` removed. Multiple-run behaviour preserved. **Ledger distinction:** the real-PG handoff mocks `advanceWorkflow`, so it proves run creation and tenant scope; real dispatch is proven by the mocked-persistence diamond suite. Live QStash execution is 37.15/37.16. |
+| 37.13 | Prompt / DAG planning instructions | **VERIFIED** (2026-10-23) | P1 | 37.12 | 37.14, 37.16 | Prompt update + version bump | Prompt references real contracts only | 2026-10-23 — prompt-vs-`ActionCapabilities`/`ActionRegistry` review; `prompt-dag-planning.test.ts` 29/29; version v6 recorded | `AGENT_PROMPT_VERSION` `v5 → v6`; DAG/parallelism, local-id, capability-contract, reference-grammar, clarification, criticality, propose-only and validation-observation guidance added to `<WORKFLOW_GENERATION>`. v5 remediation text preserved. Only `task.create` is named; input/output guidance matches the catalog. Model obedience remains a 37.16 live concern, by design. |
+| 37.14 | Self-healing observations | **VERIFIED** (2026-10-23) | P1 | 37.13 | 37.16 | Three distinct loops in the state machine | Self-correction, clarification and approval are distinguishable | 2026-10-21 — `three-loop-separation.test.ts` 6/6 + `no-second-retry-controller.test.ts` 8/8 + `proposal-review-expiry.test.ts` 35/35. 2026-10-23 — real-PostgreSQL acceptance suite `src/tests/agent/wait-state-cas.realdb.test.ts` 9/9 proves real wait-state CAS transitions for clarification and proposal decision, anti-resurrection guards, and proposal-review expiry isolation (leaves session in WAITING_CONFIRMATION if other human waits remain); total 58/58 tests pass; tsc 0; eslint 0; diff-check clean | **VERIFIED (2026-10-23).** No second retry controller (AD-06). Three distinct loops evidenced: Loop 1 (model self-correction, bounded by MAX_AGENT_STEPS = 5 via decideStepGate, never parks), Loop 2 (human clarification, parks WAITING_CONFIRMATION, clears to RUNNING and records AGENT_LOOP_REQUESTED outbox intent), Loop 3 (human approval/decline, parks WAITING_CONFIRMATION, clears to RUNNING with zero outbox events). Expiry isolation proven against real PG. |
+| 37.15 | Full test matrix | **VERIFIED** (2026-10-23) | P1 | 37.14 | 37.16 | All test classes passing | Full suite green | 2026-10-21 — assembled engine `workflow-integration-diamond.test.ts` 9/9; standalone fan-in `dag-validation.test.ts` 26/26. 2026-10-23 — all 43 matrix checks individually verified across 8 categories (contract 7, graph 8, reference 7, human-input 4, criticality 4, confirmation 5, execution integration 6, I1 regression 2); focused matrix suites 11/11 pass (254 tests); full default Jest suite 79 suites / 1267 tests pass; zero skipped/focused tests; tsc 0; eslint 0; git diff --check clean | **VERIFIED (2026-10-23).** Acceptance & Verification Gates satisfied: every category has a named covering suite with explicit assertions; full regression suite is green; all predecessor phases 37.0-37.14 are VERIFIED. Predecessor gate satisfied. Formal prerequisite for 37.16 complete. Live Gemini, QStash, Redis, and end-to-end live infrastructure deferred to 37.16 capstone. |
 | 37.16 | Live capstone verification | **NOT_STARTED** | P1 | 37.15 | 37.17 | "Onboard Acme Enterprise." end-to-end | Every live check individually evidenced | — | Includes I5 verification. |
 | 37.17 | Documentation / closure | **NOT_STARTED** | P1 | 37.16 | — | Final docs + register reconciliation | All checklist items resolved | — | No issue may be closed without evidence. |
 
@@ -1356,14 +1374,16 @@ Pending: none.
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1 · Resolves **F5** · Implemented 2026-10-12
+**VERIFIED** (2026-10-23) · Priority: P1 · Resolves **F5** · Implemented 2026-10-12
 
 > Deterministic proposal → `WorkflowDefinition` compiler that composes structure,
 > reference and graph-semantic validation into one boundary returning structured
 > `ProposalIssue[]`. 25 focused tests. `collectWorkflowDefinitionIssues` confirmed
 > canonical (AD-P4); `WorkflowDefinitionSchema` unchanged. F5's premise is
 > corrected below. Its first production caller arrived with 37.5
-> (`generateWorkflow`), but no independent verification carried it to `VERIFIED`.
+> (`generateWorkflow`), but no independent verification carried it to `VERIFIED`
+> until 2026-10-23, when 37.11's materialization path existed and a real-Postgres
+> production-path test discharged the deferred half of the gate.
 
 ### Objective
 
@@ -1458,9 +1478,31 @@ compiler boundary. Issue `code` and `path` survive to the caller.
 Unit tests green, plus a production-path check that the chosen gate runs on
 materialization, not only in tests.
 
-**Not yet satisfied — deferred.** Unit tests are green. The production-path half
-requires a production caller and a materialization path (37.5 and 37.11). By this
-gate 37.4 is `IMPLEMENTED`, not `VERIFIED`.
+**Satisfied 2026-10-23.** The deferred half required a production caller
+(37.5) and a materialization path (37.11); both exist and 37.11 is `VERIFIED`.
+The production chain is
+
+```text
+materializeProposal
+  → projectProposalToUIGraph   (proposal-ui-projection.ts:200)
+    → compileWorkflowProposal  (workflow-proposal-compiler.ts:181)
+      → collectWorkflowDefinitionIssues (stage 4, :203)   ← AD-P4 canonical gate
+```
+
+New real-Postgres acceptance suite
+`src/tests/agent/proposal-compiler-materialization.realdb.test.ts` (3/3)
+proves the gate is **load-bearing** on that path rather than merely invoked: a
+proposal whose `dependsOn` forms a cycle — accepted by the proposal schema and
+unexamined by the reference validator, so the collector is the only layer that
+can reject it — is refused by `materializeProposal` as `PROJECTION_FAILED`
+(HTTP 409) with **no `Workflow` row written** and the proposal lifecycle left
+`APPROVED`, not advanced. A second case asserts the structured `CYCLE` issue
+itself (code, dotted path `steps`, sequence `kickoff -> follow -> kickoff` in
+the message) so the *reason* for the refusal is attributed to this gate and not
+to a neighbouring check; a control case with the same fixture and an acyclic
+graph materializes, proving the refusal was not a malformed fixture.
+
+By this gate 37.4 is `VERIFIED`.
 
 ### Evidence
 
@@ -1469,16 +1511,20 @@ Implementation: src/lib/workflow-types/workflow-proposal-compiler.ts (new);
                 ProposalIssueCode extended with 7 graph codes in workflow-proposal.ts
 Tests:          src/tests/workflow/workflow-proposal-compiler.test.ts — 25 focused
 Verification:   npx jest workflow-proposal-compiler -> 25/25
-                npx jest src/tests/workflow -> 13 suites / 287 tests
-                npx jest -> 34 suites / 604 tests
+                npx jest src/tests/workflow -> 21 suites / 369 tests
+                npx jest -> 78 suites / 1265 tests
+                npx jest --config jest.realdb.config.ts
+                  src/tests/agent/proposal-compiler-materialization.realdb.test.ts
+                                                       -> 3/3
                 npx tsc --noEmit -> exit 0
-                npx eslint (3 touched files) -> exit 0
+                npx eslint -> exit 0 (new suite 0 problems)
                 git diff --check -> clean
                 git diff -- src/lib/workflow/execution/resolver.ts -> empty
-Commit/PR:      not committed (user instruction: no commit/stage for 37.4)
+Commit/PR:      not committed (user instruction: no commit/stage)
 Relevant files: src/lib/workflow-types/workflow-proposal-compiler.ts,
                 src/lib/workflow-types/workflow-proposal.ts,
                 src/tests/workflow/workflow-proposal-compiler.test.ts,
+                src/tests/agent/proposal-compiler-materialization.realdb.test.ts (new),
                 docs/.../assignments-37-phase-37.4-proposal-compiler.md
 ```
 
@@ -1519,6 +1565,7 @@ Pending: none.
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-12 | IMPLEMENTED | Proposal compiler module + tests; `ProposalIssueCode` extended; F5 + AD-P4 resolved | 25/25 focused; workflow 13 suites / 287 tests; tsc exit 0; eslint 0; `git diff --check` clean; resolver diff empty |
+| 2026-10-23 | VERIFIED | Deferred production-path half of the gate discharged now that 37.5's caller and 37.11's materialization path both exist; new real-Postgres suite proves the collector gate is load-bearing on materialization | `proposal-compiler-materialization.realdb.test.ts` 3/3; focused 25/25; workflow 21/369; full 78/1265; tsc 0; eslint 0; `git diff --check` clean; no production source changed by this verification |
 
 ---
 
@@ -1526,14 +1573,16 @@ Pending: none.
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1 · Implemented 2026-10-12
+**VERIFIED** (2026-10-23) · Priority: P1 · Implemented 2026-10-12
 
 > `generateWorkflow` is registered as a **`READ_ONLY`** tool that compiles a
 > model-supplied proposal through `compileWorkflowProposal` and returns either a
 > validated proposal (`{ok:true, proposal}`) or structured `INVALID_INPUT` issues.
 > It creates no `Workflow`, no `WorkflowRun`, no proposal row, executes no action
-> and enqueues no workflow event. 24 focused tests. The 37.2 real-model-path parse
-> clause is **not yet discharged**, so this phase is `IMPLEMENTED`, not `VERIFIED`.
+> and enqueues no workflow event. 24 focused tests originally; 35 now. The 37.2
+> real-model-path parse clause is **discharged** by a live Gemini turn (2026-10-23),
+> so the phase is `VERIFIED`. The mocked/scripted path remains the regression
+> baseline; live-model evidence is classified separately.
 
 ### Objective
 
@@ -1623,8 +1672,18 @@ called, no workflow-domain write).
 proposal produced by the **real model path** parses via `validateWorkflowProposal`
 without a compiler fix-up step. This could not run in 37.2 because the model path
 did not exist. The 37.5 tests exercise the **mocked/scripted** model path and prove
-the parse is a single step with no fix-up; a live-model run is still owed and is a
-condition of 37.5's own `VERIFIED`.
+the parse is a single step with no fix-up.
+
+**Satisfied 2026-10-23.** The carried clause was run live against the configured
+`gemini-3.6-flash` through the production `agentModel`, the registered system
+prompt, the registered `generateWorkflow` tool definition and its registered
+executor. The model emitted a two-step `task.create` proposal; that input passed
+`validateWorkflowProposal`, `compileWorkflowProposal` and
+`executeGenerateWorkflow` with byte-identical JSON at every stage — no field was
+added, renamed, defaulted or repaired, and no `repairToolCall` is configured. The
+suite mocks only the Prisma boundary needed to import the registry and keeps the
+database guard installed; it claims a live-model parse path, not a live database,
+transport, action or workflow write. Those remain 37.16's.
 
 ### Evidence
 
@@ -1640,6 +1699,32 @@ Tests:           npx jest generate-workflow -> 1 suite / 24 tests pass
 Verification:    durable tool-result integration case (see Test above)
 Commit/PR:       not committed (working tree)
 Relevant files:  tracker/phase record/decision log (this doc set)
+```
+
+Verification pass 2026-10-23:
+
+```text
+Focused:          npx jest src/tests/agent/generate-workflow.test.ts --runInBand
+                  -> 1 suite / 35 tests PASS
+Live model:       npx jest --config jest.live.config.ts
+                    src/tests/agent/generate-workflow.live.test.ts --runInBand
+                  -> 1 suite / 1 test PASS (gemini-3.6-flash; 2 steps; task.create)
+                  -> validate / compile / execute all succeeded on byte-identical
+                     input (mutated in transit: false)
+Agent regression: npx jest src/tests/agent --runInBand -> 43 suites / 814 tests PASS
+Workflow:         npx jest src/tests/workflow --runInBand -> 21 suites / 369 tests PASS
+Full:             npx jest --runInBand -> 78 suites / 1265 tests PASS
+Type check:       npx tsc --noEmit -> exit 0
+Lint:             npm run lint -> exit 0 (0 errors, 31 pre-existing warnings)
+Whitespace:       git diff --check -> exit 0 (CRLF advisories only)
+Harness fix:      the live suite initially failed at import because the registry
+                  constructs a real PrismaClient; the same two prisma double mocks
+                  as the focused suite were added to the test file. No product
+                  source changed.
+Evidence class:   live-model parse path + unit/mocked integration; no live
+                  database, QStash, Redis, Pusher, action execution or deployed
+                  behaviour. 37.16 owns the capstone.
+Commit/PR:        not committed (user instruction: no commit/stage/push)
 ```
 
 ### Known Risks / Findings
@@ -1663,6 +1748,7 @@ proposal time. The confirmer is therefore unused (presentation only).
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-12 | IMPLEMENTED | Tool module + registry entry + describer + shared failure helper; `READ_ONLY` (AD-17) | 24/24 focused; full 35 suites / 628 tests; tsc exit 0; eslint 0; `git diff --check` clean; resolver/canvas/runtime diff empty |
+| 2026-10-23 | **VERIFIED** | Carried 37.2 real-model-path clause discharged by a live Gemini turn through the production model, prompt, registered tool and executor; input validated, compiled and executed unchanged (no fix-up). Focused, agent, workflow and full regressions green; no production source changed | Live suite 1/1 (`gemini-3.6-flash`); focused 35/35; agent 43/814; workflow 21/369; full 78/1265; `tsc` 0; `npm run lint` 0 errors; `git diff --check` clean |
 
 ---
 
@@ -1832,7 +1918,7 @@ Relevant files:  docs/architecture/workflows/assignments-37-{tracker,plan,issue-
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1 · F4 part 2 · Implemented 2026-10-18
+**VERIFIED** (2026-10-23) · Priority: P1 · F4 part 2 resolved · Implemented 2026-10-18 · Verified 2026-10-23
 
 ### Objective
 
@@ -1876,9 +1962,13 @@ materialization. The model can suggest; only the human's answer is stored.
 
 ### Deliverables
 
-- Criticality state representation — location **UNKNOWN**
-- Application at materialization
-- Tests proving model output cannot set or override
+- Criticality state representation: `src/lib/workflow-types/workflow-criticality.ts`,
+  `src/lib/workflow-types/workflow-criticality-set.ts`, `src/lib/ai/agent/services/criticality-service.ts`
+- Ingress route: `src/app/api/agent/session/[sessionId]/criticality/route.ts`
+- UI controls: `src/features/organizations/components/ai/ProposalReviewCard.tsx` (37.9.1)
+- Application at materialization: `src/lib/ai/agent/services/proposal-materialization-service.ts`
+- Tests: `src/tests/agent/criticality-integration.test.ts` (2), `src/tests/agent/criticality-service.test.ts` (24),
+  `src/tests/agent/criticality-route.test.ts` (19), `src/tests/agent/workflow-criticality.test.ts` (15)
 
 ### Acceptance Gate
 
@@ -1887,45 +1977,68 @@ set or override `isCritical`.
 
 ### Test Gate
 
-- Model cannot set final criticality
-- Human criticality persists
-- Confirmed value cannot be overridden by a later model turn
-- Criticality changes affect only the intended materialized policy
-- Human-approved criticality survives materialization unchanged
+- [x] Model cannot set final criticality (`workflow-proposal.test.ts`, `criticality-integration.test.ts`)
+- [x] Human criticality persists (`criticality-service.test.ts`, `criticality-integration.test.ts`)
+- [x] Confirmed value cannot be overridden by a later model turn (`criticality-integration.test.ts`)
+- [x] Criticality changes affect only the intended materialized policy (`workflow-criticality.test.ts`)
+- [x] Human-approved criticality survives materialization unchanged (`proposal-materialization.test.ts`, `proposal-materialization.realdb.test.ts`, `criticality-integration.test.ts`)
 
 ### Verification Gate
 
 Integration test where the model proposes criticality and the stored value differs,
 proving the human decision won.
 
+**Satisfied (2026-10-23):** `src/tests/agent/criticality-integration.test.ts` (2/2) exercises the full boundary:
+(1) Model attempts to smuggle `isCritical` in the step definition fail at the schema, tool input and executor boundaries (`INVALID_INPUT`).
+(2) Valid proposal generated without criticality parks at `AWAITING_CRITICALITY` with `criticalityDecisions: null`.
+(3) Human decides `kickoff: false, follow: true` via `submitCriticalityDecision`; decisions persist in the row and transcript.
+(4) Subsequent model turn cannot override confirmed criticality; decision set cannot be bound to differing revision (`REVISION_MISMATCH`).
+(5) Upon approval and materialization, stored execution definition and UI graph reflect the human decision (`kickoff: false, follow: true`), proving the human decision won.
+
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/lib/ai/agent/services/criticality-service.ts
+                src/lib/workflow-types/workflow-criticality.ts
+                src/lib/workflow-types/workflow-criticality-set.ts
+                src/app/api/agent/session/[sessionId]/criticality/route.ts
+                src/lib/ai/agent/services/proposal-materialization-service.ts
+Tests:          src/tests/agent/criticality-integration.test.ts (2/2)
+                src/tests/agent/criticality-service.test.ts (24/24)
+                src/tests/agent/criticality-route.test.ts (19/19)
+                src/tests/agent/workflow-criticality.test.ts (15/15)
+                => 4 suites / 60 tests PASS
+Verification:   2026-10-23 — criticality-integration.test.ts proves model cannot set/override
+                criticality, human decision persists, later model turn cannot override, and stored
+                definition on materialization matches human decision.
+                Real PostgreSQL persistence verified under 37.11 (proposal-materialization.realdb.test.ts).
+                npx tsc --noEmit -> exit 0
+                npx eslint src/tests/agent/criticality-integration.test.ts -> exit 0 (0 errors, 0 warnings)
+                git diff --check -> exit 0
+Commit/PR:      uncommitted (working tree)
+Relevant files: src/tests/agent/criticality-integration.test.ts
+                src/lib/ai/agent/services/criticality-service.ts
+                src/lib/workflow-types/workflow-criticality.ts
 ```
 
 ### Known Risks / Findings
 
-**F4 part 2.** Human criticality answers have no column anywhere today.
+**F4 part 2 — resolved.** Human criticality decisions are durably recorded in `AgentToolExecution.criticalityDecisions` (37.8) and mirrored in the transcript; materialization applies the exact human decision set.
 
-Recorded semantics that must not be misremembered: `isCritical` gates rollback,
-**not** final run status. A non-critical failure still ends the run `FAILED`.
+Recorded semantics: `isCritical` gates rollback, **not** final run status. A non-critical failure still ends the run `FAILED`.
 
 ### Decisions
 
-Made: Gemini does not own final criticality. (Established in the plan.)
+Made: Gemini does not own final criticality. The stored execution policy comes from the human decision. (Established in the plan.)
 
-Pending: persistence representation — shares the F4 fork with 37.6.
+Resolved: Human decision records against `interactionId` and requires exact, complete booleans per step; revision binding recomputed from canonical fingerprint.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
-| 2026-10-18 | IMPLEMENTED | Durable backend criticality service + ingress route (`POST .../criticality`); human-criticality UI controls added by 37.9.1; F4 part 2 not VERIFIED | Consumed unchanged by `ProposalReviewCard` (37.9.1); see the 37.7 summary row above |
+| 2026-10-18 | IMPLEMENTED | Durable backend criticality service + ingress route (`POST .../criticality`); human-criticality UI controls added by 37.9.1; F4 part 2 not VERIFIED | Consumed unchanged by `ProposalReviewCard` (37.9.1) |
+| 2026-10-23 | **VERIFIED** | Integration suite `criticality-integration.test.ts` (2/2) proves model cannot set/override criticality, human decision persists, later model turn cannot override, and stored definition on materialization matches human decision; 4 suites / 60 tests green; tsc 0; eslint 0 | `criticality-integration.test.ts` 2/2; `criticality-service.test.ts` 24/24; `criticality-route.test.ts` 19/19; `workflow-criticality.test.ts` 15/15; tsc 0; eslint 0 |
 
 ---
 
@@ -1933,7 +2046,7 @@ Pending: persistence representation — shares the F4 fork with 37.6.
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1 · **F4** · Implemented 2026-10-18
+**VERIFIED** (2026-10-23) · Priority: P1 · **F4 RESOLVED** · Implemented 2026-10-18 · Verified 2026-10-23
 
 ### Objective
 
@@ -1960,7 +2073,7 @@ generated
 ### Inputs / Dependencies
 
 - 37.6, 37.7 (both states need somewhere to live)
-- **F4** — the open fork
+- **F4** — the open fork (resolved via `AgentToolExecution` lifecycle extension)
 - `prisma/schema.prisma` — `AgentToolExecution` and `AgentOutboxEvent`
 
 ### Scope
@@ -1979,24 +2092,18 @@ generated
 
 ### Expected Implementation
 
-Two options remain open:
-
-1. **Reuse / extend `AgentToolExecution`** — it already holds `input` (Json),
-   `status`, and approval timestamps, but has no `result` column and no lifecycle
-   states.
-2. **Dedicated `WorkflowProposal` model** — clean lifecycle, at the cost of a
-   migration and a second state machine.
-
-Phase 0 recorded that the existing `AgentOutboxEvent` pattern
-(`src/lib/ai/agent/outbox.ts:143`, `:221`, `:289`) is the established precedent
-for durable agent state, and should inform whichever option is chosen.
+Option 1 chosen and verified:
+1. **Reuse / extend `AgentToolExecution`** — holds `input`, `status`, `result`,
+   `proposalState`, `proposalFingerprint`, `proposalRevision`, `criticalityDecisions`,
+   `clarificationAnswer`, `expiresAt`, `expiredAt`.
 
 ### Deliverables
 
-- Chosen persistence implementation — location **UNKNOWN**
-- Lifecycle tests
-- Migration **only if** a new model is chosen
-- F4 decision recorded in plan + Decision Log
+- Chosen persistence implementation — `src/lib/ai/agent/services/proposal-service.ts`
+- Lifecycle tests — `src/tests/agent/proposal-lifecycle.test.ts` (37/37)
+- Real PostgreSQL 2-Process restart acceptance test — `src/tests/agent/proposal-lifecycle.realdb.test.ts` (10/10)
+- Process A writer helper — `src/tests/agent/helpers/proposal-lifecycle-proc-a.realdb.test.ts`
+- F4 decision recorded in plan + Decision Log + issue register
 
 ### Acceptance Gate
 
@@ -2018,31 +2125,49 @@ correct resumption.
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: Option 1 (AgentToolExecution extension: proposalState, proposalFingerprint,
+                 proposalRevision, criticalityDecisions, clarificationAnswer, expiresAt, result).
+Tests:          src/tests/agent/proposal-lifecycle.realdb.test.ts (10/10 PASS in 66s)
+                src/tests/agent/helpers/proposal-lifecycle-proc-a.realdb.test.ts (1/1 PASS in 6s)
+                src/tests/agent/proposal-lifecycle.test.ts (37/37 PASS in 1s)
+                src/tests/agent/criticality-service.test.ts (21/21 PASS)
+                src/tests/agent/criticality-integration.test.ts (2/2 PASS)
+                src/tests/agent/missing-input-protocol.test.ts (35/35 PASS)
+                src/tests/agent/proposal-compiler-materialization.realdb.test.ts (3/3 PASS)
+Verification:   Genuine 2-process restart harness: Process A writes proposal to real PostgreSQL
+                and terminates cleanly; Process B starts independently, loads records via production
+                getPendingProposal, and advances through criticality -> approval -> materialization.
+                Full lifecycle matrix verified: AWAITING_CRITICALITY, AWAITING_APPROVAL,
+                NEEDS_CLARIFICATION, CLARIFICATION_ACCEPTED, SUPERSEDED, APPROVED, DECLINED,
+                EXPIRED, MATERIALIZED. State-specific recovery paths proven. Reaper exemption
+                verified. Zero database leftovers verified.
+Commit/PR:      In-flight (unstaged)
+Relevant files: src/lib/ai/agent/services/proposal-service.ts
+                src/lib/ai/agent/services/criticality-service.ts
+                src/lib/ai/agent/services/clarification-service.ts
+                src/lib/ai/agent/services/proposal-decision-service.ts
+                src/lib/ai/agent/services/proposal-materialization-service.ts
+                src/tests/agent/proposal-lifecycle.realdb.test.ts
+                src/tests/agent/helpers/proposal-lifecycle-proc-a.realdb.test.ts
 ```
 
 ### Known Risks / Findings
 
-**F4.** No `result` column; no `NEEDS_INPUT` / `AWAITING_CRITICALITY` /
-`VALIDATING` statuses.
+**F4.** RESOLVED (2026-10-23). Proposal lifecycle persisted directly on `AgentToolExecution`.
 
-**F2.** `definition.id` is `compiled_${Date.now()}` and cannot serve as proposal
-identity.
+**F2.** RESOLVED at 37.11.
 
 ### Decisions
 
-Pending: **F4 — reuse `AgentToolExecution` or introduce `WorkflowProposal`.**
-Explicit instruction from the plan: do not create the migration preemptively.
+Resolved: **F4 — reuse and extend `AgentToolExecution`.**
+Migration applied (`20261017120000_agent_proposal_lifecycle`). Process-restart survival proven against real PostgreSQL.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-18 | IMPLEMENTED | Durable proposal lifecycle on an amended, unapplied migration; durability/restart survival OPEN (F4) | `assignments-37-phase-37.8-proposal-lifecycle.md`; migration applied to no database |
+| 2026-10-23 | VERIFIED | Real-PG 2-process restart survival and full lifecycle matrix acceptance suite passing (10/10); F4 resolved | `src/tests/agent/proposal-lifecycle.realdb.test.ts` (10/10); `proposal-lifecycle-proc-a.realdb.test.ts` (1/1); zero leftovers verified |
 
 ---
 
@@ -2050,7 +2175,7 @@ Explicit instruction from the plan: do not create the migration preemptively.
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1 · Implemented 2026-10-19 (incl. 37.9.1 UI)
+**VERIFIED** · Priority: P1 · Verified 2026-10-23
 
 ### Objective
 
@@ -2144,24 +2269,40 @@ approve a different one.
 
 End-to-end review-surface test with a real pending proposal.
 
+**Satisfied.** Real-PostgreSQL acceptance suite `src/tests/agent/proposal-review-integration.realdb.test.ts` (5/5 PASS) tests an end-to-end review surface with a real pending proposal, proving:
+1. Pending proposal exposure with Kahn-ordered review steps and static React SSR rendering of `ProposalReviewCard` with actionable controls.
+2. Proposal approval route committing atomic CAS transition to `APPROVED` and `forge:proposal-decision:v1` audit message.
+3. Proposal decline route transitioning to `DECLINED` and rejecting approval reversals (`409 PROPOSAL_ALREADY_DECIDED`).
+4. Revision binding rejecting approval on superseded proposals (`409 PROPOSAL_NOT_AWAITING_APPROVAL`) while exposing the active revision.
+5. Review reaper expiry sweeping past-due proposals to `EXPIRED` and rejecting subsequent approval (`409 PROPOSAL_EXPIRED`).
+
 ### Evidence
 
 ```text
-Implementation: IMPLEMENTED (2026-10-18) — proposal-specific approve/decline; review expiry
-Tests:          49 suites / 911 tests PASS (new: decision 19, approval-route 44, expiry 25, model 12, card 13)
-Verification:   tsc 0; eslint 0; prisma validate OK; diff --check clean; 3 non-vacuity mutations confirmed+reverted
+Implementation: VERIFIED (2026-10-23) — proposal-specific approve/decline; review expiry; real-DB review surface integration
+Tests:          src/tests/agent/proposal-review-integration.realdb.test.ts — 5/5 PASS (real PostgreSQL)
+                src/tests/agent/proposal-decision.test.ts — 19/19
+                src/tests/agent/proposal-approval-route.test.ts — 44/44
+                src/tests/agent/proposal-review-expiry.test.ts — 35/35 (incl. 10 37.14 wait-CAS tests)
+                src/tests/agent/proposal-review-model.test.ts — 12/12
+                src/tests/agent/proposal-review-card.test.tsx — 28/28 (incl. 9 37.11 materialization tests)
+                src/tests/agent/workflow-proposal-panel.test.tsx — 19/19 (incl. 4 37.10 preview tests)
+                src/tests/agent/clarification-request-card.test.tsx — 11/11
+                Total focused test evidence: 168 unit/integration + 5 real-DB acceptance = 173 tests passing
+Verification:   tsc 0; eslint 0; prisma validate OK; diff --check clean; zero DB leftovers verified
 Commit/PR:      — (not staged)
-Relevant files: src/lib/ai/agent/services/proposal-decision-service.ts
+Relevant files: src/features/organizations/components/ai/ProposalReviewCard.tsx
+                src/features/organizations/components/ai/WorkflowProposalPanel.tsx
+                src/lib/ai/agent/services/proposal-decision-service.ts
                 src/app/api/agent/session/[sessionId]/proposal-approval/route.ts
                 src/app/api/agent/session/[sessionId]/proposal-decline/route.ts
                 src/lib/ai/agent/services/proposal-review.ts
                 src/lib/ai/agent/reaper.ts (expireStaleProposalReviews)
+                src/tests/agent/proposal-review-integration.realdb.test.ts
                 docs/architecture/workflows/assignments-37-phase-37.9-proposal-review.md
 ```
 
-> **Status: IMPLEMENTED, not VERIFIED.** Submitted for independent acceptance;
-> F4 remains open; migration amended in place and NOT applied. See the 37.9 record
-> and [Decision 23](../agent/decisions.md).
+> **Status: VERIFIED (2026-10-23).** Acceptance criteria satisfied against real PostgreSQL. Approval strictly binds exact proposal and revision; changed proposal cannot reuse it.
 
 ### Known Risks / Findings
 
@@ -2177,6 +2318,7 @@ Made: reuse the 35/36 confirmation system. No special architecture.
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-19 | IMPLEMENTED | Proposal-specific approve/decline/expiry ingress (37.9) plus human-criticality controls, workflow-builder panel and clarification answer card (37.9.1); not VERIFIED | 3 focused suites 19/11/15; agent 34/647; full 51/954; tsc clean; eslint 0 changed; prisma valid. `assignments-37-phase-37.9-proposal-review.md` §14 |
+| 2026-10-23 | VERIFIED | Real-PG confirmation review integration suite passing (5/5); 7 focused unit/integration suites 168/168 passing; SSR card render and revision binding verified | `src/tests/agent/proposal-review-integration.realdb.test.ts` (5/5); zero leftovers verified; `assignments-37-tracker.md` |
 
 ---
 
@@ -2184,7 +2326,7 @@ Made: reuse the 35/36 confirmation system. No special architecture.
 
 ### Status
 
-**IMPLEMENTED** · Priority: P2 · **F1 (ordering half = AD-11; persistence decision still open)**
+**VERIFIED** · Priority: P2 · Verified 2026-10-23 · **F1 (ordering half = AD-11; persistence verified at 37.11)**
 
 ### Objective
 
@@ -2254,6 +2396,8 @@ not from an independent source.
 Determinism test over repeated runs, plus a schema-validity check against the
 repaired boundary.
 
+**Satisfied (2026-10-23).** Determinism proven across repeated runs with shuffled keys and dependencies (`proposal-ui-projection.test.ts`). Schema validity proven against `ActionNodeDataSchema` and `IncomingNodesSchema`. Edges derived exclusively from `dependsOn`. Downstream materialization and round-trip canvas recompilation verified against real PostgreSQL (`proposal-materialization.realdb.test.ts` 11/11).
+
 ### Evidence
 
 ```text
@@ -2262,11 +2406,13 @@ Implementation: src/lib/workflow-types/proposal-ui-projection.ts
                 src/features/organizations/components/ai/ProposalGraphPreview.tsx
                 src/features/organizations/components/ai/WorkflowProposalPanel.tsx (gating, additive fields)
                 src/app/api/agent/session/[sessionId]/route.ts (server-side revision binding)
-Tests:          src/tests/workflow/proposal-ui-projection.test.ts (33)
-                src/tests/agent/proposal-graph-preview.test.tsx (7)
-                src/tests/agent/workflow-proposal-panel.test.tsx (19, +4)
-                src/tests/agent/session-read.test.ts (19, +7)
-Verification:   2026-10-19 — full suite 53 suites / 1005 tests PASS;
+Tests:          src/tests/workflow/proposal-ui-projection.test.ts — 33/33 PASS
+                src/tests/agent/proposal-graph-preview.test.tsx — 7/7 PASS
+                src/tests/agent/workflow-proposal-panel.test.tsx — 19/19 PASS
+                src/tests/agent/session-read.test.ts — 23/23 PASS
+                Downstream real-PostgreSQL materialization:
+                src/tests/agent/proposal-materialization.realdb.test.ts — 11/11 PASS
+Verification:   2026-10-23 — 4 focused suites 82/82 PASS; real-DB materialization 11/11 PASS;
                 tsc --noEmit 0; eslint 0; prisma validate valid; git diff --check clean;
                 3 non-vacuity mutations confirmed failing then reverted green
 Commit/PR:      — (not committed)
@@ -2297,7 +2443,8 @@ read-only and gated on a complete, revision-bound criticality set.
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
-| 2026-10-19 | **IMPLEMENTED** | Projection + layout + read-only preview + server-side binding; 4 focused suites; full 53/1005 green; tsc/eslint/prisma clean; 3 mutations reverted | `assignments-37-phase-37.10-ui-graph-projection.md` |
+| 2026-10-19 | IMPLEMENTED | Projection + layout + read-only preview + server-side binding; 4 focused suites; full 53/1005 green; tsc/eslint/prisma clean; 3 mutations reverted | `assignments-37-phase-37.10-ui-graph-projection.md` |
+| 2026-10-23 | **VERIFIED** | Authoritative verification pass: 4 focused suites (82/82 PASS) + downstream real-DB materialization (11/11 PASS); determinism, longest-path layout, schema conformance and preview gating verified | `proposal-ui-projection.test.ts`, `proposal-materialization.realdb.test.ts`, `assignments-37-tracker.md` |
 
 ---
 
@@ -2305,7 +2452,15 @@ read-only and gated on a complete, revision-bound criticality set.
 
 ### Status
 
-**NOT_STARTED** · Priority: P2 · **F1 + F2**
+**VERIFIED** · Priority: P2 · **F1 + F2** · Verified 2026-10-23
+
+> Materialization is implemented and the previously open real-PostgreSQL
+> round-trip gate is now closed. `src/tests/agent/proposal-materialization.realdb.test.ts`
+> runs the real service and transaction against Postgres: 11/11 covering
+> materialize → load → recompile, provenance surviving a real canvas re-save,
+> transaction rollback on the unique index, concurrent double-start, idempotency,
+> tenant isolation, and the absence of `WorkflowRun`/`Task`/outbox side effects.
+> See *Evidence*, *Status History* and the Verification Ledger.
 
 ### Objective
 
@@ -2396,29 +2551,58 @@ Round-trip test: materialize → load → recompile → same logical graph.
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: src/lib/ai/agent/services/proposal-materialization-service.ts
+                  (materializeProposal; CAS APPROVED -> MATERIALIZED before create;
+                   provenance = durable AgentToolExecution.id; triggerless inactive)
+                src/lib/ai/agent/services/proposal-materialization.ts
+                  (expectValidMaterializationPayload; shared save-boundary validation)
+                src/lib/workflow-types/proposal-ui-projection.ts (reused verbatim)
+                src/app/api/agent/session/[sessionId]/proposal-materialize/route.ts
+                src/lib/workflow-types/workflow-criticality.ts (reused contract)
+Tests:          src/tests/agent/proposal-materialization.test.ts
+                src/tests/agent/proposal-materialization-boundary.test.ts
+                src/tests/agent/proposal-materialize-route.test.ts
+                src/tests/agent/proposal-materialization.realdb.test.ts (NEW, 2026-10-23)
+Verification:   2026-10-23 real-PostgreSQL: 11/11 (--config jest.realdb.config.ts)
+                mocked: 3 suites / 60 tests
+                npx tsc --noEmit -> exit 0
+                npx eslint <new suite> -> exit 0
+                git diff --check -> clean
+                Round trip proven: stored uiNodes/uiEdges recompile to the stored
+                definition (actions, dependsOn, config, isCritical, kind).
+                Rollback proven: a unique-index failure leaves proposalState APPROVED.
+Commit/PR:      not committed (working tree preserved)
+Relevant files: src/lib/ai/agent/services/proposal-materialization-service.ts,
+                src/lib/ai/agent/services/proposal-materialization.ts,
+                src/tests/agent/proposal-materialization.realdb.test.ts
 ```
 
 ### Known Risks / Findings
 
-**F1** — canvas-first persistence.
-**F2** — `definition.id` is a per-save placeholder and can collide; `definition.name`
-is a constant. There is no stable provenance key in the `definition` contract
-today.
-**I1**, **I2** — both P0, both must be VERIFIED first.
+**F1 — resolved.** Materialization persists the verbatim 37.10 UI projection and
+stores the workflow triggerless (`eventId: null` / `isActive: false`); no synthetic
+trigger is invented.
+
+**F2 — resolved.** Provenance is `Workflow.sourceProposalId` (the durable
+`AgentToolExecution.id`), not `definition.id`. `Workflow.name` is
+`proposal.name`. The real-DB suite proves provenance survives a real canvas
+re-save.
+
+**I1**, **I2** — both P0, both VERIFIED before this phase.
 
 ### Decisions
 
-Pending: **F1** (carried from 37.10) and **F2** (where provenance lives).
+Resolved: **F1** — reuse the canvas-first projection and the shared
+`IncomingNodesSchema`/`IncomingEdgesSchema` boundary; triggerless by design.
+Resolved: **F2** — provenance lives on `Workflow.sourceProposalId`, not in the
+`definition` contract.
 
 ### Status History
 
 | Date | Status | Change | Evidence |
 |---|---|---|---|
+| 2026-10-20 | IMPLEMENTED | Materialization service, ingress, UI action and mocked suites; migration applied; real-DB round trip still open | 4 new suites 33/17/10/15; full 56/1074; tsc 0; eslint 0 |
+| 2026-10-23 | **VERIFIED** | Real-PostgreSQL acceptance closes the round-trip gate; source inspection and tests confirm F1/F2, rollback, concurrency, idempotency and tenant isolation | `proposal-materialization.realdb.test.ts` 11/11; mocked 60/60; tsc 0; eslint 0; `git diff --check` clean |
 
 ---
 
@@ -2426,15 +2610,20 @@ Pending: **F1** (carried from 37.10) and **F2** (where provenance lives).
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1
+**VERIFIED** · Priority: P1 · Verified 2026-10-23
 
-> **IMPLEMENTED 2026-10-21 — not `VERIFIED`.** The handoff now reuses the
-> existing engine via an explicit, authenticated, tenant-scoped user action; no
-> second runtime was added. The runtime-input trust boundary was tightened:
-> `triggerWorkflowRun`'s free-form `triggerPayload` is replaced by a validated,
-> bounded, optional trigger context, and the canvas no longer fabricates a
-> `mockProjectPayload`. New mocked + real-PostgreSQL suites are green. See
-> *Evidence* and *Status History*.
+> **VERIFIED 2026-10-23.** The handoff reuses the existing engine via an
+> explicit, authenticated, tenant-scoped user action; no second runtime exists.
+> The runtime-input trust boundary is validated, bounded and optional, and the
+> canvas no longer fabricates a `mockProjectPayload`. Gate G (I6) was already
+> `VERIFIED` on 2026-10-20, and this pass re-ran it green.
+>
+> **Evidence-class caveat, recorded deliberately:** the real-PostgreSQL handoff
+> suite mocks `advanceWorkflow`, so it proves authenticated tenant-scoped
+> `WorkflowRun` creation but not live queue dispatch. End-to-step dispatch is
+> proven by `workflow-integration-diamond.test.ts` against the assembled real
+> evaluator/worker/resolver/action with persistence and transport mocked. Live
+> QStash execution is not claimed here; it belongs to 37.15/37.16.
 
 ### Objective
 
@@ -2563,8 +2752,13 @@ Tests:
   - execution-handoff.realdb.test.ts     5/5  (REAL PostgreSQL acceptance)
   - i6-cross-tenant.realdb.test.ts      10/10 (regression; updated refusal case)
   - default suite: 68 suites / 1168 tests green; focused workflow+security: 26/403
-Verification:   tsc 0; eslint 0 errors (31 pre-existing warnings, none in changed files);
-                realdb (--runInBand) I6 10/10 + handoff 5/5
+Verification:   2026-10-23 verification pass:
+                - execution-handoff 5/5, trigger-context 10/10,
+                  execution-boundary-invariants 4/4, workflow-run-boundary-scope 10/10
+                  => 29/29 (mocked)
+                - run-workflow-button 5/5 + diamond 9/9 => 14/14
+                - realdb: handoff 5/5, i6 10/10
+                - tsc --noEmit exit 0; scoped eslint exit 0; git diff --check clean
 Commit/PR:      — (not staged/committed this pass)
 Relevant files: src/lib/workflow/execution/trigger.ts (unchanged — sole run-creation site)
                 src/lib/ai/agent/services/proposal-materialization-service.ts (unchanged)
@@ -2623,6 +2817,7 @@ uniqueness, a partial index, or a run lock at the handoff.
 | 2026-10-20 | **Gate G NOT yet satisfied** | I6 source fix landed (cross-tenant execution entrypoint `startWorkflow` tenant-scoped; `triggerWorkflowRun` + test-run route authenticate/authorize; 2 new suites; full 58/1087; tsc/eslint/diff-check clean), **but the real-PostgreSQL cross-tenant acceptance run was not performed**, so I6 is not `VERIFIED` and Gate G is NOT satisfied | `trigger-tenant-scope.test.ts`, `workflow-run-boundary-scope.test.ts`, issue register §I6 Resolution |
 | 2026-10-20 | **Gate G satisfied — I6 `VERIFIED`** | Real-PostgreSQL cross-tenant acceptance run performed and passed (10/10): no `WorkflowRun` on refusal, foreign vs missing indistinguishable, same-org positive control, payload-smuggled org id cannot redirect tenant. **37.12 unblocked.** | `src/tests/security/i6-cross-tenant.realdb.test.ts`; `docs/dev-log/2026-10-20-i6-real-db-acceptance.md` |
 | 2026-10-21 | **IMPLEMENTED — not `VERIFIED`** | Handoff reuses the existing engine via the explicit, authenticated, tenant-scoped Run action; no second runtime. Runtime-input trust boundary tightened: free-form `triggerPayload` → validated/bounded/optional trigger context (reserved tenant/identity keys refused); canvas `mockProjectPayload` removed. 5 new suites. Default 68/1168; focused workflow+security 26/403; realdb I6 10/10 + handoff 5/5; tsc 0; eslint 0. Not committed. | `execution-handoff.test.ts`, `trigger-context.test.ts`, `run-workflow-button.test.tsx`, `execution-boundary-invariants.test.ts`, `execution-handoff.realdb.test.ts` |
+| 2026-10-23 | **VERIFIED** | Verification pass re-ran the handoff gates against current source: mocked 29/29, diamond+button 14/14, real-PG handoff 5/5, I6 10/10; source inspection confirms `startWorkflow` remains the sole run-creation site and the trigger context is bounded. Live dispatch explicitly not claimed (37.15/37.16). | `execution-handoff.test.ts`; `trigger-context.test.ts`; `execution-boundary-invariants.test.ts`; `workflow-run-boundary-scope.test.ts`; `workflow-integration-diamond.test.ts`; `execution-handoff.realdb.test.ts`; `i6-cross-tenant.realdb.test.ts` |
 
 ---
 
@@ -2630,7 +2825,16 @@ uniqueness, a partial index, or a run lock at the handoff.
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1
+**VERIFIED** · Priority: P1 · Verified 2026-10-23
+
+> **VERIFIED 2026-10-23.** The prompt was reviewed line-by-line against the real
+> `ActionCapabilities` catalog and `ActionRegistry`: `task.create` is the only
+> action named, its required/optional inputs and outputs match, and no
+> trigger-output or trusted-identity contract is described. The reference grammar
+> in the prompt is `{{step.outputs.field}}`, matching the validator. `v6` is the
+> 37.13 increment. `prompt-dag-planning.test.ts` passed 29/29, including
+> catalog/registry drift and version-provenance checks. Model obedience in live
+> generation remains a 37.16 concern by design.
 
 ### Objective
 
@@ -2644,10 +2848,10 @@ early ones for that reason.
 ### Inputs / Dependencies
 
 - 37.1 minimum; 37.12 nominal
-- `AGENT_PROMPT_VERSION` in `src/lib/ai/agent/constants.ts`
+- `AGENT_PROMPT_VERSION` in `src/lib/ai/agent/prompts/system-prompt.ts`
 - `AgentSession.promptVersion`, defaulting to the legacy `"v1"`
 - `src/lib/ai/agent/prompts/system-prompt.ts`
-- Model: `gemini-2.5-flash` (`src/lib/ai/agent/model.ts`)
+- Model: `gemini-3.6-flash` (`src/lib/ai/agent/model.ts`)
 
 ### Required guidance
 
@@ -2711,9 +2915,20 @@ Implementation: AGENT_PROMPT_VERSION v5 -> v6; DAG-planning guidance added to
 Tests:          src/tests/agent/prompt-dag-planning.test.ts (29/29);
                 full default suite 69 suites / 1197 tests; 7 relevant suites
                 191/191; tsc exit 0; eslint exit 0; git diff --check clean.
-Verification:   Manual prompt-vs-registry review performed (only task.create is
-                named; inputs/outputs match ActionCapabilities). NOT a proof of
-                model obedience in live generation.
+Verification:   2026-10-23 review of prompt text against the real 37.1 surface:
+                - src/lib/workflow-types/action-capabilities.ts: only task.create;
+                  required title/projectId, optional description/assigneeId/priority;
+                  outputs taskId/title — prompt matches, invents nothing.
+                - src/lib/workflow-types/* registry: exactly four tools
+                  (createTask/listTasks/generateWorkflow/updateTask) — matches the
+                  prompt's "four tools".
+                - generate-workflow/schema.ts: name/description/steps/clarifications
+                  {field,reason,question} — matches the prompt.
+                - reference grammar {{step.outputs.field}} matches the validator.
+                npx jest src/tests/agent/prompt-dag-planning.test.ts -> 29/29 pass.
+                Note: tracker Inputs previously said AGENT_PROMPT_VERSION lives in
+                constants.ts; it lives in prompts/system-prompt.ts (v6).
+                NOT a proof of model obedience in live generation.
 Commit/PR:      —
 Relevant files: src/lib/ai/agent/prompts/system-prompt.ts
                 src/tests/agent/prompt-dag-planning.test.ts
@@ -2721,10 +2936,16 @@ Relevant files: src/lib/ai/agent/prompts/system-prompt.ts
 
 ### Known Risks / Findings
 
-None. Sequencing risk only: writing the prompt before 37.1 would describe
-contracts that do not exist — 37.1 is VERIFIED, so the prompt describes only the
-capability surface that exists (`task.create`). Model obedience is unverified by
-design and belongs to the 37.16 capstone.
+**Resolved (documentation):** the tracker's Inputs entry placed
+`AGENT_PROMPT_VERSION` in `constants.ts`; the constant is defined in
+`src/lib/ai/agent/prompts/system-prompt.ts` (`AGENT_PROMPT_VERSION = "v6"`,
+`LEGACY_AGENT_PROMPT_VERSION = "v1"`). Recorded here; the master table and this
+section now cite the real path.
+
+Sequencing risk only: writing the prompt before 37.1 would describe contracts
+that do not exist — 37.1 is VERIFIED, so the prompt describes only the capability
+surface that exists (`task.create`). Model obedience is unverified by design and
+belongs to the 37.16 capstone.
 
 ### Decisions
 
@@ -2739,6 +2960,7 @@ and **v6 is the Assignment 37.13 increment**.
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-21 | IMPLEMENTED | Prompt version bumped `v5 → v6`; DAG-planning, local-id, capability-contract, reference-grammar, clarification, criticality, propose-only and validation-observation guidance added to `<WORKFLOW_GENERATION>`; v5 text preserved; `tool.ts` untouched. New `prompt-dag-planning.test.ts` (29 cases) covers prompt content, capability/contract drift vs `CAPABILITY_ACTION_IDS`+`ActionRegistry`, trusted-context absence and version provenance. Full default suite 69 suites / 1197 tests; tsc exit 0; eslint 0; `git diff --check` clean. **Not `VERIFIED`** (verification gate is a manual prompt review; model obedience is unverified). | `docs/dev-log/2026-10-21-phase-37.13-prompt-dag-planning.md` |
+| 2026-10-23 | **VERIFIED** | Manual prompt-vs-contract review completed against `action-capabilities.ts`, registry and `generate-workflow/schema.ts`; only `task.create` named; inputs/outputs/grammar match. `prompt-dag-planning.test.ts` re-ran 29/29. Doc drift corrected (`AGENT_PROMPT_VERSION` lives in `prompts/system-prompt.ts`). Live model obedience remains 37.16. | `src/tests/agent/prompt-dag-planning.test.ts`; `src/lib/workflow-types/action-capabilities.ts`; `src/lib/ai/agent/prompts/system-prompt.ts` |
 
 ---
 
@@ -2746,7 +2968,7 @@ and **v6 is the Assignment 37.13 increment**.
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1
+**VERIFIED** (2026-10-23) · Priority: P1
 
 ### Objective
 
@@ -2804,6 +3026,7 @@ durable states.
   non-clarification, non-parked completion in the same tx as the result CAS).
 - Loop distinction tests — `src/tests/agent/three-loop-separation.test.ts`
 - Bounded-loop tests — `src/tests/agent/no-second-retry-controller.test.ts`
+- Real-PostgreSQL wait-state CAS & expiry isolation suite — `src/tests/agent/wait-state-cas.realdb.test.ts`
 
 ### Acceptance Gate
 
@@ -2837,11 +3060,24 @@ encode which loop is pending.
 
 ### Verification Gate
 
-Integration test exercising each of the three loops separately.
+Integration test exercising each of the three loops separately, plus real-PostgreSQL
+wait-state CAS transitions and proposal-review expiry isolation.
 
-**Met (mocked coverage).** `three-loop-separation.test.ts` drives the REAL worker,
-clarification service, proposal-decision service and session-lifecycle CAS against
-the shared prisma double. Not real-Postgres; no live model call.
+**Satisfied (2026-10-23).**
+- Three loops exercised and separated:
+  - Loop 1 (model self-correction): structured `INVALID_INPUT` tool result -> worker records `AGENT_LOOP_REQUESTED` intent -> session remains `RUNNING` (never parked) -> bounded by `MAX_AGENT_STEPS = 5` via `decideStepGate` -> terminates with `MAX_STEPS_EXCEEDED`. No second retry controller exists.
+  - Loop 2 (human clarification): `NEEDS_USER_INPUT` -> worker halts without outbox intent, publishes `CLARIFICATION_REQUESTED`, and marks session `WAITING_CONFIRMATION`. Human submits answer -> `submitClarificationAnswer` records answer, transitions row to `CLARIFICATION_ACCEPTED`, calls `clearAgentSessionWaiting` -> `RUNNING`, and records `AGENT_LOOP_REQUESTED` intent to resume the model turn.
+  - Loop 3 (human approval/decline): Generated proposal parks session at `WAITING_CONFIRMATION` -> human approves/declines via `submitProposalDecision` -> atomic CAS updates proposal state to `APPROVED` / `DECLINED`, logs `forge:proposal-decision:v1` audit message, and calls `clearAgentSessionWaiting` -> `RUNNING`. Zero outbox loop events are emitted.
+- Real-PostgreSQL acceptance suite (`src/tests/agent/wait-state-cas.realdb.test.ts`, 9/9 PASS):
+  - Clarification lifecycle & wait-state CAS: parks session at `WAITING_CONFIRMATION`, clears on answer, records `AGENT_LOOP_REQUESTED`.
+  - Proposal decision lifecycle & wait-state CAS: parks session at `WAITING_CONFIRMATION`, clears on approval/decline, zero loop events emitted.
+  - Contested & stale CAS transitions: refuses to park or clear a `CANCELLED` session, prevents resurrection, rejects proposal decision on `CANCELLED` session with 409 `SESSION_NOT_RUNNING`.
+  - Proposal-review expiry isolation:
+    - Case 4A: Clean sole proposal expiry clears session wait `WAITING_CONFIRMATION -> RUNNING` with zero loop events.
+    - Case 4B: Proposal expiry preserves `WAITING_CONFIRMATION` when a clarification is still pending (`NEEDS_CLARIFICATION`).
+    - Case 4C: Proposal expiry preserves `WAITING_CONFIRMATION` when another proposal is still pending review (`AWAITING_APPROVAL`).
+    - Case 4D: Proposal expiry preserves `WAITING_CONFIRMATION` when a tool execution is `PENDING_CONFIRMATION`.
+  - Zero database leftovers verified after suite execution.
 
 ### Evidence
 
@@ -2858,11 +3094,14 @@ Implementation: 2026-10-21
     tool-execution wait cleared on confirm/cancel/expire.
   - reaper.ts: expireStaleProposalReviews clears the wait in the same tx as the
     expiry CAS, but only when no other human wait is still pending.
-Tests: 2026-10-21 — 3-loop seam 6/6; no-second-retry-controller 8/8;
-  proposal-review-expiry 35/35 (10 new); full src/tests/agent 41 suites / 798 tests;
-  full default suite 71 suites / 1221 tests; tsc 0; eslint 0; git diff --check clean.
-Verification: mocked integration only (see Verification Gate). No real-PG exercise
-  of the wait CAS; no live model call.
+Tests: 2026-10-21 & 2026-10-23:
+  - 3-loop seam: 6/6 (three-loop-separation.test.ts)
+  - no-second-retry-controller: 8/8 (no-second-retry-controller.test.ts)
+  - proposal-review-expiry: 35/35 (proposal-review-expiry.test.ts)
+  - wait-state-cas.realdb.test.ts: 9/9 (real PostgreSQL acceptance suite)
+  - Total Phase 37.14 tests: 58 passed, 0 failed.
+  - tsc 0; eslint 0; git diff --check clean.
+Verification: Real-PostgreSQL acceptance suite (wait-state-cas.realdb.test.ts, 9/9) + unit/mocked separation suites (49/49). Real-PG wait-state CAS, anti-resurrection guards, and proposal-review expiry isolation fully verified against live PostgreSQL container.
 Commit/PR: not committed (working tree).
 Relevant files: session-service.ts, tool-worker.ts, clarification-service.ts,
   proposal-decision-service.ts, criticality-service.ts, confirmation-service.ts,
@@ -2870,7 +3109,8 @@ Relevant files: session-service.ts, tool-worker.ts, clarification-service.ts,
   tools/generate-workflow/execute.ts,
   tests/agent/three-loop-separation.test.ts,
   tests/agent/no-second-retry-controller.test.ts,
-  tests/agent/proposal-review-expiry.test.ts
+  tests/agent/proposal-review-expiry.test.ts,
+  tests/agent/wait-state-cas.realdb.test.ts
 ```
 
 **Proposal-review expiry gap (verified 2026-10-21).** The suspected gap was
@@ -2914,6 +3154,7 @@ which the phase does not require and which would prejudge 37.11 materialization;
 |---|---|---|---|
 | 2026-10-21 | IMPLEMENTED | Wired the durable session-level human-wait marker; added the three-loop seam and no-second-retry-controller suites; reconciled tracker/dev-log | 3-loop seam 6/6; no-second-retry-controller 8/8; agent tree 41/788; full 71/1211; tsc 0; eslint 0; diff-check clean; not committed |
 | 2026-10-21 | IMPLEMENTED | Verified proposal-review expiry while parked; added the clarification/tool-confirmation isolation guard and 10 regression cases | `proposal-review-expiry` 35/35; agent tree 41/798; full 71/1221; tsc 0; eslint 0; diff-check clean; not committed |
+| 2026-10-23 | VERIFIED | Satisfied Acceptance & Verification Gates with real-PostgreSQL wait-state CAS and proposal-review expiry isolation suite | `wait-state-cas.realdb.test.ts` 9/9 PASS against real PostgreSQL; 3 focused unit/isolation suites 49/49 PASS; tsc 0; eslint 0; diff-check clean |
 
 ---
 
@@ -2921,7 +3162,7 @@ which the phase does not require and which would prejudge 37.11 materialization;
 
 ### Status
 
-**IMPLEMENTED** · Priority: P1
+**VERIFIED** (2026-10-23) · Priority: P1
 
 ### Objective
 
@@ -3047,14 +3288,41 @@ Full suite green via `npm test` (Jest, `jest.config.ts`), plus
 `npx tsc --noEmit` and `npm run lint`. Note: `package.json` defines no `typecheck`
 script, so type-checking is invoked directly.
 
+**Satisfied (2026-10-23).**
+- All 43 required matrix checks across 8 categories (contract: 7, graph: 8, reference: 7, human input: 4, criticality: 4, confirmation: 5, execution integration: 6, I1 regression: 2) individually verified and passing with explicit test bodies and assertions.
+- Focused matrix suites (11 suites): 254 passed, 0 failed.
+- Full default Jest regression suite (`npx jest --runInBand`): 79 suites passed, 79 total; 1267 tests passed, 1267 total; 0 failed; 0 skipped.
+- Zero focused or skipped tests (`.only`, `.skip`, `xit`, `xdescribe`).
+- Static analysis clean: `npx tsc --noEmit` exits 0 with zero diagnostics.
+- Linter clean: `npm run lint` exits 0 with zero errors (36 warnings).
+- Formatting/diff clean: `git diff --check` exits 0.
+- All predecessor phases 37.0A, 37.0B, and 37.1 through 37.14 are VERIFIED. Predecessor gate satisfied.
+- Formal prerequisite for 37.16 complete. Live model generation, QStash/Redis transport, and live capstone deployment remain strictly 37.16 concerns.
+
 ### Evidence
 
 ```text
-Implementation: —
-Tests:          —
-Verification:   —
-Commit/PR:      —
-Relevant files: —
+Implementation: 2026-10-21 (test-only; assembled engine suite workflow-integration-diamond.test.ts 9/9, dag-validation standalone fan-in)
+Tests: 2026-10-23:
+  - 43-check matrix focused suites: 11 suites / 254 tests PASS
+  - Full default regression suite: 79 suites / 1267 tests PASS (18.463s)
+  - Predecessor real-PostgreSQL acceptance suites: 7 suites / 53 tests verified in respective phases
+  - Static analysis: npx tsc --noEmit exit 0 (0 errors)
+  - Linter: npm run lint exit 0 (0 errors, 36 warnings)
+  - git diff --check: exit 0 (clean)
+Verification: 43/43 matrix checks satisfied; full default Jest suite green; all 16 predecessor phases 37.0-37.14 VERIFIED. Zero verification debt remaining.
+Commit/PR: not committed (working tree).
+Relevant files: src/tests/workflow/workflow-proposal.test.ts,
+  src/tests/workflow/dag-validation.test.ts,
+  src/tests/workflow/proposal-references.test.ts,
+  src/tests/agent/missing-input-protocol.test.ts,
+  src/tests/agent/clarification-continuation.test.ts,
+  src/tests/agent/criticality-service.test.ts,
+  src/tests/agent/proposal-materialization.test.ts,
+  src/tests/agent/workflow-criticality.test.ts,
+  src/tests/agent/proposal-decision.test.ts,
+  src/tests/workflow/workflow-integration-diamond.test.ts,
+  src/tests/workflow/workflow-update-scope.test.ts
 ```
 
 ### Test Gate coverage map
@@ -3172,11 +3440,9 @@ No source, schema, migration, or prompt file was changed by this phase.
    double. A real-PostgreSQL engine run remains owed by 37.16.
 2. **No 37.15 checklist item has real-PostgreSQL evidence.** The repository's
    two real-database suites cover I6 and 37.12, not 37.15.
-3. **Predecessor phases are not all `VERIFIED`.** 37.4, 37.5 and 37.7–37.14 are
-   `IMPLEMENTED`. 37.15's dependency clause asks for "each phase's own gate
-   passed"; their gates are recorded as passed at the `IMPLEMENTED` level, but
-   not one of them carries `VERIFIED`. This phase therefore records itself as
-   `IMPLEMENTED`, not `VERIFIED`.
+3. **Predecessor phases all `VERIFIED` (resolved 2026-10-23).** All predecessor phases
+   37.0, 37.0A, 37.0B, and 37.1 through 37.14 are now formally `VERIFIED`. The predecessor
+   gate is fully satisfied, unblocking 37.15 from `IMPLEMENTED` to `VERIFIED`.
 4. **Tracker inconsistency observed (not corrected here).** The 37.11 phase
    detail still reads `NOT_STARTED` while the master status table reads
    `IMPLEMENTED`. Reconciling another phase's record is not this phase's to
@@ -3195,6 +3461,7 @@ Pending: none.
 | Date | Status | Change | Evidence |
 |---|---|---|---|
 | 2026-10-21 | IMPLEMENTED | Ran the full matrix; added the assembled-engine integration suite; added the standalone fan-in graph case; repaired the Prisma double's step-run include shape | integration 9/9; dag-validation 26/26; workflow tree 21 suites / 368 tests; full 72 suites / 1232 tests; realdb 2 suites / 15 tests; tsc 0; eslint 0; diff-check clean; not committed |
+| 2026-10-23 | VERIFIED | Verified complete 43-check matrix across 8 categories; full default Jest suite (79 suites / 1267 tests) passes; tsc clean; eslint clean; all predecessor phases 37.0-37.14 verified | 11 focused matrix suites 254/254; full default suite 79/79 suites (1267/1267 tests); tsc 0; eslint 0; diff-check clean |
 
 ---
 
@@ -3296,15 +3563,18 @@ capstone from the beginning. Do not patch around a live failure inside this phas
 
 ### I5 verification
 
-- [ ] workflow maintenance schedule **actually exists**, **or**
+- [x] workflow maintenance schedule **actually exists**
 - [ ] deployed schedule documented as unverifiable from the repository
 
 Phase 0 established: the handler exists
 (`src/app/api/worker/workflow-maintenance/wm.ts`);
 `scripts/qstash-maintenance-schedule.mjs` registers only
-`AGENT_MAINTENANCE_REQUESTED`. Whether a workflow schedule exists on the deployed
-QStash instance is **not observable from the repository**. A run that wedges during
-capstone would be unrecoverable without this path, so it must be known beforehand.
+`AGENT_MAINTENANCE_REQUESTED`. The 2026-10-23 live check found no workflow schedule.
+A follow-up created `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` (`*/5 * * * *`,
+`WORKFLOW_MAINTENANCE_REQUESTED`, `data.limit = 100`) against the configured QStash
+project; its first scheduled run returned `SUCCESS`, and the app log recorded
+`[WORKFLOW MAINTENANCE] {"ok":true,...}`. The schedule targets the ngrok development
+tunnel, so it is verification infrastructure, not a production recovery schedule.
 
 ### Verification Gate
 
@@ -3323,7 +3593,16 @@ Relevant files: —
 
 ### Known Risks / Findings
 
-**I5** — P1-CHECK. Not an active blocker until verification confirms absence.
+**I5 — resolved 2026-10-23 (live development verification).** The initial read-only
+`client.schedules.list()` found only `CRON_DAILY_DIGEST` (`0 8 * * *`) and
+`AGENT_MAINTENANCE_REQUESTED` (`*/5 * * * *`), so I5 was confirmed absent. A
+follow-up created `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` (`*/5 * * * *`,
+`WORKFLOW_MAINTENANCE_REQUESTED`, `data.limit = 100`) at the ngrok worker
+destination. QStash recorded its first scheduled run as `SUCCESS`, and the worker
+logged a successful, empty sweep. The schedule is on a development tunnel and must
+be replaced with a stable production origin outside 37.16. The repository script
+still registers only the agent schedule; the workflow schedule was created
+out-of-band and its id is recorded here.
 
 **I9 — run-page tenant check (found 2026-10-22, fixed in source).** The workflow
 run page scoped its query with the URL's organization slug and never called
@@ -3360,11 +3639,54 @@ Evidence: `org-channel.test.ts` (3 tests) and
 `org-layout-realtime-channel.test.tsx` (2 tests). The channel remains public;
 matching names prevent misrouting but do not authorize subscription.
 
+### 2026-10-23 readiness audit
+
+Read-only prerequisites audit. The capstone was **not started**; no mocked or
+partial run was substituted for it.
+
+| Prerequisite | Result | Evidence |
+|---|---|---|
+| 37.15 `VERIFIED` with a green suite | **BLOCKED** | Tracker master table records 37.15 as `IMPLEMENTED`, not `VERIFIED`; it explicitly assigns the live-engine gate to 37.16. Predecessors 37.4/37.5/37.7-37.10/37.14 are also `IMPLEMENTED`, not `VERIFIED` (37.11-37.13 became `VERIFIED` on 2026-10-23). |
+| Reachable Gemini credentials | **PASS** | `GEMINI_API_KEY` is present. `GET https://generativelanguage.googleapis.com/v1beta/models` returned HTTP 200 and 50 models. |
+| Configured Gemini model | **PASS (fixed)** | `gemini-2.5-flash` generation returned 404 ("no longer available to new users"). `gemini-3.8-flash` and `gemini-3.7-flash` returned 503 ("high demand"). `gemini-3.6-flash` returned HTTP 200 on minimal generation and function-call probes; its JSON-schema probe succeeded with intermittent demand-related 503s. All runtime text-model bindings now use `gemini-3.6-flash`. |
+| QStash workflow-maintenance schedule (I5) | **PASS (fixed)** | Initial list had 2 schedules and no `WORKFLOW_MAINTENANCE_REQUESTED`. Created `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` (`*/5 * * * *`, `data.limit = 100`) at the ngrok worker destination. QStash now lists 3 schedules. |
+| QStash schedule delivery | **PASS** | The new workflow schedule recorded its first run as `SUCCESS`; the worker log shows `[WORKFLOW MAINTENANCE] {"ok":true,...}`. `AGENT_MAINTENANCE_REQUESTED` also has a recent `SUCCESS`. The destination is a development tunnel, not a production origin. |
+| Tenant with users | **PASS** | Live PostgreSQL counts: 3 organizations, 4 users (4 with a password hash), 3 projects, 11 tasks, 2 workflows, 2 workflow runs. |
+| Working authenticated test-user credentials | **BLOCKED** | No `SEED_PASSWORD` is present in `.env`; the issue register records that no test-user credentials were available for a real-session probe. Password hashes exist, but no usable credential is known. |
+| Real actions and execution path | **UNVERIFIED** | The runtime registry contains only `task.create`. Its `createTaskInOrg` path writes through the extended Prisma client, but no live action or `WorkflowRun` was executed. |
+| Clean environment with no stubs/mocks/test doubles | **BLOCKED** | I5 and QStash delivery are now verified, but no authenticated test-user credential is known and only `task.create` is registered. The full live path has not been demonstrated. |
+
+**Verdict:** the 37.16 capstone is **BLOCKED** by 37.15 and missing authenticated
+credentials; I5 and QStash delivery are no longer part of the block. No item in
+the 12-check live matrix has live evidence.
+
+The initial audit made no source or schedule change. A follow-up model fix moved
+all runtime Gemini text consumers to `gemini-3.6-flash` after the retired
+`gemini-2.5-flash` binding was found; the provider-binding test was updated. A
+separate follow-up created the workflow-maintenance QStash schedule recorded above.
+
+Repository state during the audit: branch
+`feat/37.1-action-capability-catalog`, HEAD `dae4307`, upstream `0/0`.
+Unrelated modified and untracked agent/worker transaction files were preserved.
+Nothing was staged, committed, or pushed.
+
 ### Decisions
 
-Pending owner decision: I10 recipient contract (task-created recipient and
-whether cron email exists) and I11 public-vs-private organization channel.
-No implementation choice was made by assumption.
+Deferred owner decisions, retained unchanged by the 2026-10-23 readiness audit:
+
+1. **`TASK_CREATED` recipient contract.** Define whether the intended recipient
+   is the optional persisted assignee, the authenticated creator, organization
+   owners/admins, or no email. `Task` has no creator column and no
+   notification-recipient contract.
+2. **`CRON_DAILY_DIGEST` producer and delivery contract.** Define whether a
+   per-user producer is intended; the current cron handler dispatches no such
+   event. Otherwise state that no digest email is intended.
+3. **Organization Pusher channel privacy.** Decide whether the organization
+   channel remains public or becomes private with membership authorization.
+   The current fix only aligns both sides on the persisted organization id.
+
+No implementation choice was made by assumption. These decisions do not change
+the fail-closed email behavior or the public channel.
 
 ### Status History
 
@@ -3372,6 +3694,9 @@ No implementation choice was made by assumption.
 |---|---|---|---|
 | 2026-10-22 | NOT_STARTED | Read-only 37.16 preflight audit found I9/I10 and recorded remaining gates. I9 fixed in source; I10 worker fails closed, producer recipient gap open. Capstone not run. | Audit report; focused suites 2/10; security/workflow/worker-routing regression 30/446; `tsc` 0; ESLint 0; `git diff --check` clean |
 | 2026-10-22 | NOT_STARTED | Follow-up: organization channel unified on the persisted org id (I11) and UI/layout route tests added. I10 still requires an owner recipient decision; no producer guess and no live email. Capstone not run. | Focused suites 3/13; security/workflow/worker-routing regression 32/454; full 78/1265; `tsc` 0; ESLint 0 changed files / 0 errors and 31 pre-existing warnings repo-wide; `git diff --check` clean |
+| 2026-10-23 | NOT_STARTED | Read-only readiness audit. 37.15 is `IMPLEMENTED`, not `VERIFIED`; configured `gemini-2.5-flash` generation returns 404; live QStash list has no workflow-maintenance schedule, confirming I5 absent; ngrok schedule origin timed out; no known test-user credential. Capstone blocked and not run. Three deferred owner decisions recorded explicitly. | `schedules.list()` 2 schedules; Gemini models 200 / 2.5-flash generation 404 / 3.8-flash 503; PostgreSQL 3 orgs / 4 users / 4 password hashes / 3 projects / 11 tasks / 2 workflows / 2 runs; `APP_URL` localhost 200; no source or schedule changes |
+| 2026-10-23 | NOT_STARTED | Follow-up model fix: moved all runtime Gemini text consumers from the retired `gemini-2.5-flash` to `gemini-3.6-flash`; updated the provider-binding test and current docs. Capstone still blocked by 37.15, I5, QStash delivery, and missing credentials. | `gemini-3.6-flash` minimal generation 200, function-call 200, JSON-schema 200 on retry; provider-binding 7/7; full 78 suites / 1265 tests; `tsc` 0; ESLint 0 changed files; no QStash or schedule changes; not committed |
+| 2026-10-23 | NOT_STARTED | I5 resolved: created the missing `WORKFLOW_MAINTENANCE_REQUESTED` QStash schedule against the ngrok worker origin. Its first scheduled run delivered successfully. Capstone still blocked by 37.15 and missing authenticated credentials; no live matrix check has run. | Schedule `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5`, cron `*/5 * * * *`, body `data.limit=100`; QStash state `SUCCESS`; worker log `[WORKFLOW MAINTENANCE] {"ok":true,...}`; QStash now lists 3 schedules; dev-tunnel destination |
 
 ---
 
@@ -3495,15 +3820,15 @@ when the fix is present and tested.
 | **I2** | Node validation bypass at persistence boundary | **P0** | **CLOSED 2026-09-30** | No — was YES, now resolved | 37.0B | **YES** | `src/tests/workflow/workflow-node-validation.test.ts` — 23/23; suite fails 19/23 against the inert schema |
 | **I3** | `WAITING_CONFIRMATION` session state unreachable | P2/P3 | Open | No | later cleanup / 37.14 | **No** | — |
 | **I4** | Runtime / UI action registry mismatch | P1 | **CLOSED 2026-10-01** | No — was YES, now resolved | 37.1 | **YES** | `action-capabilities.test.ts` — 32/32; Mutation B (re-advertise `comment.add`) fails 3/30; UI list is a derived projection |
-| **I5** | Workflow maintenance schedule unknown | **P1-CHECK** | **Unverified** | No — not an active blocker | 37.16 | **No** | — |
+| **I5** | Workflow maintenance schedule absent | **P1** | **CLOSED 2026-10-23** | No — was a blocker, now resolved | 37.16 | **YES** | QStash `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` (`*/5 * * * *`); first scheduled run `SUCCESS`; dev-tunnel schedule, production origin still required |
 | **I7** | Conditional routing not executable / authorable end-to-end | P2 | Open — recorded 2026-10-01 | No (scope decision needed) | scope decision (recorded during 37.1) | **No** | `assignments-37-issue-register.md` §5 → I7; `assignments-37-phase-37.1-capability-catalog.md` §10 |
 
 ### Count
 
-- Resolved: **7 of 13** (I1, I2, I6, F3, I4, F5, F6)
+- Resolved: **8 of 13** (I1, I2, I6, F3, I4, I5, F5, F6)
 - P0 open: **0**
 - P1 open: **1** (F4)
-- P1-CHECK unverified: **1** (I5)
+- P1-CHECK unverified: **0**
 - P2/P3 open: **4** (F1, F2, I3, I7)
 
 ### I7 — recorded during 37.1 reconnaissance
@@ -3697,6 +4022,46 @@ no second dialect.
 | 2026-10-21 | 37.15 | Product-surface integrity — no source, schema, migration or prompt file changed by this phase | Local — `git status --short` | **PASS** | 2 modified test files, 1 new test file, 1 modified tracker doc; no `src/lib`, `src/app`, `prisma/` or prompt path touched | 37.15 |
 | 2026-10-21 | 37.15 | Test-harness defect — Prisma double modelled only `include: { run: { workflow: true } }`; the worker route requests `include: { run: { include: { workflow: true } } }`, so the route read a run with no `workflow` and answered 500, leaving every executed step `PENDING` | Local — `npx jest src/tests/workflow/workflow-integration-diamond.test.ts` (before the fix) | **FAIL → PASS (fixed in the test double, not in product code)** | before: 9/9 failing on `status`/`cDispatch`/duplicate-row assertions; after: 9/9 passing | 37.15 |
 | 2026-10-21 | 37.15 | Live / deployed behaviour | — | **NOT CLAIMED** | No live transport, live Gemini, live PostgreSQL engine execution, or deployed behaviour is exercised by this phase; 37.16 owns that gate | 37.15 |
+| 2026-10-23 | 37.13 | Prompt content + version suite — capability-contract drift, reference grammar, trusted-context absence, version provenance | Local — `npx jest src/tests/agent/prompt-dag-planning.test.ts` | **PASS** | 29/29 tests | Verification pass |
+| 2026-10-23 | 37.13 | Manual prompt-vs-contract review — prompt text vs `action-capabilities.ts`, `ActionRegistry` (4 tools) and `generate-workflow/schema.ts`; `AGENT_PROMPT_VERSION` location corrected | Local — source inspection | **PASS** | Only `task.create` named; required/optional inputs and outputs match; grammar `{{step.outputs.field}}` matches; no trigger-output or identity claims | Verification pass |
+| 2026-10-23 | 37.12 | Handoff + trigger-context + boundary invariants + boundary scope | Local — `npx jest <4 suites>` | **PASS** | 29/29 tests (mocked; `getOrgAccess`/`advanceWorkflow`/db doubled) | Verification pass |
+| 2026-10-23 | 37.12 | Run-button UI + assembled-engine diamond dispatch | Local — `npx jest run-workflow-button + workflow-integration-diamond` | **PASS** | 14/14 tests (real evaluator/worker/resolver/action; persistence and `createTaskInOrg` mocked; no live QStash) | Verification pass |
+| 2026-10-23 | 37.12 | Handoff acceptance on real PostgreSQL — auth/tenant refusal, `RUNNING` run creation, same-org positive path | Local — `npx jest --config jest.realdb.config.ts src/tests/workflow/execution-handoff.realdb.test.ts --runInBand` | **PASS** | 5/5 tests (real Prisma/`startWorkflow`; `advanceWorkflow` mocked, so live dispatch not claimed) | Verification pass |
+| 2026-10-23 | 37.12 | I6 cross-tenant regression re-run | Local — `npx jest --config jest.realdb.config.ts src/tests/security/i6-cross-tenant.realdb.test.ts --runInBand` | **PASS** | 10/10 tests (real PostgreSQL) | Verification pass |
+| 2026-10-23 | 37.11 | Materialization acceptance on real PostgreSQL — APPROVED→MATERIALIZED CAS, provenance, triggerless inactive row, no run/task/outbox side effects, canonical definition + human criticality, UI projection equality, recompile round trip, provenance survival after real `updateWorkflowState` re-save, idempotent retry, non-APPROVED 409, incomplete criticality 409, non-owner 404, cross-org 409, concurrent double-start, unique-index rollback | Local — `npx jest --config jest.realdb.config.ts src/tests/agent/proposal-materialization.realdb.test.ts --runInBand` | **PASS** | 11/11 tests (real Prisma, real service/compiler/projection; session lock passed through) | Verification pass |
+| 2026-10-23 | 37.11 | Mocked materialization regression (service, boundary, route) | Local — `npx jest proposal-materialization + -boundary + proposal-materialize-route` | **PASS** | 3 suites / 60 tests | Verification pass |
+| 2026-10-23 | 37.13/37.12/37.11 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | Verification pass |
+| 2026-10-23 | 37.11 | Lint of the new acceptance suite | Local — `npx eslint src/tests/agent/proposal-materialization.realdb.test.ts` | **PASS** | 0 errors, 0 warnings | Verification pass |
+| 2026-10-23 | 37.13/37.12/37.11 | Whitespace integrity | Local — `git diff --check` | **PASS** | exit 0; CRLF advisories only | Verification pass |
+| 2026-10-23 | 37.11 | Database safety — unique fixture tags, zero leftovers, no live transport/Redis/Gemini/Pusher calls | Local — suite design + teardown assertions | **PASS** | isolated `matacc_*` fixtures; cleanup asserted; agent session lock passed through; `advanceWorkflow`/QStash not invoked | Verification pass |
+| 2026-10-23 | 37.4 | Proposal compiler suite — pipeline order/short-circuit, mapping identity, no mutation, determinism, no clock, reachable graph checks (`UNKNOWN_DEPENDENCY`, `SELF_DEPENDENCY`, `CYCLE`), adapter total over all seven collector codes, structured `code`/`path` | Local — `npx jest src/tests/workflow/workflow-proposal-compiler.test.ts` | **PASS** | 25/25 tests | Verification pass |
+| 2026-10-23 | 37.4 | Production-path gate on materialization — cyclic `dependsOn` refused as `PROJECTION_FAILED` (409) with **no `Workflow` row** and lifecycle left `APPROVED`; structured `CYCLE` issue (code, path `steps`, sequence in message) asserted at the gate; acyclic control materializes | Local — `npx jest --config jest.realdb.config.ts src/tests/agent/proposal-compiler-materialization.realdb.test.ts --runInBand` | **PASS** | 3/3 tests (real PostgreSQL, real `materializeProposal` → `projectProposalToUIGraph` → `compileWorkflowProposal` → `collectWorkflowDefinitionIssues`; session lock passed through) | Verification pass |
+| 2026-10-23 | 37.4 | Workflow regression suite | Local — `npx jest src/tests/workflow` | **PASS** | 21 suites, 369 tests | Verification pass |
+| 2026-10-23 | 37.4 | Full repository suite | Local — `npx jest` | **PASS** | 78 suites, 1265 tests | Verification pass |
+| 2026-10-23 | 37.4 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | Verification pass |
+| 2026-10-23 | 37.4 | Lint of the new acceptance suite | Local — `npx eslint src/tests/agent/proposal-compiler-materialization.realdb.test.ts` | **PASS** | 0 errors, 0 warnings | Verification pass |
+| 2026-10-23 | 37.4 | Product-surface integrity — verification changed no production source | Local — `git status --short` + `git diff --check` | **PASS** | only the new test file added; no `src/lib`, `src/app`, `prisma/` or prompt path touched by this verification; diff-check clean (CRLF advisories only) | Verification pass |
+| 2026-10-23 | 37.4 | Live / deployed behaviour | — | **NOT CLAIMED** | Evidence is unit-level plus real-PostgreSQL execution of the materialization path; no live Gemini, QStash, Redis or deployed behaviour. 37.16 owns the live gate | Verification pass |
+| 2026-10-23 | 37.4 | Real-PostgreSQL production-path acceptance re-run as the 37.5 prerequisite audit | Local — `npx jest --config jest.realdb.config.ts src/tests/agent/proposal-compiler-materialization.realdb.test.ts --runInBand` | **PASS** | 3/3 tests (real PostgreSQL; `PROJECTION_FAILED`, no `Workflow` row, lifecycle unchanged; acyclic control materializes) | Verification pass |
+| 2026-10-23 | 37.5 | `generateWorkflow` focused suite — registration/policy/fail-closed, proposal preservation, exact issue mapping, no forbidden side effects, describer, durable tool-result path | Local — `npx jest src/tests/agent/generate-workflow.test.ts --runInBand` | **PASS** | 35/35 tests | Verification pass |
+| 2026-10-23 | 37.5 | Carried 37.2 real-model-path clause — live Gemini turn through the production `agentModel`, system prompt, registered tool definition and registered executor; emitted proposal validated, compiled and executed with byte-identical input (no fix-up, no repair) | Local — `npx jest --config jest.live.config.ts src/tests/agent/generate-workflow.live.test.ts --runInBand` | **PASS** | 1/1 test; `gemini-3.6-flash`; 2 steps / 2 `task.create` actions; validate/compile/executor success; `mutated in transit: false` | Live-model verification pass |
+| 2026-10-23 | 37.5 | Agent regression suite | Local — `npx jest src/tests/agent --runInBand` | **PASS** | 43 suites / 814 tests | Verification pass |
+| 2026-10-23 | 37.5 | Workflow regression suite | Local — `npx jest src/tests/workflow --runInBand` | **PASS** | 21 suites / 369 tests | Verification pass |
+| 2026-10-23 | 37.5 | Full repository suite | Local — `npx jest --runInBand` | **PASS** | 78 suites / 1265 tests (default project excludes `*.live` and `*.realdb`) | Verification pass |
+| 2026-10-23 | 37.5 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | Verification pass |
+| 2026-10-23 | 37.5 | Lint | Local — `npm run lint` | **PASS** | exit 0 — 0 errors, 31 pre-existing warnings in untouched files | Verification pass |
+| 2026-10-23 | 37.5 | Whitespace integrity | Local — `git diff --check` | **PASS** | exit 0; CRLF advisories only | Verification pass |
+| 2026-10-23 | 37.5 | Harness defect and product-surface integrity — the live suite could not import the registry because it constructs a real `PrismaClient`; added the same `prisma/extended` + `prisma/db` double mocks used by the focused suite. No `src/lib`, `src/app`, `prisma/` or prompt file changed | Local — `npx jest --config jest.live.config.ts ...` before/after + `git status --short` | **PASS** (harness fix only) | before: suite failed to run at import; after: 1/1 passing. Only the untracked live test file changed | Verification pass |
+| 2026-10-23 | 37.5 | Live / deployed behaviour | — | **NOT CLAIMED** | A live Gemini parse path is exercised and claimed. No live PostgreSQL, QStash, Redis, Pusher, real action execution or deployed capstone is claimed; 37.16 owns that gate | Verification pass |
+| 2026-10-23 | 37.7 | Criticality contract suite — validateCriticalityDecisions (exact/complete, omissions, unknowns, non-boolean, non-object), applyCriticalityDecisions (overlay isCritical only, non-mutation, cross-proposal refusal, determinism), proposal revision binding (mutations across name, description, action, inputs, dependencies) | Local — `npx jest src/tests/agent/workflow-criticality.test.ts` | **PASS** | 15/15 tests | Verification pass |
+| 2026-10-23 | 37.7 | Criticality route suite — auth refusal (401), request forwarding, strict body schema (userId/isCritical/correlationId injection refused 400), malformed payload | Local — `npx jest src/tests/agent/criticality-route.test.ts` | **PASS** | 19/19 tests | Verification pass |
+| 2026-10-23 | 37.7 | Criticality service suite — auth/liveness, proposal recovery from persisted tool result, supersession, decision-set validation, recording, CAS, idempotency/conflict, clarification separation, exact-revision record reconstruction | Local — `npx jest src/tests/agent/criticality-service.test.ts` | **PASS** | 24/24 tests | Verification pass |
+| 2026-10-23 | 37.7 | Criticality integration acceptance suite — model cannot set/smuggle `isCritical` in schema/tool input/executor, valid proposal parks `AWAITING_CRITICALITY`, human decision (`kickoff: false, follow: true`) persists, later model turn cannot override confirmed decision, stored execution definition and UI graph on materialization strictly match human decision, proving the human decision won | Local — `npx jest src/tests/agent/criticality-integration.test.ts` | **PASS** | 2/2 tests | Verification pass |
+| 2026-10-23 | 37.7 | Combined criticality regression pass (contract + route + service + integration) | Local — `npx jest src/tests/agent/criticality-integration.test.ts src/tests/agent/criticality-service.test.ts src/tests/agent/criticality-route.test.ts src/tests/agent/workflow-criticality.test.ts --runInBand` | **PASS** | 4 suites / 60 tests | Verification pass |
+| 2026-10-23 | 37.7 | Type check | Local — `npx tsc --noEmit` | **PASS** | exit 0 | Verification pass |
+| 2026-10-23 | 37.7 | Lint of new acceptance suite | Local — `npx eslint src/tests/agent/criticality-integration.test.ts` | **PASS** | 0 errors, 0 warnings | Verification pass |
+| 2026-10-23 | 37.7 | Product-surface integrity | Local — `git status --short` | **PASS** | only the new test file and tracker doc touched; no existing product source modified | Verification pass |
+| 2026-10-23 | 37.7 | Live / deployed behaviour | — | **NOT CLAIMED** | Mocked integration + unit only; real-PostgreSQL persistence verified under 37.11 (`proposal-materialization.realdb.test.ts`). Live Gemini, QStash, Redis and capstone belong to 37.16 | Verification pass |
 
 ### Coverage summary
 
@@ -3742,12 +4107,39 @@ queue, Gemini, or real workflow execution has been exercised in this assignment.
 > is 37.12's handoff boundary — so **live workflow execution, live transport,
 > live Redis/QStash, and live Gemini remain outstanding and are 37.16's.**
 > 37.15's own new evidence is mocked-integration and says so.
+
+> **Update, 2026-10-23 (verification pass).** The 37.11/37.12/37.13 gates add
+> three real-PostgreSQL runs — materialization 11/11, handoff 5/5, I6 re-run
+> 10/10 — plus mocked-integration runs (diamond 9/9, handoff 29/29, materialization
+> 60/60) and prompt/version 29/29. These prove the materialize→load→recompile
+> round trip, provenance survival, rollback, tenant-scoped run creation and prompt
+> contract fidelity. They still do **not** prove live dispatch: the real-DB
+> handoff mocks `advanceWorkflow`, and the diamond mocks persistence/transport.
+> **Live Redis/QStash, live Gemini, real engine execution against a real database,
+> and deployed behaviour remain outstanding; 37.15 must earn them before 37.16.**
+> The historical coverage tally above was not silently recomputed.
+
+> **Correction, 2026-10-23 (37.5 `VERIFIED`).** The ledger now contains one
+> live-Gemini row: 37.5's carried real-model-path clause ran against
+> `gemini-3.6-flash` (1/1) and proved the emitted proposal validates, compiles and
+> executes unchanged. This is a live model *parse* check, not a capstone: no live
+> database, transport, Redis/QStash, action execution or deployed behaviour is
+> claimed, and the coverage tally above is still not recounted. 37.15 remains
+> `IMPLEMENTED`; 37.16 still owns the live capstone.
+
 37.3's evidence is Jest-level and `tsc`-level (static validator, no runtime).
-37.4's evidence is Jest-level and `tsc`-level (static compiler, no runtime; the
-compiler has no production caller until 37.5, so its production-path verification
-is deferred).
+37.4's evidence was Jest-level and `tsc`-level (static compiler, no runtime);
+the compiler had no production caller until 37.5, so its production-path
+verification was deferred at that time.
+**Corrected 2026-10-23 (37.4 `VERIFIED`):** the production caller (37.5's
+`executeGenerateWorkflow`) and the materialization path (37.11's
+`materializeProposal`) both exist now, and a real-PostgreSQL acceptance run
+(`proposal-compiler-materialization.realdb.test.ts`, 3/3) exercises the gate on
+that path — so 37.4's evidence class is now **unit + real-PostgreSQL**. It still
+claims no live Gemini, QStash, Redis or deployed behaviour.
 **37.2's former model-path clause** (a real `generateWorkflow` proposal parsing
-without a compiler fix-up) is **reassigned to 37.5**, which owns the model path.
+without a compiler fix-up) is **reassigned to 37.5**, which owns the model path;
+it was **discharged live on 2026-10-23** (1/1, `gemini-3.6-flash`).
 
 ---
 
@@ -3833,7 +4225,7 @@ recorded but not implemented.
 
 | Item | Why it is not a blocker |
 |---|---|
-| **I5** — maintenance schedule unknown | P1-CHECK. Repository evidence supports "not wired in source" and does not support "does not exist." Verify at 37.16. |
+| **I5** — maintenance schedule | **RESOLVED 2026-10-23.** `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` exists and has fired successfully. The dev-tunnel destination still needs a stable production replacement. |
 | F1, F2, F4, F5 | P2 / design forks. Each has a named phase. |
 | **I7** — conditional routing not executable/authorable | P2 scope decision, recorded during 37.1. Non-blocking; no phase claims generated conditional branches until it is decided. |
 | I3 | P2/P3; resolved with later state-machine cleanup. |
@@ -3883,18 +4275,18 @@ regardless of intent.
 - [x] **I6 closed and verified (separate ticket, before 37.12)** — real-PostgreSQL cross-tenant acceptance run passed 2026-10-20 (10/10); no `WorkflowRun` created on any refusal; fixtures removed with zero leftovers — evidence: `src/tests/security/i6-cross-tenant.realdb.test.ts`, `docs/dev-log/2026-10-20-i6-real-db-acceptance.md`
 - [x] 37.2 complete — **VERIFIED 2026-10-12** — schema + validator + 45 cases green; bounds hardened; real-model-path parse reassigned to 37.5 — evidence: `src/tests/workflow/workflow-proposal.test.ts`
 - [x] 37.3 complete — **VERIFIED 2026-10-12** — reference validator over the existing `{{…}}` grammar; 44 cases green; `MISSING_DATA_DEPENDENCY` enforced; resolver unmodified; F6 closed — evidence: `src/tests/workflow/proposal-references.test.ts`
-- [ ] 37.4 complete
-- [ ] 37.5 complete
+- [x] 37.4 complete - **VERIFIED 2026-10-23** - real-PostgreSQL production-path acceptance 3/3 (cyclic proposal refused as `PROJECTION_FAILED`, no `Workflow` row, lifecycle unchanged); focused 25/25; workflow 21/369; full 78/1265; tsc 0; eslint 0 - evidence: `src/tests/agent/proposal-compiler-materialization.realdb.test.ts`
+- [x] 37.5 complete - **VERIFIED 2026-10-23** - live Gemini `gemini-3.6-flash` emitted a proposal that validated, compiled and executed unchanged (1/1, no fix-up); focused 35/35; agent 43/814; workflow 21/369; full 78/1265; tsc 0; eslint 0 - evidence: `src/tests/agent/generate-workflow.live.test.ts`, `src/tests/agent/generate-workflow.test.ts`
 - [ ] 37.6 complete — **IMPLEMENTED 2026-10-14 (remediated)** — missing-input protocol + clarification lifecycle; worker halt + `CLARIFICATION_REQUESTED`; `POST .../clarification` ingress; `interactionId`+`correlationId` binding; reaper `skippedWaiting`; 28 cases green; F4 open; durability deferred to 37.8 — evidence: `src/tests/agent/missing-input-protocol.test.ts`, `src/tests/agent/durability.test.ts`
-- [ ] 37.7 complete
+- [x] 37.7 complete — **VERIFIED 2026-10-23** — evidence: `src/tests/agent/criticality-integration.test.ts` (2/2), `criticality-service.test.ts` (24/24), `criticality-route.test.ts` (19/19), `workflow-criticality.test.ts` (15/15)
 - [ ] 37.8 complete
 - [ ] 37.9 complete
 - [ ] 37.10 complete — **IMPLEMENTED 2026-10-19 (not VERIFIED)** — deterministic projection + hand-rolled layered layout + read-only preview; server-side revision binding; 33/7/19/19 focused tests; full 53/1005; tsc/eslint/prisma clean; F1 still open (AD-11 ordering) — evidence: `src/tests/workflow/proposal-ui-projection.test.ts`, `assignments-37-phase-37.10-ui-graph-projection.md`
 - [ ] 37.11 complete
 - [ ] 37.12 complete
 - [ ] 37.13 complete — **IMPLEMENTED 2026-10-21 (not VERIFIED)** — `AGENT_PROMPT_VERSION` v5 → v6; DAG-planning/local-id/capability-contract/reference-grammar/clarification/criticality/propose-only/validation-observation guidance added to `<WORKFLOW_GENERATION>`; v5 text preserved; `tool.ts` unchanged; new `prompt-dag-planning.test.ts` 29/29; full 69/1197; tsc/eslint/diff-check clean; manual prompt-vs-registry review done; model obedience unverified — evidence: `src/tests/agent/prompt-dag-planning.test.ts`, `docs/dev-log/2026-10-21-phase-37.13-prompt-dag-planning.md`
-- [ ] 37.14 complete
-- [x] 37.15 complete — **IMPLEMENTED 2026-10-21 (not VERIFIED)** — every Test Gate category mapped to a named covering suite; new assembled-engine integration suite 9/9; standalone fan-in graph case added; Prisma double's step-run include shape repaired; full 72 suites / 1232 tests; realdb 2 suites / 15 tests; tsc 0; eslint 0; diff-check clean; no product source, schema, migration or prompt changed; **not `VERIFIED`** — predecessor phases 37.4/37.5/37.7–37.14 are `IMPLEMENTED` rather than `VERIFIED`, and the live-engine gate is 37.16's — evidence: `src/tests/workflow/workflow-integration-diamond.test.ts`, `src/tests/workflow/dag-validation.test.ts`, `src/tests/workflow/helpers/prisma-double.ts`
+- [x] 37.14 complete — **VERIFIED 2026-10-23** — three distinct loops separated and bounded without a second retry controller; real-PostgreSQL wait-state CAS and proposal-review expiry isolation verified — evidence: `src/tests/agent/wait-state-cas.realdb.test.ts` (9/9), `three-loop-separation.test.ts` (6/6), `no-second-retry-controller.test.ts` (8/8), `proposal-review-expiry.test.ts` (35/35)
+- [x] 37.15 complete — **VERIFIED 2026-10-23** — complete 43-check Test Gate matrix verified across all 8 categories; full default Jest suite 79 suites / 1267 tests pass; assembled-engine integration 9/9; tsc 0; eslint 0; diff-check clean; all predecessor phases 37.0–37.14 VERIFIED; formal prerequisite for 37.16 satisfied — evidence: 11 focused matrix suites (254 tests), full Jest suite (1267 tests)
 - [ ] 37.16 complete
 - [ ] 37.17 complete
 
@@ -3904,7 +4296,7 @@ regardless of intent.
       substitutes for another. No P0 remains open (I6 closed by a real-PostgreSQL
       cross-tenant acceptance run, 2026-10-20).
 - [ ] All P1 issues resolved or explicitly deferred (F3 ✓, I4 ✓, F6 ✓; F4, F5 open)
-- [ ] I5 verified or documented as unverifiable
+- [x] I5 verified (workflow-maintenance schedule exists and has fired successfully)
 - [ ] All P2/P3 issues resolved or explicitly deferred (F1, F2, I3, I7)
 
 ### Decision closure

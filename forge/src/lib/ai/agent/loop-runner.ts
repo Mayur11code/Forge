@@ -7,7 +7,7 @@ import {
 } from "./prompts/system-prompt";
 import { agentTools } from "./tools/registry";
 import { getAgentSessionForWorker } from "./session-service";
-import { decideStepGate, decideToolCalls } from "./loop-policy";
+import { decideStepGate, decideToolCalls, decideEmptyTurn } from "./loop-policy";
 import { JsonValue } from "./types";
 import type { AgentTerminalReason } from "./types";
 import { buildModelMessages } from "./message-mapper";
@@ -136,6 +136,27 @@ export async function runAgentLoop(
       toolName: toolCallDecision.toolName,
       toolCallId: toolCallDecision.toolCallId,
       input: toolCallDecision.input,
+    };
+  }
+
+  // A turn that produced neither a tool call nor any text said nothing at all.
+  // It is NOT a completion: reporting it as one marks the session COMPLETED
+  // with an empty final answer, which is a silent no-op the user cannot
+  // distinguish from a finished run. The live capstone hit exactly that.
+  //
+  // The check sits AFTER the tool-call branch, because a turn that calls a
+  // tool says everything it means in the call itself and has no prose at all.
+  const emptyTurn = decideEmptyTurn({
+    text: result.text,
+    toolCallCount: result.toolCalls.length,
+    finishReason: result.finishReason,
+  });
+
+  if (emptyTurn.kind === "EMPTY") {
+    return {
+      kind: "FAILED",
+      reason: "EMPTY_MODEL_RESPONSE",
+      message: emptyTurn.message,
     };
   }
 

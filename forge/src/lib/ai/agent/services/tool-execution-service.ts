@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma/extended";
 // the extended transaction client is not assignable to the outbox's raw-client
 // transaction type. Nothing is lost by using `db` for the tx bodies below.
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 import { JsonValue } from "../types";
 import { getAgentApprovalTimeoutMs } from "../constants";
 import { recordAgentEvent } from "../outbox";
@@ -117,7 +118,7 @@ export async function createToolExecution({
     }
 
     return execution;
-  });
+  }, AGENT_TRANSACTION_OPTIONS);
 }
 
 export async function getToolExecutionForWorker(
@@ -286,7 +287,7 @@ export async function confirmToolExecution({
     await clearAgentSessionWaiting(sessionId, tx);
 
     return true;
-  });
+  }, AGENT_TRANSACTION_OPTIONS);
 }
 
 /**
@@ -363,7 +364,7 @@ export async function cancelToolExecutionAndContinue({
     });
 
     return true;
-  });
+  }, AGENT_TRANSACTION_OPTIONS);
 }
 
 /** The tool-result that tells the model the user declined. */
@@ -543,7 +544,7 @@ export async function expireToolExecutionAndContinue({
     });
 
     return true;
-  });
+  }, AGENT_TRANSACTION_OPTIONS);
 }
 
 /**

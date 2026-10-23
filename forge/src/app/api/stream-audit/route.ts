@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     }
 
     const result = streamText({
-      model: googleProvider('gemini-2.5-flash'),
+      model: googleProvider('gemini-3.6-flash'),
       output: Output.object({
         schema: architectureReportSchema,
       }),
