@@ -15,6 +15,7 @@ import { recordAgentEvent } from "./outbox";
 // extended client only intercepts the `task` model; agent tables are not
 // intercepted, and the outbox is infrastructure rather than a domain event.
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 import { createMessage } from "./services/message-service";
 import { failAgentSession, markAgentSessionWaiting } from "./session-service";
 import { publishAgentStatus } from "./status";
@@ -296,7 +297,7 @@ export async function handleToolExecution({
           }
 
           return true;
-        });
+        }, AGENT_TRANSACTION_OPTIONS);
 
         if (!persisted) {
           // A duplicate delivery that lost the outcome CAS. The winning

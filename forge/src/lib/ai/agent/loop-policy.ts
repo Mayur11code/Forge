@@ -132,3 +132,76 @@ export function terminalReasonForToolCallDecision(
       return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Content-free model turns
+// ---------------------------------------------------------------------------
+
+export type EmptyTurnDecision =
+  | { kind: "HAS_CONTENT" }
+  | {
+      kind: "EMPTY";
+      stopReason: string;
+      message: string;
+    };
+
+/**
+ * A model turn that produced NEITHER a tool call NOR any text is not a
+ * completion. It is a turn that said nothing.
+ *
+ * WHY THIS NEEDS A DECISION
+ * -------------------------
+ * The provider can return a response with no usable content: the model spent
+ * its whole output budget on reasoning, or the turn was stopped by a filter.
+ * The AI SDK reports that faithfully - `text` is the empty string and
+ * `response.messages` is empty - and it is not an error, so nothing throws.
+ *
+ * Treating that as a completion is the silent no-op this function exists to
+ * prevent. The session would be marked COMPLETED with an empty final answer:
+ * no proposal, no error, no explanation, and a user looking at a "completed"
+ * session that contains nothing at all. The live capstone hit exactly this -
+ * the session read `status=COMPLETED`, `finalResponse=""`, one transcript
+ * message (the user's own) and no tool execution.
+ *
+ * WHY IT IS A FAILURE AND NOT A RETRY
+ * -----------------------------------
+ * The step budget is MAX_AGENT_STEPS (5) and the legitimate lifecycle needs
+ * three of them (propose, correct, re-propose). Spending a step on a provider
+ * anomaly would starve the real work, and re-driving the same turn would be a
+ * second retry controller, which Assignment 37.14 forbids. The turn is
+ * therefore terminal and LOUD: the session fails with a machine-readable
+ * reason, and a human starts a new one.
+ *
+ * The provider's own stop reason is carried in the message, because "the
+ * model returned nothing" and "the model returned nothing because the output
+ * budget ran out" are different incidents and the difference is the whole
+ * diagnosis.
+ */
+export function decideEmptyTurn({
+  text,
+  toolCallCount,
+  finishReason,
+}: {
+  text: string;
+  toolCallCount: number;
+  finishReason: string;
+}): EmptyTurnDecision {
+  // A tool call IS content. The turn that proposes a workflow says nothing in
+  // prose on purpose - the tool call is the whole message - so a turn with a
+  // call is never an empty turn, however empty its text is.
+  if (toolCallCount > 0) {
+    return { kind: "HAS_CONTENT" };
+  }
+
+  if (text.trim().length > 0) {
+    return { kind: "HAS_CONTENT" };
+  }
+
+  return {
+    kind: "EMPTY",
+    stopReason: finishReason,
+    message:
+      `The model returned no content and made no tool call ` +
+      `(finish reason: ${finishReason}).`,
+  };
+}

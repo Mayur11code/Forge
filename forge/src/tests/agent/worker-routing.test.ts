@@ -42,6 +42,40 @@ jest.mock("@/app/api/worker/workflow-maintenance/wm", () => ({
   handleWorkflowMaintenance: jest.fn(),
 }));
 
+// The workflow engine's shared handler. Mocked so the dispatcher test does not
+// need a database: what is under test here is WHICH handler a delivery is
+// routed to, and that the signature check is applied to it.
+jest.mock("@/app/api/workflow/wf", () => ({
+  handleWorkflowEvent: jest.fn(),
+}));
+
+// The signature check, mocked with a switchable mode.
+//
+// `passthrough` records that verification was requested and then calls the
+// handler, so the routing assertions can see the dispatch. `enforce` mirrors
+// the real implementation's behaviour for a delivery with no
+// `Upstash-Signature` header (403, not 500), which is the security property
+// the workflow branch has to keep.
+let signatureMode: "passthrough" | "enforce" = "passthrough";
+const signatureChecks: string[] = [];
+
+jest.mock("@upstash/qstash/nextjs", () => ({
+  verifySignatureAppRouter: (handler: unknown) => async (req: Request) => {
+    signatureChecks.push("verified");
+
+    if (signatureMode === "enforce") {
+      const signature = req.headers.get("upstash-signature");
+      if (!signature) {
+        return new Response("`Upstash-Signature` header is missing", {
+          status: 403,
+        });
+      }
+    }
+
+    return (handler as (r: Request) => Response)(req);
+  },
+}));
+
 // `var` is deliberate: jest hoists the jest.mock call above module
 // declarations, and a const would be in the temporal dead zone when the
 // factory runs. The factory executes in this file's scope, so this binding is
@@ -77,12 +111,13 @@ jest.mock("@/lib/events/worker", () => ({
   },
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentLoop } from "@/app/api/worker/agent-loop/al";
 import { handleWorkflowMaintenance } from "@/app/api/worker/workflow-maintenance/wm";
 import { handleAgentMaintenance } from "@/app/api/worker/agent-maintenance/am";
+import { handleWorkflowEvent } from "@/app/api/workflow/wf";
 import { POST } from "@/app/api/worker/route";
 
 const toolHandlerMock = handleToolExecution as jest.MockedFunction<
@@ -212,10 +247,10 @@ describe("dispatch", () => {
 
 describe("unhandled and unknown events", () => {
   it("does not report success for a known event with no handler", async () => {
-    // EXECUTE_WORKFLOW_NODE is a real EventType but has no case in this
-    // dispatcher, so acknowledging it would be a silent drop. 5xx so QStash
+    // TASK_CREATED is a real EventType that no branch of this dispatcher
+    // handles, so acknowledging it would be a silent drop. 5xx so QStash
     // retries rather than treating the message as delivered.
-    const res = await post("EXECUTE_WORKFLOW_NODE");
+    const res = await post("TASK_CREATED");
 
     expect(res.status).toBe(500);
   });
@@ -282,5 +317,82 @@ describe("signature failures", () => {
     const res = await post("AGENT_LOOP_REQUESTED");
 
     expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The workflow engine's two events
+// ---------------------------------------------------------------------------
+
+// Regression target for a live, blocking defect found by the 37.16 capstone.
+//
+// The engine publishes EXECUTE_WORKFLOW_NODE and ADVANCE_WORKFLOW to the
+// single "events" QStash topic, whose one endpoint is this route. Their
+// handlers used to live only at /api/workflow, which nothing publishes to, so
+// every delivery landed here, fell through to the "known event with no handler"
+// branch, and was answered with a 500 that QStash retried three times before
+// abandoning it. The run then sat at RUNNING with its step PENDING for ever -
+// no workflow could execute a single step, however it was started.
+//
+// A live run of that shape was observed: run cmvjinlpu0010vcgcp1sgsphg, step
+// kickoff_task, status PENDING, with "[WORKER] No handler configured for known
+// event: EXECUTE_WORKFLOW_NODE" in the worker log for every delivery.
+describe("workflow engine events", () => {
+  const workflowHandlerMock =
+    handleWorkflowEvent as jest.MockedFunction<typeof handleWorkflowEvent>;
+
+  beforeEach(() => {
+    signatureMode = "passthrough";
+    signatureChecks.length = 0;
+    workflowHandlerMock.mockReset();
+    workflowHandlerMock.mockImplementation(
+      async () => new NextResponse("Execution Complete", { status: 200 }),
+    );
+  });
+
+  it.each([["EXECUTE_WORKFLOW_NODE"], ["ADVANCE_WORKFLOW"]])(
+    "routes %s to the workflow engine handler",
+    async (type) => {
+      const res = await post(type);
+
+      expect(res.status).toBe(200);
+      expect(workflowHandlerMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("does not answer 500 for an event the engine owns", async () => {
+    // The failure mode this replaces: a 500 from the "no handler" branch, which
+    // QStash retried and then abandoned.
+    for (const type of ["EXECUTE_WORKFLOW_NODE", "ADVANCE_WORKFLOW"]) {
+      const res = await post(type);
+      expect(res.status).not.toBe(500);
+    }
+  });
+
+  it("refuses an unsigned engine event without running it", async () => {
+    // These two events run real actions and mutate real workflow state, and
+    // this dispatcher does not verify at the top level - each branch verifies
+    // its own delivery. An unsigned delivery must be refused, not executed.
+    //
+    // The 403 body comes from the verifier itself and names the missing
+    // header. That discloses nothing the caller does not already know - it is
+    // not the "why verification failed" detail the terse 401 path in this
+    // dispatcher exists to withhold. What matters is the status and the fact
+    // that the handler never ran.
+    signatureMode = "enforce";
+
+    const res = await post("EXECUTE_WORKFLOW_NODE");
+
+    expect(res.status).toBe(403);
+    expect(workflowHandlerMock).not.toHaveBeenCalled();
+  });
+
+  it("does not disclose key material in the refusal", async () => {
+    signatureMode = "enforce";
+
+    const res = await post("ADVANCE_WORKFLOW");
+    const body = String(await res.text());
+
+    expect(body).not.toMatch(/key|secret|signing key|-----BEGIN/i);
   });
 });

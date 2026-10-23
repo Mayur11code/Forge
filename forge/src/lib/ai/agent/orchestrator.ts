@@ -3,6 +3,7 @@ import "server-only";
 import { AgentSessionStatus } from "@prisma/client";
 
 import { db } from "@/lib/prisma/db";
+import { AGENT_TRANSACTION_OPTIONS } from "@/lib/prisma/transaction-options";
 import { recordAgentEvent } from "./outbox";
 import { AGENT_PROMPT_VERSION } from "./prompts/system-prompt";
 import { sessionSelect } from "./session-service";
@@ -68,5 +69,5 @@ export async function startAgentSession({
         });
 
         return session;
-    });
+    }, AGENT_TRANSACTION_OPTIONS);
 }
