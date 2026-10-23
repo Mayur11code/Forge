@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import { createWorker } from "@/lib/events/worker";
 import { EventTypes } from "@/lib/events/schema";
 import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
@@ -9,6 +10,7 @@ import { handleAgentLoop } from "./agent-loop/al";
 import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentMaintenance } from "./agent-maintenance/am";
 import { handleWorkflowMaintenance } from "./workflow-maintenance/wm";
+import { handleWorkflowEvent } from "@/app/api/workflow/wf";
 
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
@@ -49,6 +51,28 @@ const handleWorkflowMaintenanceEvent = createWorker(
   "WORKFLOW_MAINTENANCE_REQUESTED",
   handleWorkflowMaintenance,
 );
+
+// The workflow engine's own two events.
+//
+// These are published to the same single "events" topic as everything else,
+// and with USE_MULTI_TOPICS=false that topic has exactly one endpoint - this
+// route. They used to be handled only at /api/workflow, a URL that nothing
+// publishes to, so every delivery arrived here, hit the "known event with no
+// handler" branch, and was answered with a 500 that QStash retried three times
+// before abandoning it. The run then sat at RUNNING with its step PENDING for
+// ever: no workflow could execute a single step.
+//
+// The handlers are shared with /api/workflow, which keeps its dedicated
+// endpoint. They are NOT wrapped in `createWorker`: their status codes are the
+// engine's control channel, and a retriable step failure must answer 500 so
+// QStash redelivers it.
+//
+// The signature check is applied HERE, explicitly, because this dispatcher does
+// not verify at the top level - each branch verifies its own delivery. Without
+// it these two events would be the only ones on this route that an
+// unauthenticated caller could drive, and they are the ones that run real
+// actions and mutate real workflow state.
+const handleWorkflowEngineEvent = verifySignatureAppRouter(handleWorkflowEvent);
 
 const knownEventTypes = new Set<string>(EventTypes);
 
@@ -115,6 +139,12 @@ export async function POST(req: NextRequest) {
 
       case "WORKFLOW_MAINTENANCE_REQUESTED":
         return await handleWorkflowMaintenanceEvent(req);
+
+      // The engine's own events. They arrive here because this is the only
+      // endpoint the "events" topic delivers to.
+      case "EXECUTE_WORKFLOW_NODE":
+      case "ADVANCE_WORKFLOW":
+        return await handleWorkflowEngineEvent(req);
 
       default: {
         // Never acknowledge work we did not do.

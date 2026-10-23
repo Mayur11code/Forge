@@ -75,6 +75,7 @@ export type AgentTerminalReason =
   | "NO_TOOL_CALL"
   | "TOOL_NOT_AVAILABLE"
   | "SESSION_NOT_FOUND"
+  | "EMPTY_MODEL_RESPONSE"
   | "ERROR";
 
 export type AgentStatusEvent =
