@@ -1056,10 +1056,19 @@ required to show "Workflow name"; that must read the column, not the definition.
 
 ### I3 — `WAITING_CONFIRMATION` session state unreachable
 
-**Classification:** P2/P3 · later state-machine cleanup · **does not block 37.1**.
+**Classification:** P2/P3 · **CLOSED 2026-10-23 (Phase 37.14)**.
 
 **Status exists.** `AgentSessionStatus.WAITING_CONFIRMATION` is declared in
 `prisma/schema.prisma`.
+
+**Resolution note (2026-10-23, Phase 37.14):**
+I3 is formally closed by Assignment 37.14. Session state `WAITING_CONFIRMATION` is
+fully wired and operational across Loop 2 (human clarification) and Loop 3 (human
+proposal review/approval). Compare-and-set transitions to and from
+`WAITING_CONFIRMATION`, anti-resurrection guards, and reaper proposal-review
+expiry isolation are verified against real PostgreSQL in
+`src/tests/agent/wait-state-cas.realdb.test.ts` (9/9 PASS). Three distinct loops
+are separated without a second retry controller.
 
 **No assignment path.** The value is read in exactly two places in the entire
 source tree — `src/lib/ai/agent/session-service.ts:201` and `:249` — and
@@ -1169,15 +1178,15 @@ execution. Conditional routing is **not** claimed to work end-to-end. See
 | **I4** runtime/UI registry mismatch | **P1** | **37.1** | Reliable output contracts; absence of phantom actions | No — **CLOSED 2026-10-01, with 37.1** |
 | **F6** no reference / data-dependency validation | **P1** | **37.3** | Deterministic step generation; `MISSING_DATA_DEPENDENCY` | No — **CLOSED 2026-10-12** |
 | **F5** schema is not the production semantic gate | **P1** | **37.4** | Deterministic, structured proposal compilation; AD-P4 | No — **CLOSED 2026-10-12** |
-| **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7 / 37.8** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | **Open** — protocol scope VERIFIED 37.6 (2026-10-17, AD-18); persistence deferred to 37.8 |
+| **F4** `AgentToolExecution` cannot hold the lifecycle | **P1** | **37.6 / 37.7 / 37.8** | `NEEDS_USER_INPUT`, human criticality, durable proposal state | No — **CLOSED 2026-10-23** (37.8: real-PostgreSQL 2-process restart survival 10/10, Option 1 extension; reconciled in 37.9) |
 | **I5** maintenance schedule absent | **P1** | **37.16** | Capstone recovery verification; **RESOLVED 2026-10-23** — schedule `scd_6Q8msEqiSPejMBjkvLrW6Fqw2xE5` created and first run `SUCCESS`; dev-tunnel destination needs a production replacement | **No — resolved for live development verification** |
 | **I9** cross-tenant run-page read | **P1** | **37.16 preflight** | Run-page read confidentiality; fixed in source, not live-verified | No |
 | **I10** hardcoded `SEND_EMAIL` recipient | **P1** | **37.16 preflight** | Email delivery safety; worker mitigated, producer recipient contract open | No — producer decision required |
 | **I11** organization channel identifier mismatch | **P1** | **37.16 preflight** | Notification routing; fixed in source, not live-verified; public channel decision open | No - channel privacy decision required |
 | **F1** canvas-first persistence | **P2** | **37.10 / 37.11** | Materialization ordering; layout strategy | No — **CLOSED 2026-10-20** (37.11, Option 1: synthesize layout before persistence through the shared boundary) |
 | **F2** definition id/name are placeholders | **P2** | **37.11** | Provenance; correct human-facing name placement | No — **CLOSED 2026-10-20** (37.11: `Workflow.name` = proposal name; provenance = `AgentToolExecution.id`; no new migration) |
-| **I3** `WAITING_CONFIRMATION` unreachable | **P2/P3** | Later state-machine cleanup | Nothing in 37.1–37.5 | No |
-| **I7** conditional routing not executable/authorable | **P2** | Scope decision (recorded 37.1) | Any claim that generated conditional branches work | No — needs a scope decision, not a ticket yet |
+| **I3** `WAITING_CONFIRMATION` unreachable | **P2/P3** | **37.14** | State-machine wait-state CAS and 3-loop separation | No — **CLOSED 2026-10-23** (37.14: real-PostgreSQL wait-state CAS suite 9/9, anti-resurrection guards, reaper expiry isolation) |
+| **I7** conditional routing not executable/authorable | **P2** | Scope decision (recorded 37.1) | Any claim that generated conditional branches work | No — **DEFERRED** by explicit architectural scope decision (generated conditional branches forbidden in Phase 37; evaluator branch gate unchanged) |
 
 Mapping applied as specified. No repository evidence conflicts with it; the one
 point where evidence was thinner than the mapping assumed is **I5**, which is
@@ -1202,18 +1211,18 @@ convenience.
 37.3    Reference grammar + validator                   VERIFIED (F6, MISSING_DATA_DEPENDENCY)
 37.4    Proposal compiler / semantic validation adapter VERIFIED 2026-10-23 (F5)
 37.5    generateWorkflow agent tool                     VERIFIED 2026-10-23
-37.6    Missing-input state                              VERIFIED (first part of F4)
-37.7    Human criticality state                          IMPLEMENTED (continues F4)
-37.8    Durable proposal persistence                     IMPLEMENTED
-37.9    Existing confirmation integration                IMPLEMENTED (incl. 37.9.1 UI)
-37.10   UI graph projection / deterministic layout       IMPLEMENTED (ordering = AD-11; F1 open)
-37.11   Workflow materialization                        VERIFIED 2026-10-23 (canvas-first, F2)
+37.6    Missing-input state                              VERIFIED 2026-10-17
+37.7    Human criticality state                          VERIFIED 2026-10-23
+37.8    Durable proposal persistence                     VERIFIED 2026-10-23 (F4)
+37.9    Existing confirmation integration                VERIFIED 2026-10-23 (incl. 37.9.1 UI)
+37.10   UI graph projection / deterministic layout       VERIFIED 2026-10-23 (ordering = AD-11; F1)
+37.11   Workflow materialization                        VERIFIED 2026-10-23 (canvas-first, F1, F2)
 37.12   Execution handoff                               VERIFIED 2026-10-23 (I6 gate met)
 37.13   Prompt / DAG planning instructions              VERIFIED 2026-10-23
-37.14   Self-healing observations                       VERIFIED 2026-10-23
+37.14   Self-healing observations                       VERIFIED 2026-10-23 (I3)
 37.15   Full test matrix                                VERIFIED 2026-10-23
-37.16   Live capstone verification                      (I5, and the full live matrix)
-37.17   Documentation / closure
+37.16   Live capstone verification                      NOT_STARTED (I5 verified; QStash quota rate-limited)
+37.17   Documentation / closure                         VERIFIED 2026-10-24
 ```
 
 The four structural changes from the original ordering:
@@ -1425,13 +1434,16 @@ the original placed UI derivation as a side concern after materialization.
 **37.8 (2026-10-23, real-PostgreSQL)**, **37.9 (2026-10-23, real-PostgreSQL)**,
 **37.10 (2026-10-23)**, **37.11 (2026-10-23, real-PostgreSQL)**,
 **37.12 (2026-10-23, real-PostgreSQL)**, **37.13 (2026-10-23)**,
-**37.14 (2026-10-23, real-PostgreSQL)**, **37.15 (2026-10-23, full test matrix)**
+**37.14 (2026-10-23, real-PostgreSQL)**, **37.15 (2026-10-23, full test matrix)**,
+**37.17 (2026-10-24, documentation / closure)**
 
-**Phases IMPLEMENTED (not VERIFIED):** (none — all 18 tracked phases 37.0–37.15 are VERIFIED).
+**Phases NOT_STARTED:** 37.16 (deferred pending QStash broker daily quota renewal)
+
+**Phases IMPLEMENTED (not VERIFIED):** (none — 19 of 20 tracked phases are VERIFIED; 37.16 deferred).
 
 **Current blockers:**
-- None at P0. **I6 is `VERIFIED` (2026-10-20)**. No verification debt remains.
-  Phase 37.16 (live capstone) is unblocked.
+- None at P0. **I6 is `VERIFIED` (2026-10-20)**. No verification debt remains across 37.0–37.15 and 37.17.
+  Phase 37.16 (live capstone) is ready in code and configuration, deferred solely due to external QStash message broker daily rate limit (HTTP 429).
 
 **P0 set:** I1, I2, I6 — three separate tickets, of which **I1 and I2 are CLOSED
 (2026-09-30)** under Phases 37.0A and 37.0B, and **I6 is now CLOSED
