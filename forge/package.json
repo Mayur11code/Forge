@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "test:rate-limit:live": "jest --config jest.live.config.ts src/tests/security/rate-limit.live.test.ts"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.83",
