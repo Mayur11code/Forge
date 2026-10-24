@@ -47,6 +47,7 @@
     "recharts": "^3.7.0",
     "remove-markdown": "^0.6.4",
     "resend": "^6.10.0",
+    "server-only": "^0.0.1",
     "sonner": "^2.0.7",
     "uploadthing": "^7.7.4",
     "use-debounce": "^10.1.0",
