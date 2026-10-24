@@ -1,3 +1,4 @@
+import "server-only";
 import Pusher from "pusher";
 
 // We use global to prevent multiple instances during Next.js hot-reloading in dev

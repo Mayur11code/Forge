@@ -1,3 +1,4 @@
+import "server-only";
 import { googleProvider } from "@/lib/ai/provider";
 
 /**
