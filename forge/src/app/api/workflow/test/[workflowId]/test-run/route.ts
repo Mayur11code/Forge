@@ -1,6 +1,11 @@
 import { auth } from "@/lib/auth/auth";
 import { db } from "@/lib/prisma/db";
 import { startWorkflow } from "@/lib/workflow/execution/trigger";
+import {
+  checkRateLimit,
+  createRateLimitResponse,
+  RATE_LIMIT_POLICIES,
+} from "@/lib/security/rate-limit";
 
 interface RouteContext {
   params: Promise<{
@@ -44,6 +49,19 @@ export async function POST(
       );
     }
 
+    // Rate Limiting (Sliding Window): REQUEST_WORKFLOW_TEST_RUN
+    // Protects workflow execution engine against rapid automated re-triggering.
+    // Fail-closed on Redis timeout/error to prevent execution queue flooding.
+    const rateLimitResult = await checkRateLimit({
+      policy: RATE_LIMIT_POLICIES.REQUEST_WORKFLOW_TEST_RUN,
+      userId,
+      orgId: workflow.orgId,
+    });
+
+    if (!rateLimitResult.allowed) {
+      return createRateLimitResponse(rateLimitResult);
+    }
+
     const run = await startWorkflow(workflow.orgId, workflowId, {
       projectId: "cmnj8u44p0003a0gcvqgt25dv",
     });
@@ -51,6 +69,9 @@ export async function POST(
     return Response.json({
       runId: run.id,
       redirectTo: `/org/${workflow.orgId}/runs/${run.id}`,
+    }, {
+      status: 200,
+      headers: rateLimitResult.headers,
     });
   } catch (error) {
   // S8 (security) — log the detail server-side, return a generic message. The

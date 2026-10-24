@@ -19,6 +19,11 @@ import {
 } from "@/lib/ai/agent/services/confirmation-service";
 import { confirmToolExecution } from "@/lib/ai/agent/services/tool-execution-service";
 import { publishAgentStatus } from "@/lib/ai/agent/status";
+import {
+  checkRateLimit,
+  createRateLimitResponse,
+  RATE_LIMIT_POLICIES,
+} from "@/lib/security/rate-limit";
 
 type RouteContext = {
   params: Promise<{ sessionId: string; executionId: string }>;
@@ -58,6 +63,17 @@ export async function POST(
     }
 
     const { session, execution } = target;
+
+    // Sliding window request limiting for interactive human review actions
+    const rateLimitResult = await checkRateLimit({
+      policy: RATE_LIMIT_POLICIES.REQUEST_AGENT_ACTION,
+      userId,
+      orgId: session.orgId,
+    });
+
+    if (!rateLimitResult.allowed) {
+      return createRateLimitResponse(rateLimitResult);
+    }
 
     const decision = decideConfirmation({
       action: "confirm",
@@ -128,7 +144,10 @@ export async function POST(
         toolName: execution.toolName,
         status: "PENDING",
       },
-      { status: 200 },
+      {
+        status: 200,
+        headers: rateLimitResult.headers,
+      },
     );
   } catch (error) {
     console.error("[AGENT TOOL CONFIRM]", error);
