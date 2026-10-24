@@ -142,6 +142,19 @@ export function WorkflowProposalPanel({ orgSlug }: { orgSlug: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+
+  // Local advisory countdown for rate limit retry-after
+  useEffect(() => {
+    if (!retryCountdown || retryCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setRetryCountdown((prev) => {
+        if (!prev || prev <= 1) return null;
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [retryCountdown]);
 
   // Resume the active session after a reload. Read in an effect, never in the
   // initializer, so the server-rendered markup (no localStorage) and the first
@@ -233,6 +246,14 @@ export function WorkflowProposalPanel({ orgSlug }: { orgSlug: string }) {
         throw new Error("You do not have access to this organization.");
       }
 
+      if (res.status === 429) {
+        const retryHeader = res.headers.get("Retry-After");
+        const body = (await res.json().catch(() => ({}))) as { retryAfter?: number };
+        const seconds = Number(retryHeader || body.retryAfter || 60);
+        setRetryCountdown(seconds);
+        throw new Error(`AI admission rate limit reached. Please wait ${seconds} seconds before retrying.`);
+      }
+
       if (!res.ok) {
         throw new Error("The workflow request could not be started.");
       }
@@ -310,11 +331,21 @@ export function WorkflowProposalPanel({ orgSlug }: { orgSlug: string }) {
 
           <button
             type="submit"
-            disabled={starting || !request.trim()}
+            disabled={starting || !request.trim() || !!retryCountdown}
             className="mt-3 inline-flex h-9 items-center justify-center rounded-lg bg-zinc-200 px-4 text-xs font-semibold tracking-wide text-zinc-900 transition-all hover:bg-white active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {starting ? "Starting…" : "Generate workflow"}
+            {starting
+              ? "Starting…"
+              : retryCountdown
+              ? `Wait ${retryCountdown}s…`
+              : "Generate workflow"}
           </button>
+
+          {retryCountdown && (
+            <p className="mt-2 text-xs text-amber-400">
+              Admission limit reached. Try again in {retryCountdown}s.
+            </p>
+          )}
         </form>
       )}
 

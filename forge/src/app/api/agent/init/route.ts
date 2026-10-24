@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { startAgentSession } from "@/lib/ai/agent/orchestrator";
+import {
+  checkRateLimit,
+  createRateLimitResponse,
+  RATE_LIMIT_POLICIES,
+} from "@/lib/security/rate-limit";
 
 const requestSchema = z.object({
   orgSlug: z.string().min(1),
@@ -47,6 +52,19 @@ export async function POST(req: Request) {
       );
     }
 
+    // AI Admission Control (Token Bucket)
+    // Consumes exactly one admission token per new agent workflow session.
+    // Internal loop steps and QStash worker redeliveries do not touch this route.
+    const rateLimitResult = await checkRateLimit({
+      policy: RATE_LIMIT_POLICIES.AI_ADMISSION_AGENT_INIT,
+      userId: orgAccess.userId,
+      orgId: orgAccess.organization.id,
+    });
+
+    if (!rateLimitResult.allowed) {
+      return createRateLimitResponse(rateLimitResult);
+    }
+
     const session = await startAgentSession({
       orgId: orgAccess.organization.id,
       userId: orgAccess.userId,
@@ -56,8 +74,6 @@ export async function POST(req: Request) {
       },
     });
 
-
-
     return Response.json(
       {
         sessionId: session.id,
@@ -65,6 +81,7 @@ export async function POST(req: Request) {
       },
       {
         status: 202,
+        headers: rateLimitResult.headers,
       },
     );
   } catch (error) {
@@ -80,4 +97,3 @@ export async function POST(req: Request) {
     );
   }
 }
-
