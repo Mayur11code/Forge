@@ -1,3 +1,4 @@
+import "server-only";
 import { Redis } from '@upstash/redis';
 
 // Ensure the standard singleton pattern for Next.js Hot Module Replacement

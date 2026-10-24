@@ -1,3 +1,4 @@
+import "server-only";
 // src/app/api/worker/embedding-worker/ew.ts
 import { prisma } from "@/lib/prisma/extended";
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -5,13 +6,25 @@ import { getTenantVectorStore } from "@/lib/vector/client";
 import { buildSemanticPayload } from "@/lib/vector/text-extractor";
 import { chunkTextSemantically } from "@/lib/vector/semantic-chunker";
 import {
-
     type EmbedContentRequest,
     TaskType,
 } from "@google/generative-ai";
+import {
+    isGeminiAuthenticationError,
+    logCredentialFailover,
+} from "@/lib/security/credential-rotation";
 
 // 1. Initialize Gemini Client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+function getEmbeddingModelPair() {
+    const primaryKey = process.env.GEMINI_API_KEY;
+    const fallbackKey = process.env.GEMINI_API_KEY_FALLBACK;
+    return {
+        primaryModel: primaryKey ? new GoogleGenerativeAI(primaryKey).getGenerativeModel({ model: "gemini-embedding-001" }) : null,
+        fallbackModel: fallbackKey ? new GoogleGenerativeAI(fallbackKey).getGenerativeModel({ model: "gemini-embedding-001" }) : null,
+    };
+}
 
 // 1. PERFECTLY MATCH THE ZOD SCHEMA
 interface EmbeddingEventParams {
@@ -64,7 +77,8 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
         console.log(`[EMBEDDING] Slicing task into ${chunks.length} semantic chunks.`);
 
         // 4. Batch Embeddings with Gemini
-        const model = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
+        const { primaryModel, fallbackModel } = getEmbeddingModelPair();
+        const activePrimary = primaryModel ?? genAI.getGenerativeModel({ model: "gemini-embedding-001" });
 
         // Format chunks for Gemini's batch endpoint
         const embeddingRequests: EmbedContentRequest[] = chunks.map((chunkText) => ({
@@ -76,9 +90,28 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
             outputDimensionality: 768,
         }));
 
-        const result = await model.batchEmbedContents({
-            requests: embeddingRequests,
-        });
+        let result;
+        try {
+            result = await activePrimary.batchEmbedContents({
+                requests: embeddingRequests,
+            });
+        } catch (err) {
+            if (fallbackModel && isGeminiAuthenticationError(err)) {
+                logCredentialFailover({
+                    provider: "gemini",
+                    subsystem: "embedding-worker",
+                    slot: "primary",
+                    operation: "batchEmbedContents",
+                    errorCategory: "AUTH_FAILURE_FAILOVER",
+                    message: err instanceof Error ? err.message : String(err),
+                });
+                result = await fallbackModel.batchEmbedContents({
+                    requests: embeddingRequests,
+                });
+            } else {
+                throw err;
+            }
+        }
 
         // Extract the raw numerical arrays from the Gemini response
         const embeddings = result.embeddings.map(e => e.values);
