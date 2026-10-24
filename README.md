@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Next.js-16.1-000?logo=next.js&style=for-the-badge" alt="Next.js 16.1" />
+  <img src="https://img.shields.io/badge/Next.js-16.4-000?logo=next.js&style=for-the-badge" alt="Next.js 16.4" />
   <img src="https://img.shields.io/badge/React-19-000?logo=react&style=for-the-badge" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-5-000?logo=typescript&style=for-the-badge" alt="TypeScript 5" />
   <img src="https://img.shields.io/badge/PostgreSQL-Prisma%207-000?logo=postgresql&style=for-the-badge" alt="PostgreSQL with Prisma 7" />
@@ -28,7 +28,7 @@
   <img src="https://img.shields.io/badge/UploadThing-storage-000?style=for-the-badge" alt="UploadThing" />
   <img src="https://img.shields.io/badge/Resend-email-000?logo=resend&style=for-the-badge" alt="Resend" />
   <img src="https://img.shields.io/badge/Razorpay-billing-000?logo=razorpay&style=for-the-badge" alt="Razorpay" />
-  <img src="https://img.shields.io/badge/Jest-440%20tests-000?logo=jest&style=for-the-badge" alt="Jest, 440 tests" />
+  <img src="https://img.shields.io/badge/Jest-1%2C410%20tests-000?logo=jest&style=for-the-badge" alt="Jest, 1,410 tests (85 suites)" />
 </p>
 
 ---
@@ -133,7 +133,7 @@ flowchart TB
     end
 
     subgraph data["state"]
-        pg[("PostgreSQL<br/>19 models")]
+        pg[("PostgreSQL<br/>20 models")]
         pine[("Pinecone<br/>per-org namespaces")]
         push["Pusher"]
     end
@@ -181,12 +181,13 @@ invariant lives in each route, not in one place.
 
 ## data model
 
-19 models, 12 enums, PostgreSQL. Every tenant-scoped table hangs off
+20 models, 16 enums, PostgreSQL. Every tenant-scoped table hangs off
 `Organization` directly or reaches it by relation.
 
 | | model | role |
 |---|---|---|
 | **tenant** | `Organization` | root. unique `slug`, `storageUsed` / `storageLimit` quota, billing fields |
+| | `User` | email, name, role relations, created API keys |
 | | `Membership` | `@@unique([userId, orgId])`, carries `Role` |
 | | `Invitation` | unique token, role, expiry, status |
 | **work** | `Project` | `@@unique([name, orgId])` |
@@ -202,6 +203,7 @@ invariant lives in each route, not in one place.
 | | `AgentOutboxEvent` | idempotency key, `messageId`, attempts, `availableAt` backoff |
 | **infra** | `EventLog` | consumer dedup by `messageId` |
 | | `AnalyticsEvent`, `RazorpayEvent` | analytics rows; webhook dedup keyed on event id |
+| **security** | `OrganizationApiKey` | `@@unique([orgId, provider, purpose])`, AES-256-GCM ciphertext, IV, tag, `keyVersion`, `status` |
 
 The schema's inline comments are load-bearing — `contextVersion`,
 `AgentOutboxEvent`, and `AgentToolExecutionStatus` each document the specific bug
@@ -221,11 +223,11 @@ they exist to prevent. Keep them.
 | `src/lib/tasks/` | canonical task/project writes — the shared write path |
 | `src/lib/locking/` | token-checked Redis lock primitive + heartbeat |
 | `src/lib/prisma/` | driver-adapter client (`db.ts`), event-dispatching `extended.ts` |
-| `src/lib/security/` | magic-byte upload validation |
+| `src/lib/security/` | credential vault (AES-256-GCM BYOK), zero-downtime rotation, distributed rate-limiting, upload validation |
 | `src/lib/redis/`, `src/lib/pusher/`, `src/lib/emails/` | clients |
 | `src/app/actions/` | server actions; the UI's write surface |
 | `src/app/api/` | route handlers; each authenticates itself |
-| `src/tests/` | 28 suites, node environment, no real database |
+| `src/tests/` | 85 suites, 1,410 tests, node environment, in-memory Prisma double, db-guard |
 
 Tests run against an in-memory Prisma double, and a setup guard makes that
 structural rather than conventional: `jest.setup-db-guard.ts` fails any suite that
@@ -255,7 +257,7 @@ root holds the README, the assets, and the documentation.
 ### database
 
 ```bash
-npx prisma migrate deploy   # 26 migrations
+npx prisma migrate deploy   # 26 applied migrations (1 offline unapplied migration for BYOK)
 npm run build               # runs `prisma generate` first
 ```
 
@@ -293,12 +295,23 @@ use that feature. Two worth knowing about up front:
 ### tests
 
 ```bash
-npm test              # 28 suites, 440 tests
+npm test              # 85 suites, 1,410 tests
 npm run test:watch
 ```
 
 There is no CI workflow, no pre-commit hook, and no Docker or `vercel.json` in
 the repo. `npm test` and `npx tsc --noEmit` are the gate.
+
+---
+
+## production hardening & security milestones
+
+The codebase has undergone systematic production-grade hardening passes:
+
+1. **H1 — Environment Isolation & Airgap:** Strict compile-time and runtime `server-only` airgap. On-demand subsystem validation preventing unrelated build failures while strictly redacting credential values in error diagnostics.
+2. **H2 — Zero-Downtime Credential Rotation:** Dynamic primary-to-fallback failover for Gemini, Pinecone, and QStash with non-retryable error classification and secret-redacting audit telemetry.
+3. **H3 — Distributed Rate Limiting & AI Admission Control:** Multi-tier sliding-window rate limiting for public/auth API routes and token-bucket admission control for resource-intensive AI operations, backed by distributed Upstash Redis.
+4. **BYOK Phase 1 & 1.1 — Secure Credential Vault:** Server-only authenticated encryption (`AES-256-GCM`) with contextual Authenticated Additional Data (AAD) binding tenant identity, provider, and purpose. Strict 32-byte key validation (64-hex / 44-base64), versioned keyrings, `PENDING_VALIDATION` lifecycle invariants, and reviewable offline Prisma migration.
 
 ---
 
@@ -310,14 +323,14 @@ documentation.
 
 **Security and tenancy**
 
-| issue | detail |
-|---|---|
-| **`I6` — cross-tenant workflow execution** | `triggerWorkflowRun` performs no auth, and `startWorkflow` loads the workflow by id with no `orgId` (`src/lib/workflow/execution/trigger.ts:7`). Any authenticated user can start any tenant's workflow and seed a `triggerPayload` into the run context. The open P0; gates phase 37.12. |
-| **Google sign-in cannot persist** | `PrismaAdapter` is mounted, but the schema has no `Account` / `VerificationToken` model. Credentials sign-in works; OAuth does not. |
-| Unauthenticated billing order creation | `src/app/api/razorpay/create-order/route.ts` has no auth check. |
-| Unauthenticated workflow test route | `src/app/api/workflow/test/[workflowId]/test-run` has no auth and hard-codes a `projectId` and an org uuid. |
-| Dead code with no auth | `api/uploadthing/deleteAttachment.ts` deletes any attachment by id. No callers, but it is live and reachable. |
-| `/members` is mock data | No membership check, and it renders an `Owner`/`Editor`/`Viewer` vocabulary that does not exist in the `Role` enum. |
+| issue | detail | status |
+|---|---|:---:|
+| **`I6` — cross-tenant workflow execution** | `startWorkflow` now requires verified `orgId` in predicate; `triggerWorkflowRun` enforces `getOrgAccess` session RBAC. | **Resolved** |
+| **Unauthenticated billing order creation** | `create-order` route enforces session `auth()` and requires `membership.role === "ADMIN"`. | **Resolved** |
+| **Unauthenticated workflow test route** | `test-run` route enforces session `auth()`, derives `orgId` from membership, and applies `REQUEST_WORKFLOW_TEST_RUN` rate limit. | **Resolved** |
+| **Attachment deletion scope** | `deleteAttachment` verifies caller membership in the task's project organization. | **Resolved** |
+| **Google sign-in cannot persist** | `PrismaAdapter` is mounted, but the schema has no `Account` / `VerificationToken` model. Credentials sign-in works; OAuth does not. | Open |
+| **`/members` is mock data** | No membership check, and it renders an `Owner`/`Editor`/`Viewer` vocabulary that does not exist in the `Role` enum. | Open |
 
 **Correctness and wiring**
 
@@ -326,19 +339,17 @@ documentation.
 | **Workflow triggers are manual only** | `startWorkflow` has exactly two callers: the run button and the test route. Nothing routes `TASK_CREATED` into it, so the event triggers the UI advertises are not connected. |
 | **RAG index goes stale** | `TASK_UPDATED` and `TASK_DELETED` are dispatched but have no routing entry — only `TASK_CREATED` does. Edits and deletes never re-embed. |
 | **Every task creation emits a failing job** | Routing emits `ANALYTICS_EVENT`, which has no worker case, so it returns `500` by design and burns its retry budget. |
-| Attachments never reach the vector store | `createAttachment` never publishes `FILE_UPLOADED`; the file worker computes `extractedText` and discards it; the embedding worker always queries `task.findUnique`. |
-| Live run streaming cannot authenticate | `api/pusher/auth/route.ts` authorizes agent channels only, and refuses everything else. The `private-workflow-*` channel has no authorizer. |
-| Two dead-end routes | `/router` redirects to `/onboarding` and `/select-org`; neither exists. |
-| Invitations are not emailed | The link must be copied by hand, and email delivery currently targets a hard-coded address. |
-| 11 of 21 declared event types have no consumer | `PROCESS_FILE`, `AI_SUMMARY_REQUESTED`, `NOTIFY_PROJECT_OWNER`, and others are declared and routed but unhandled. |
+| **Attachments never reach the vector store** | `createAttachment` never publishes `FILE_UPLOADED`; the file worker computes `extractedText` and discards it; the embedding worker always queries `task.findUnique`. |
+| **Live run streaming cannot authenticate** | `api/pusher/auth/route.ts` authorizes agent channels only, and refuses everything else. The `private-workflow-*` channel has no authorizer. |
+| **Two dead-end routes** | `/router` redirects to `/onboarding` and `/select-org`; neither exists. |
+| **Invitations are not emailed** | The link must be copied by hand, and email delivery currently targets a hard-coded address. |
+| **11 of 21 declared event types have no consumer** | `PROCESS_FILE`, `AI_SUMMARY_REQUESTED`, `NOTIFY_PROJECT_OWNER`, and others are declared and routed but unhandled. |
 
 **Verification debt**
 
-- All evidence is Jest-level against an in-memory double. **No live database,
-  queue, or end-to-end run has been exercised.** Phase 37.16 owes that.
-- 4 pre-existing `no-explicit-any` lint errors on the workflow action signatures.
-- `OPENAI_API_KEY` and `ioredis` are unused dependencies; `TaskBoxv1`,
-  `analytics-worker`, and `ai-worker` are orphaned modules.
+- Automated unit and integration tests run against an in-memory Prisma double (`jest.setup-db-guard.ts`). Live distributed rate-limiting is exercised against live Upstash Redis via `npm run test:rate-limit:live`.
+- Zero ESLint errors across the codebase.
+- `OPENAI_API_KEY` and `ioredis` are unused dependencies; `TaskBoxv1`, `analytics-worker`, and `ai-worker` are orphaned modules.
 - Inconsistent URL casing (`/Tasks`).
 
 ---
@@ -364,6 +375,10 @@ source of truth for intent.
 **dev log** — [agent runtime hardening](forge/docs/dev-log/2026-09-29.md) ·
 [audit closure pass](forge/docs/dev-log/2026-09-30.md) ·
 [I1 / I2 closure and I6](forge/docs/dev-log/2026-09-30-assignment-37.md)
+
+**security & hardening** — [credential vault & BYOK](forge/docs/security/credential-vault.md) ·
+[distributed rate limiting & AI admission control](forge/docs/security/rate-limiting.md) ·
+[zero-downtime credential rotation](forge/docs/security/key-rotation.md)
 
 The trackers are kept current rather than rewritten at the end, so the
 percentage complete in them is the honest one. Phase 37 is at 3 of 20.
