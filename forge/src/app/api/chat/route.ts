@@ -16,6 +16,11 @@ import {
   setSemanticCache,
 } from '@/lib/ai/semantic-cache';
 import { simulateCachedStream } from '@/lib/ai/cache-stream';
+import {
+  checkRateLimit,
+  createRateLimitResponse,
+  RATE_LIMIT_POLICIES,
+} from '@/lib/security/rate-limit';
 
 export const maxDuration = 60;
 
@@ -84,6 +89,18 @@ export async function POST(req: Request) {
       return new Response('Forbidden', {
         status: 403,
       });
+    }
+
+    // AI Admission Control (Token Bucket)
+    // Limits sustained interactive chat usage while permitting short conversational bursts.
+    const rateLimitResult = await checkRateLimit({
+      policy: RATE_LIMIT_POLICIES.AI_ADMISSION_CHAT,
+      userId: orgAccess.userId,
+      orgId: orgAccess.organization.id,
+    });
+
+    if (!rateLimitResult.allowed) {
+      return createRateLimitResponse(rateLimitResult);
     }
 
     const modelMessages = await convertToModelMessages(messages);
@@ -160,7 +177,9 @@ ${retrievedContext || 'No relevant project context found in the database.'}`,
       },
     });
 
-    return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse({
+      headers: rateLimitResult.headers,
+    });
   } catch (error) {
     console.error('❌ [CHAT API] Fatal Error:', error);
 

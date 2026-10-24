@@ -264,6 +264,8 @@ describe("Production Hardening H1 — Environment Validation & Airgap", () => {
       "src/app/api/worker/embedding-worker/ew.ts",
       "src/lib/auth/auth.ts",
       "src/lib/security/credential-rotation.ts",
+      "src/lib/security/rate-limit.ts",
+      "src/lib/redis/rate-limit.ts",
     ];
 
     test.each(sensitiveFiles)(

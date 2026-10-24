@@ -6,6 +6,11 @@ import { prisma } from '@/lib/prisma/extended';
 import { auth } from '@/lib/auth/auth';
 import { getOrgAccess } from '@/features/organizations/getOrgAccess';
 import { createTaskInOrg } from '@/lib/tasks/create-task';
+import {
+  checkRateLimit,
+  createRateLimitResponse,
+  RATE_LIMIT_POLICIES,
+} from '@/lib/security/rate-limit';
 
 export async function POST(req: Request) {
   try {
@@ -26,15 +31,15 @@ export async function POST(req: Request) {
     const rawBugReport =
       typeof body.rawBugReport === 'string' ? body.rawBugReport.trim() : '';
 
-const projectId =
-  typeof body.projectId === 'string' ? body.projectId.trim() : '';
+    const projectId =
+      typeof body.projectId === 'string' ? body.projectId.trim() : '';
 
-if (!projectId) {
-  return Response.json(
-    { error: 'projectId is required.' },
-    { status: 400 }
-  );
-}
+    if (!projectId) {
+      return Response.json(
+        { error: 'projectId is required.' },
+        { status: 400 }
+      );
+    }
 
     // Validate incoming request data before calling the model.
     if (!rawBugReport) {
@@ -65,6 +70,17 @@ if (!projectId) {
       );
     }
 
+    // AI Admission Control (Token Bucket)
+    const rateLimitResult = await checkRateLimit({
+      policy: RATE_LIMIT_POLICIES.AI_ADMISSION_TRIAGE,
+      userId,
+      orgId: project.orgId,
+    });
+
+    if (!rateLimitResult.allowed) {
+      return createRateLimitResponse(rateLimitResult);
+    }
+
     const result = await generateObject({
       model: googleProvider('gemini-3.6-flash'),
       schema: triageSchema,
@@ -76,12 +92,12 @@ if (!projectId) {
 
     const structuredIssue = result.object;
 
-const priorityMap = {
-  low: 'LOW',
-  medium: 'MEDIUM',
-  high: 'HIGH',
-  critical: 'HIGH',
-} as const;
+    const priorityMap = {
+      low: 'LOW',
+      medium: 'MEDIUM',
+      high: 'HIGH',
+      critical: 'HIGH',
+    } as const;
 
     // 3. Canonical task creation. The org comes from the project we just
     //    authorized against, never from the request body. The canonical
@@ -112,7 +128,10 @@ const priorityMap = {
         data: created.task,
         extracted: structuredIssue,
       },
-      { status: 201 }
+      {
+        status: 201,
+        headers: rateLimitResult.headers,
+      }
     );
   } catch (error) {
     console.error('Triage extraction failed:', error);
