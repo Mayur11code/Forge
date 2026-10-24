@@ -11,7 +11,7 @@
 // agent tool executor. Do not re-implement the write here.
 
 import { prisma } from "@/lib/prisma/extended";
-import { rateLimit } from "@/lib/redis/rate-limit";
+import { checkTaskCreateRateLimit } from "@/lib/redis/rate-limit";
 import { auth } from "@/lib/auth/auth";
 import { createTaskSchema } from "@/core/domain";
 import { revalidatePath } from "next/cache";
@@ -56,17 +56,25 @@ export async function createTask(input: unknown) {
   const access = await getOrgAccess(organization.slug);
   if (!access) notFound();
 
-  // 4️⃣ Rate limit. EXACTLY ONE call, used consistently for the decision and
-  //    for the remaining/reset values. (Previously this was called twice,
-  //    which consumed the budget twice and mixed the two responses.)
-  const { success, remaining, reset } = await rateLimit.limit(session.user.id);
+  // 4️⃣ Rate limit. EXACTLY ONE call evaluating both user and organization limits.
+  //    Derives user from session and organization from verified project access.
+  const rateLimitResult = await checkTaskCreateRateLimit(
+    session.user.id,
+    organization.id
+  );
 
-  if (!success) {
-    console.warn(`[RATE LIMIT] User ${session.user.id} blocked`);
+  const remaining = rateLimitResult.remaining;
+  const reset = rateLimitResult.reset;
+
+  if (!rateLimitResult.allowed) {
+    console.warn(
+      `[RATE LIMIT] Task creation blocked for user ${session.user.id} in org ${organization.id}`
+    );
     return {
       success: false,
       error: "RATE_LIMIT",
-      remaining: 0,
+      message: rateLimitResult.message,
+      remaining,
       reset,
     };
   }
