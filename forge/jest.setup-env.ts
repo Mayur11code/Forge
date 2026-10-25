@@ -47,6 +47,7 @@
 process.env.GEMINI_API_KEY ??= "jest-placeholder-not-a-real-key";
 process.env.PINECONE_API_KEY_DEV ??= "jest-placeholder-pinecone-dev-key";
 process.env.PINECONE_INDEX_DEV ??= "jest-placeholder-pinecone-dev-index";
+process.env.RAZORPAY_PLAN_ID ??= "plan_test_active";
 
 // `jest-environment-jsdom` does not expose `TextEncoder`/`TextDecoder`, but the
 // real modules the application imports do reach them - `@prisma/client` pulls in
