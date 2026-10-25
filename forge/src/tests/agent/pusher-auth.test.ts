@@ -18,6 +18,17 @@ jest.mock("@/lib/pusher/pusher-server", () => ({
   },
 }));
 
+jest.mock("@/lib/prisma/db", () => ({
+  db: {
+    membership: {
+      findUnique: jest.fn(),
+    },
+    workflowRun: {
+      findFirst: jest.fn(),
+    },
+  },
+}));
+
 jest.mock("@/lib/ai/agent/session-service", () => ({
   getAgentSessionForUser: jest.fn(),
 }));
