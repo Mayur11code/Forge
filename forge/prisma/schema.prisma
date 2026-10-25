@@ -391,7 +391,7 @@ model User {
   tasks       Task[]       @relation("UserTasks")
   comments    Comment[]
   agentSessions AgentSession[]
-
+  createdApiKeys OrganizationApiKey[]
 }
 
 model Project {
@@ -444,6 +444,7 @@ model Organization {
   currentPeriodEnd        DateTime?
   workflows   Workflow[]
   agentSessions AgentSession[]
+  apiKeys       OrganizationApiKey[]
 }
 
 model Membership {
@@ -653,3 +654,45 @@ model ExecutionAuditLog {
 }
 
 
+
+
+enum AiProvider {
+  GEMINI
+}
+
+enum CredentialPurpose {
+  GENERATION
+  EMBEDDING
+}
+
+enum CredentialStatus {
+  PENDING_VALIDATION
+  ACTIVE
+  INVALID
+  REVOKED
+}
+
+model OrganizationApiKey {
+  id              String            @id @default(uuid())
+  orgId           String
+  provider        AiProvider        @default(GEMINI)
+  purpose         CredentialPurpose
+  encryptedKey    String
+  keyIv           String
+  keyAuthTag      String
+  keyVersion      String
+  last4           String
+  status          CredentialStatus  @default(PENDING_VALIDATION)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  lastValidatedAt DateTime?
+  lastUsedAt      DateTime?
+  createdByUserId String?
+
+  organization    Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  createdByUser   User?             @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, provider, purpose])
+  @@index([orgId])
+  @@index([status])
+}

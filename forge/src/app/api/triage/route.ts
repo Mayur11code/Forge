@@ -1,6 +1,6 @@
 // src/app/api/triage/route.ts
 import { generateObject } from 'ai';
-import { googleProvider } from '@/lib/ai/provider';
+import { resolveOrganizationLanguageModel, AiResolverError } from '@/lib/ai/resolver';
 import { triageSchema } from '@/lib/ai/schemas';
 import { prisma } from '@/lib/prisma/extended';
 import { auth } from '@/lib/auth/auth';
@@ -81,8 +81,10 @@ export async function POST(req: Request) {
       return createRateLimitResponse(rateLimitResult);
     }
 
+    const languageModel = await resolveOrganizationLanguageModel({ orgId: project.orgId });
+
     const result = await generateObject({
-      model: googleProvider('gemini-3.6-flash'),
+      model: languageModel,
       schema: triageSchema,
       system:
         'You are an automated issue-triage service. Extract metadata only from the submitted bug report. Do not invent details that are unsupported by the report.',
@@ -134,6 +136,12 @@ export async function POST(req: Request) {
       }
     );
   } catch (error) {
+    if (error instanceof AiResolverError) {
+      return Response.json(
+        { error: error.message, code: error.code },
+        { status: error.code === "ORGANIZATION_KEY_REQUIRED" ? 402 : 400 }
+      );
+    }
     console.error('Triage extraction failed:', error);
 
     return Response.json(

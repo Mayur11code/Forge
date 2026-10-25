@@ -1,6 +1,6 @@
 // src/lib/vector/retriever.ts
 import { embed } from 'ai';
-import { googleProvider } from '@/lib/ai/provider';
+import { resolveOrganizationEmbeddingModel } from '@/lib/ai/resolver';
 import { getTenantVectorStore } from './client';
 
 /**
@@ -19,7 +19,7 @@ export async function retrieveRelevantContext(
         // We use the 'embed' function from the Vercel AI SDK passed into our singleton instance
         // 1. Generate query vector embedding
         const { embedding } = await embed({
-            model: googleProvider.embeddingModel("gemini-embedding-001"),
+            model: await resolveOrganizationEmbeddingModel({ orgId }),
             value: userQuery,
             providerOptions: {
                 google: {

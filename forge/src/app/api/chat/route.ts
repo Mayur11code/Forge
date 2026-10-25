@@ -7,7 +7,11 @@ import {
   type UIMessage,
 } from 'ai';
 
-import { googleProvider } from '@/lib/ai/provider';
+import {
+  resolveOrganizationLanguageModel,
+  resolveOrganizationEmbeddingModel,
+  AiResolverError,
+} from '@/lib/ai/resolver';
 import { enforceTokenBudget } from '@/lib/ai/token-manager';
 import { retrieveRelevantContext } from '@/lib/vector/retreiver';
 import { getOrgAccess } from '@/features/organizations/getOrgAccess';
@@ -116,9 +120,10 @@ export async function POST(req: Request) {
 
     const orgId = orgAccess.organization.id;
 
-    // 1. Create the embedding once. Reuse it for cache lookup and cache write.
+    // 1. Create the embedding once using organization-aware resolver
+    const embeddingModel = await resolveOrganizationEmbeddingModel({ orgId });
     const { embedding: queryEmbedding } = await embed({
-      model: googleProvider.embeddingModel('gemini-embedding-001'),
+      model: embeddingModel,
       value: latestMessage,
       providerOptions: {
         google: {
@@ -150,8 +155,10 @@ export async function POST(req: Request) {
       CHAT_HISTORY_BUDGET,
     );
 
+    const languageModel = await resolveOrganizationLanguageModel({ orgId });
+
     const result = streamText({
-      model: googleProvider('gemini-3.6-flash'),
+      model: languageModel,
       system: `You are the Engineered Forge AI assistant.
 You must answer the user's query strictly using the organizational context provided below.
 If the answer is not contained in the context, politely say that you do not have that information. Do not hallucinate data.
@@ -181,6 +188,18 @@ ${retrievedContext || 'No relevant project context found in the database.'}`,
       headers: rateLimitResult.headers,
     });
   } catch (error) {
+    if (error instanceof AiResolverError) {
+      return new Response(
+        JSON.stringify({
+          error: error.message,
+          code: error.code,
+        }),
+        {
+          status: error.code === "ORGANIZATION_KEY_REQUIRED" ? 402 : 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
     console.error('❌ [CHAT API] Fatal Error:', error);
 
     return new Response('Internal Server Error', {

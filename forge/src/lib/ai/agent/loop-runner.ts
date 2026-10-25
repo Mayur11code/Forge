@@ -1,6 +1,7 @@
 import { generateText, type ModelMessage } from "ai";
 
 import { agentModel } from "./model";
+import { resolveOrganizationLanguageModel, AiResolverError } from "@/lib/ai/resolver";
 import {
   AGENT_PROMPT_VERSION,
   buildAgentSystemPrompt,
@@ -47,6 +48,7 @@ export type LoopResult =
 
 export async function runAgentLoop(
   sessionId: string,
+  modelOverride?: Parameters<typeof generateText>[0]["model"]
 ): Promise<LoopResult> {
   const session = await getAgentSessionForWorker(sessionId);
 
@@ -86,8 +88,42 @@ export async function runAgentLoop(
     );
   }
 
+  // Resolve model:
+  // 1. Prefer caller override (for direct test injection)
+  // 2. Otherwise resolve via centralized organization-aware provider resolver.
+  //    This checks whether an active BYOK credential exists, or if platform fallback
+  //    is permitted by authoritative tier entitlement policy.
+  //    Fails closed if BYOK is required or unconfigured, without bypassing to platform singleton.
+  let effectiveModel = modelOverride;
+  if (!effectiveModel) {
+    const orgId = session.organization?.id || (session as { orgId?: string }).orgId;
+    if (!orgId) {
+      return {
+        kind: "FAILED",
+        reason: "ERROR",
+        message: "Organization ID is required for AI agent execution.",
+      };
+    }
+
+    try {
+      effectiveModel = await resolveOrganizationLanguageModel({
+        orgId,
+        fallbackModel: agentModel,
+      });
+    } catch (err) {
+      if (err instanceof AiResolverError) {
+        return {
+          kind: "FAILED",
+          reason: "ERROR",
+          message: err.message,
+        };
+      }
+      throw err;
+    }
+  }
+
   const result = await generateText({
-    model: agentModel,
+    model: effectiveModel,
     system: buildAgentSystemPrompt({ organizationName: session.organization.name }),
     messages,
     tools: agentTools,

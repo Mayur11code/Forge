@@ -180,6 +180,18 @@ export const storageServerSchema = z.object({
   UPLOADTHING_TOKEN: z.string().min(1, "UPLOADTHING_TOKEN is required"),
 });
 
+/**
+ * 10. Credential Vault & BYOK (Server-Only Secrets)
+ * Note: FORGE_VAULT_ENCRYPTION_KEY is optional at boot time so deployments
+ * or build steps without BYOK configured boot cleanly without errors.
+ * Missing or malformed encryption configuration fails closed on-demand inside the vault module.
+ */
+export const vaultServerSchema = z.object({
+  FORGE_VAULT_ENCRYPTION_KEY: z.string().optional(),
+  FORGE_VAULT_PRIMARY_KEY_VERSION: z.string().min(1).default("v1"),
+  FORGE_VAULT_KEYRING_JSON: z.string().optional(),
+});
+
 // ---------------------------------------------------------------------------
 // Subsystem Validation Getters
 // ---------------------------------------------------------------------------
@@ -249,6 +261,10 @@ export function getStorageEnv(env: Record<string, string | undefined> = process.
   return validateWithSchema(storageServerSchema, env, "STORAGE");
 }
 
+export function getVaultEnv(env: Record<string, string | undefined> = process.env) {
+  return validateWithSchema(vaultServerSchema, env, "VAULT");
+}
+
 // ---------------------------------------------------------------------------
 // Comprehensive Full Server Schema (for explicit full-environment audits)
 // ---------------------------------------------------------------------------
@@ -261,6 +277,7 @@ export const fullServerEnvSchema = coreServerSchema
   .merge(billingServerSchema.partial({ RAZORPAY_WEBHOOK_SECRET: true }))
   .merge(emailServerSchema.partial())
   .merge(storageServerSchema.partial())
+  .merge(vaultServerSchema)
   .extend({
     PINECONE_API_KEY_DEV: z.string().optional(),
     PINECONE_INDEX_DEV: z.string().optional(),
@@ -318,6 +335,9 @@ export type ServerEnvAccessor = {
   RAZORPAY_WEBHOOK_SECRET?: string;
   RESEND_API_KEY?: string;
   UPLOADTHING_TOKEN?: string;
+  FORGE_VAULT_ENCRYPTION_KEY?: string;
+  FORGE_VAULT_PRIMARY_KEY_VERSION: string;
+  FORGE_VAULT_KEYRING_JSON?: string;
 };
 
 /**
@@ -383,6 +403,12 @@ export const serverEnv = new Proxy({} as ServerEnvAccessor, {
       case "UPLOADTHING_TOKEN": {
         const storage = getStorageEnv();
         return storage.UPLOADTHING_TOKEN;
+      }
+      case "FORGE_VAULT_ENCRYPTION_KEY":
+      case "FORGE_VAULT_PRIMARY_KEY_VERSION":
+      case "FORGE_VAULT_KEYRING_JSON": {
+        const vault = getVaultEnv();
+        return vault[prop as keyof typeof vault];
       }
       default:
         return process.env[prop];
