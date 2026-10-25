@@ -3,27 +3,30 @@
 // Pusher private-channel authorization.
 //
 // SECURITY: this endpoint must never authorize a subscription based on the
-// request body alone. The client sends `channel_name`, and the session id is
-// embedded in that string, so trusting it would let any authenticated user
-// subscribe to any other user's agent stream by guessing an id.
+// request body alone. The client sends `channel_name`, and resource identifiers
+// are embedded in that string, so trusting it would let any authenticated user
+// subscribe to any other tenant's streams by guessing an id.
 //
-// Flow:
-//   auth()  ->  parse  ->  validate channel shape  ->  verify ownership
-//         ->  authorizeChannel
+// Authorizable private channel shapes:
+//   1. `private-agent-${sessionId}`: Caller must be the owner of the AgentSession.
+//   2. `private-org-${orgId}`: Caller must have an active Membership in the Organization.
+//   3. `private-workflow-${runId}`: Caller must have an active Membership in the
+//      Organization that owns the Workflow of the WorkflowRun.
 //
-// Ownership is delegated to the existing session service. Knowing a
-// sessionId is not authorization: the persisted AgentSession.userId must match
-// the authenticated caller.
+// Anything else is refused (403 Forbidden) rather than signed.
 
 import { NextRequest, NextResponse } from "next/server";
 
 import { pusherServer } from "@/lib/pusher/pusher-server";
 import { auth } from "@/lib/auth/auth";
+import { db } from "@/lib/prisma/db";
 import { getAgentSessionForUser } from "@/lib/ai/agent/session-service";
 import {
   extractAgentSessionId,
   parsePusherAuthBody,
 } from "@/lib/pusher/agent-channel";
+import { extractOrganizationId } from "@/lib/pusher/org-channel";
+import { extractWorkflowRunId } from "@/lib/pusher/workflow-channel";
 
 export async function POST(req: NextRequest) {
   const userId = (await auth())?.user?.id;
@@ -46,30 +49,89 @@ export async function POST(req: NextRequest) {
 
   const { socketId, channelName } = parsed;
 
-  // Only the agent session channel is authorizable. Anything else is refused
-  // rather than signed.
+  // 1. Agent Session Channel: private-agent-<sessionId>
   const sessionId = extractAgentSessionId(channelName);
+  if (sessionId) {
+    const session = await getAgentSessionForUser({ sessionId, userId });
 
-  if (!sessionId) {
-    return NextResponse.json(
-      { error: "Channel is not authorizable" },
-      { status: 403 },
+    if (!session) {
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403 },
+      );
+    }
+
+    const authResponse = pusherServer.authorizeChannel(
+      socketId,
+      channelName,
     );
+
+    return NextResponse.json(authResponse);
   }
 
-  const session = await getAgentSessionForUser({ sessionId, userId });
+  // 2. Organization Event Channel: private-org-<orgId>
+  const orgId = extractOrganizationId(channelName);
+  if (orgId) {
+    const membership = await db.membership.findUnique({
+      where: {
+        userId_orgId: {
+          userId,
+          orgId,
+        },
+      },
+      select: { id: true },
+    });
 
-  if (!session) {
-    return NextResponse.json(
-      { error: "Forbidden" },
-      { status: 403 },
+    if (!membership) {
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403 },
+      );
+    }
+
+    const authResponse = pusherServer.authorizeChannel(
+      socketId,
+      channelName,
     );
+
+    return NextResponse.json(authResponse);
   }
 
-  const authResponse = pusherServer.authorizeChannel(
-    socketId,
-    channelName,
+  // 3. Workflow Run Live Stream Channel: private-workflow-<runId>
+  const runId = extractWorkflowRunId(channelName);
+  if (runId) {
+    const run = await db.workflowRun.findFirst({
+      where: {
+        id: runId,
+        workflow: {
+          organization: {
+            memberships: {
+              some: { userId },
+            },
+          },
+        },
+      },
+      select: { id: true },
+    });
+
+    if (!run) {
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403 },
+      );
+    }
+
+    const authResponse = pusherServer.authorizeChannel(
+      socketId,
+      channelName,
+    );
+
+    return NextResponse.json(authResponse);
+  }
+
+  // Refuse any non-authorizable channel shape
+  return NextResponse.json(
+    { error: "Channel is not authorizable" },
+    { status: 403 },
   );
-
-  return NextResponse.json(authResponse);
 }
