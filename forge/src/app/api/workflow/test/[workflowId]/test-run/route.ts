@@ -1,6 +1,8 @@
 import { auth } from "@/lib/auth/auth";
 import { db } from "@/lib/prisma/db";
 import { startWorkflow } from "@/lib/workflow/execution/trigger";
+import { validateTriggerContext } from "@/lib/workflow/execution/trigger-context";
+import type { JsonValue } from "@/lib/workflow-types/type";
 import {
   checkRateLimit,
   createRateLimitResponse,
@@ -20,8 +22,15 @@ interface RouteContext {
 // owned by another tenant then matches nothing, which is the SAME response as a
 // workflow that does not exist — so a non-member cannot use this endpoint as an
 // existence oracle, and `startWorkflow` still receives a verified `orgId`.
+//
+// H4.1 — RUNTIME-INPUT BOUNDARY. The previous implementation hardcoded a
+// development project ID ('cmnj8u44p0003a0gcvqgt25dv') on every run. That
+// fabrication broke test runs for any non-default organization. The trigger
+// context is now optional and validated: if a projectId is supplied, it MUST
+// belong to the verified workflow organization. Otherwise, an empty context
+// is passed to startWorkflow.
 export async function POST(
-  _req: Request,
+  req: Request,
   context: RouteContext
 ) {
   try {
@@ -62,9 +71,55 @@ export async function POST(
       return createRateLimitResponse(rateLimitResult);
     }
 
-    const run = await startWorkflow(workflow.orgId, workflowId, {
-      projectId: "cmnj8u44p0003a0gcvqgt25dv",
-    });
+    // Parse and validate optional trigger context from request body
+    let triggerData: Record<string, JsonValue> = {};
+
+    try {
+      const text = await req.text();
+      if (text && text.trim().length > 0) {
+        const body = JSON.parse(text);
+        const rawPayload =
+          body && typeof body === "object" && "triggerPayload" in body
+            ? (body as { triggerPayload: unknown }).triggerPayload
+            : body;
+
+        const validated = validateTriggerContext(rawPayload);
+        if (!validated.ok) {
+          return Response.json(
+            { error: "Invalid trigger data." },
+            { status: 400 },
+          );
+        }
+
+        // Project ownership boundary: if a projectId is explicitly provided in
+        // the trigger data, assert it belongs to this workflow's organization.
+        if (typeof validated.value.projectId === "string") {
+          const project = await db.project.findFirst({
+            where: {
+              id: validated.value.projectId,
+              orgId: workflow.orgId,
+            },
+            select: { id: true },
+          });
+
+          if (!project) {
+            return Response.json(
+              { error: "Project not found in this organization." },
+              { status: 404 },
+            );
+          }
+        }
+
+        triggerData = validated.value;
+      }
+    } catch {
+      return Response.json(
+        { error: "Invalid JSON request body." },
+        { status: 400 },
+      );
+    }
+
+    const run = await startWorkflow(workflow.orgId, workflowId, triggerData);
 
     return Response.json({
       runId: run.id,
@@ -74,13 +129,14 @@ export async function POST(
       headers: rateLimitResult.headers,
     });
   } catch (error) {
-  // S8 (security) — log the detail server-side, return a generic message. The
-  // previous body echoed `error.message` and (in development) `error.stack` to
-  // the caller, disclosing internals.
-  console.error("TEST RUN ERROR", error);
+    // S8 (security) — log the detail server-side, return a generic message. The
+    // previous body echoed `error.message` and (in development) `error.stack` to
+    // the caller, disclosing internals.
+    console.error("TEST RUN ERROR", error);
 
-  return Response.json(
-    { error: "Failed to start workflow." },
-    { status: 500 }
-  );
-}}
+    return Response.json(
+      { error: "Failed to start workflow." },
+      { status: 500 }
+    );
+  }
+}

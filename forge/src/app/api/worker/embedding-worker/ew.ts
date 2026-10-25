@@ -2,7 +2,7 @@ import "server-only";
 // src/app/api/worker/embedding-worker/ew.ts
 import { prisma } from "@/lib/prisma/extended";
 import { getTenantVectorStore } from "@/lib/vector/client";
-import { buildSemanticPayload } from "@/lib/vector/text-extractor";
+import { buildSemanticPayload, extractPureText } from "@/lib/vector/text-extractor";
 import { chunkTextSemantically } from "@/lib/vector/semantic-chunker";
 import {
     type EmbedContentRequest,
@@ -13,7 +13,7 @@ import {
     logCredentialFailover,
 } from "@/lib/security/credential-rotation";
 import { resolveOrganizationGenerativeAiClient } from "@/lib/ai/resolver";
-import { CredentialPurpose } from "@prisma/client";
+import { CredentialPurpose, type Task } from "@prisma/client";
 
 // 1. PERFECTLY MATCH THE ZOD SCHEMA
 interface EmbeddingEventParams {
@@ -27,43 +27,185 @@ interface EmbeddingEventParams {
       actorId?: string;
     };
     time: string;
-  }
+  };
+}
+
+/**
+ * Mask an identifier for secure, non-disclosing audit logging.
+ */
+function redactId(id: string): string {
+  if (!id) return "[empty]";
+  return id.length > 8 ? `${id.slice(0, 8)}...` : id;
 }
 
 export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): Promise<void> {
     try {
-    // We now destructure entityId instead of taskId
-    const { entityId, orgId, type } = event.data;
+        const { entityId, orgId, type } = event.data;
 
         if (!entityId || !orgId) {
             console.error("❌ [EMBEDDING] Missing routing parameters", event.data);
             return;
         }
 
-        const vectorStore = getTenantVectorStore(orgId);
+        // 1. TENANT-SCOPED RESOURCE VERIFICATION
+        // CRITICAL: We must NOT delete vectors, extract content, generate embeddings,
+        // or upsert until ownership within the event's orgId is strictly proven.
+        let cleanText = "";
+        let resolvedProjectId = "";
+        let vectorEntityType: "task" | "document" = "task";
+        let parentTaskId: string = entityId;
 
-        // 1. WIPE PROTOCOL
-        console.log(`[EMBEDDING] Wiping old vectors for entity: ${entityId}`);
-        await vectorStore.deleteByTask(entityId);
+        if (type === "TASK") {
+            // Tenant-scoped task query
+            const task = await prisma.task.findFirst({
+                where: {
+                    id: entityId,
+                    project: { orgId },
+                },
+                select: {
+                    id: true,
+                    title: true,
+                    description: true,
+                    status: true,
+                    priority: true,
+                    projectId: true,
+                    assigneeId: true,
+                },
+            });
 
-        // 2. Fetch current state
-        const task = await prisma.task.findUnique({ where: { id: entityId } });
+            if (!task) {
+                // Determine whether this was a cross-tenant reference or deleted/nonexistent
+                const unscopedTask = await prisma.task.findUnique({
+                    where: { id: entityId },
+                    select: { id: true, project: { select: { orgId: true } } },
+                });
 
-        if (!task) {
-            console.log(`[EMBEDDING] Task ${entityId} deleted or not found. Wipe complete.`);
+                if (unscopedTask) {
+                    console.warn(
+                        JSON.stringify({
+                            securityEvent: "CROSS_TENANT_RESOURCE_REFERENCE_REJECTED",
+                            subsystem: "embedding-worker",
+                            resourceType: "TASK",
+                            entityId: redactId(entityId),
+                            eventOrgId: redactId(orgId),
+                            actualOrgId: redactId(unscopedTask.project.orgId),
+                            action: "REJECTED_WITHOUT_VECTOR_MUTATION",
+                        }),
+                    );
+                    return;
+                }
+
+                console.log(`[EMBEDDING] Task ${entityId} deleted or not found. No operation.`);
+                return;
+            }
+
+            cleanText = buildSemanticPayload(task as unknown as Task);
+            resolvedProjectId = task.projectId || "";
+            vectorEntityType = "task";
+            parentTaskId = task.id;
+
+        } else if (type === "ATTACHMENT") {
+            // Tenant-scoped attachment query through task -> project -> orgId
+            const attachment = await prisma.attachment.findFirst({
+                where: {
+                    id: entityId,
+                    task: {
+                        project: { orgId },
+                    },
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    size: true,
+                    taskId: true,
+                    task: {
+                        select: {
+                            id: true,
+                            title: true,
+                            projectId: true,
+                        },
+                    },
+                },
+            });
+
+            if (!attachment) {
+                // Determine whether this was a cross-tenant reference or deleted/nonexistent
+                const unscopedAttachment = await prisma.attachment.findUnique({
+                    where: { id: entityId },
+                    select: {
+                        id: true,
+                        task: {
+                            select: {
+                                project: { select: { orgId: true } },
+                            },
+                        },
+                    },
+                });
+
+                if (unscopedAttachment) {
+                    console.warn(
+                        JSON.stringify({
+                            securityEvent: "CROSS_TENANT_RESOURCE_REFERENCE_REJECTED",
+                            subsystem: "embedding-worker",
+                            resourceType: "ATTACHMENT",
+                            entityId: redactId(entityId),
+                            eventOrgId: redactId(orgId),
+                            actualOrgId: redactId(unscopedAttachment.task?.project?.orgId ?? "unknown"),
+                            action: "REJECTED_WITHOUT_VECTOR_MUTATION",
+                        }),
+                    );
+                    return;
+                }
+
+                console.log(`[EMBEDDING] Attachment ${entityId} deleted or not found. No operation.`);
+                return;
+            }
+
+            const cleanName = extractPureText(attachment.name);
+            const cleanTaskTitle = extractPureText(attachment.task.title);
+            const contextHeader = [
+                `Entity Type: Attachment`,
+                `Attachment ID: ${attachment.id}`,
+                `Task ID: ${attachment.taskId}`,
+                `Task Title: ${cleanTaskTitle}`,
+                `Project ID: ${attachment.task.projectId}`,
+                `File Name: ${cleanName}`,
+                `File Size: ${attachment.size} bytes`,
+            ].join("\n");
+
+            cleanText = `${contextHeader}\n\nContent:\nAttachment: ${cleanName} on task ${cleanTaskTitle}`;
+            resolvedProjectId = attachment.task.projectId || "";
+            vectorEntityType = "document";
+            parentTaskId = attachment.taskId;
+
+        } else {
+            console.warn(
+                JSON.stringify({
+                    securityEvent: "UNSUPPORTED_EMBEDDING_ENTITY_TYPE",
+                    subsystem: "embedding-worker",
+                    entityType: String(type),
+                    entityId: redactId(entityId),
+                    eventOrgId: redactId(orgId),
+                    action: "REJECTED_WITHOUT_VECTOR_MUTATION",
+                }),
+            );
             return;
         }
 
-        // 3. Hydrate & Chunk
-        const cleanText = buildSemanticPayload(task);
+        // 2. NOW THAT OWNERSHIP IS VERIFIED: Execute Wipe in Tenant Vector Store
+        const vectorStore = getTenantVectorStore(orgId);
+        console.log(`[EMBEDDING] Wiping old vectors for verified entity: ${entityId} in tenant: ${orgId}`);
+        await vectorStore.deleteByTask(entityId);
+
+        // 3. Chunk the text
         const chunks = await chunkTextSemantically(cleanText);
 
         if (chunks.length === 0) {
-            console.log(`[EMBEDDING] Task ${entityId} yielded an empty payload.`);
+            console.log(`[EMBEDDING] Entity ${entityId} yielded an empty payload.`);
             return;
         }
 
-        console.log(`[EMBEDDING] Slicing task into ${chunks.length} semantic chunks.`);
+        console.log(`[EMBEDDING] Slicing entity into ${chunks.length} semantic chunks.`);
 
         // 4. Batch Embeddings with Organization-Aware Resolver
         const resolvedAi = await resolveOrganizationGenerativeAiClient({
@@ -109,7 +251,7 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
         }
 
         // Extract the raw numerical arrays from the Gemini response
-        const embeddings = result.embeddings.map(e => e.values);
+        const embeddings = result.embeddings.map((e) => e.values);
 
         // 5. Rewrite to Pinecone
         const upsertPromises = chunks.map((chunkText, i) => {
@@ -120,9 +262,9 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
                 embeddings[i],
                 {
                     text: chunkText,
-                    taskId: entityId,
-                    projectId: task.projectId || "",
-                    type: "task" as const
+                    taskId: parentTaskId,
+                    projectId: resolvedProjectId,
+                    type: vectorEntityType,
                 }
             );
         });

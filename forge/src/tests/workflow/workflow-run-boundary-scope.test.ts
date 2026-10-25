@@ -21,12 +21,23 @@ jest.mock("@/features/organizations/getOrgAccess", () => ({
 jest.mock("@/lib/auth/auth", () => ({ auth: jest.fn() }));
 
 jest.mock("@/lib/prisma/db", () => ({
-  db: { workflow: { findFirst: jest.fn() } },
+  db: {
+    workflow: { findFirst: jest.fn() },
+    project: { findFirst: jest.fn() },
+  },
 }));
 
 jest.mock("@/lib/workflow/execution/trigger", () => ({
   startWorkflow: jest.fn(),
 }));
+
+jest.mock("@/lib/security/rate-limit", () => {
+  const actual = jest.requireActual("@/lib/security/rate-limit");
+  return {
+    ...actual,
+    checkRateLimit: jest.fn().mockResolvedValue({ allowed: true, headers: {} }),
+  };
+});
 
 import { auth } from "@/lib/auth/auth";
 import { db } from "@/lib/prisma/db";
@@ -174,9 +185,7 @@ describe("POST test-run route", () => {
       },
       select: { id: true, orgId: true },
     });
-    expect(startWorkflowMock).toHaveBeenCalledWith(ORG_A_ID, WORKFLOW_ID, {
-      projectId: "cmnj8u44p0003a0gcvqgt25dv",
-    });
+    expect(startWorkflowMock).toHaveBeenCalledWith(ORG_A_ID, WORKFLOW_ID, {});
     expect(res.status).toBe(200);
     const json = (await res.json()) as Record<string, unknown>;
     expect(json).toMatchObject({

@@ -48,6 +48,12 @@ process.env.GEMINI_API_KEY ??= "jest-placeholder-not-a-real-key";
 process.env.PINECONE_API_KEY_DEV ??= "jest-placeholder-pinecone-dev-key";
 process.env.PINECONE_INDEX_DEV ??= "jest-placeholder-pinecone-dev-index";
 process.env.RAZORPAY_PLAN_ID ??= "plan_test_active";
+process.env.UPSTASH_REDIS_REST_URL ??= "https://jest-placeholder-redis.upstash.io";
+process.env.UPSTASH_REDIS_REST_TOKEN ??= "jest-placeholder-redis-token";
+process.env.QSTASH_URL ??= "https://jest-placeholder-qstash.upstash.io";
+process.env.QSTASH_TOKEN ??= "jest-placeholder-qstash-token";
+process.env.DATABASE_URL ??= "postgresql://postgres:postgres@localhost:5432/forge_test";
+process.env.AUTH_SECRET ??= "jest-placeholder-auth-secret";
 
 // `jest-environment-jsdom` does not expose `TextEncoder`/`TextDecoder`, but the
 // real modules the application imports do reach them - `@prisma/client` pulls in

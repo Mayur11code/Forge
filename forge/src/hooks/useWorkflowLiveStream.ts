@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getPusherClient } from "@/lib/pusher/pusher-client";
+import { workflowChannelName } from "@/lib/pusher/workflow-channel";
 import { StepExecutionStatus } from "@prisma/client";
 import type { AppNode } from "@/lib/workflow-types/workflow";
 
@@ -70,7 +71,7 @@ export function useWorkflowLiveStream(
     const pusher = getPusherClient();
     if (!pusher) return;
 
-    const channelName = `private-workflow-${runId}`;
+    const channelName = workflowChannelName(runId);
     const channel = pusher.subscribe(channelName);
 
     const handleStepChange = (data: StepStateChange) => {

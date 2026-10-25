@@ -12,6 +12,11 @@ import { CredentialPurpose } from "@prisma/client";
 jest.mock("@/lib/prisma/extended", () => ({
   prisma: {
     task: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+    },
+    attachment: {
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
     },
   },
@@ -57,6 +62,11 @@ describe("embedding-worker: Organization BYOK Integration", () => {
     };
     (getTenantVectorStore as jest.Mock).mockReturnValue(mockVectorStore);
 
+    (prisma.task.findFirst as jest.Mock).mockResolvedValue({
+      id: entityId,
+      title: "Test Task",
+      projectId: "project-1",
+    });
     (prisma.task.findUnique as jest.Mock).mockResolvedValue({
       id: entityId,
       title: "Test Task",
