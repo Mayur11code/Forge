@@ -81,6 +81,6 @@
     "eslint-plugin-react-hooks": "7.0.1"
   },
   "prisma": {
-    "seed": "npx ts-node prisma/seed.ts"
+    "seed": "npx tsx prisma/seed.ts"
   }
 }
