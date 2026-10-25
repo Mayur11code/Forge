@@ -10,12 +10,41 @@ import {
   decryptCredential,
   VaultEncryptionError,
 } from "./encryption";
+import {
+  validateGeminiKey,
+  type KeyValidationResult,
+  type ValidationCategory,
+} from "./validation";
 
 export class VaultStatusError extends Error {
   public readonly code = "VAULT_STATUS_ERROR";
   constructor(message: string) {
     super(`[BYOK_VAULT_STATUS] ${message}`);
     this.name = "VaultStatusError";
+  }
+}
+
+export class VaultValidationError extends Error {
+  public readonly code = "VAULT_VALIDATION_ERROR";
+  public readonly category: ValidationCategory;
+  public readonly validationResult?: KeyValidationResult;
+
+  constructor(
+    message: string,
+    category: ValidationCategory = "INVALID_REQUEST",
+    validationResult?: KeyValidationResult
+  ) {
+    super(`[BYOK_VAULT_VALIDATION] ${message}`);
+    this.name = "VaultValidationError";
+    this.category = category;
+    this.validationResult = validationResult;
+  }
+}
+
+export class VaultConcurrencyError extends Error {
+  constructor(message: string) {
+    super(`[VAULT_CONCURRENCY] ${message}`);
+    this.name = "VaultConcurrencyError";
   }
 }
 
@@ -166,7 +195,6 @@ export async function getOrganizationCredentialMetadata(
     select: safeCredentialSelect,
   });
 }
-
 /**
  * Lists all safe credential metadata for an organization.
  * Never leaks ciphertext, auth tags, or secrets.
@@ -286,7 +314,6 @@ export async function updateCredentialStatus(
     select: safeCredentialSelect,
   });
 }
-
 /**
  * Records lastUsedAt timestamp when an active credential is used.
  */
@@ -345,4 +372,202 @@ export async function deleteOrganizationCredential(
     }
     throw err;
   }
+}
+
+export interface StageAndActivateInput {
+  orgId: string;
+  provider?: AiProvider;
+  purpose: CredentialPurpose;
+  apiKey: string;
+  userId?: string | null;
+  overrideKeyring?: Record<string, string>;
+  skipValidation?: boolean;
+}
+
+/**
+ * Safe Staged Key Replacement Lifecycle:
+ * 1. Takes candidate API key.
+ * 2. Validates candidate key against Google Gemini BEFORE modifying the database.
+ * 3. Invariant: Any preexisting ACTIVE credential remains completely untouched and active during validation.
+ * 4. If validation fails, throws VaultValidationError; database is NEVER mutated.
+ * 5. If validation passes, atomically upserts and activates the credential with status ACTIVE.
+ */
+export async function stageAndActivateCredential(
+  input: StageAndActivateInput,
+  prismaClient: DatabaseClient = db
+): Promise<{
+  metadata: OrganizationCredentialMetadata;
+  validationResult: KeyValidationResult;
+}> {
+  const { orgId, purpose, apiKey, userId, overrideKeyring, skipValidation } = input;
+  const provider = input.provider || AiProvider.GEMINI;
+
+  if (!orgId || typeof orgId !== "string" || orgId.trim().length === 0) {
+    throw new VaultEncryptionError("Cannot stage credential: valid orgId is required");
+  }
+  if (!purpose || !Object.values(CredentialPurpose).includes(purpose)) {
+    throw new VaultEncryptionError(`Cannot stage credential: valid purpose is required (got ${purpose})`);
+  }
+  if (!apiKey || typeof apiKey !== "string" || apiKey.trim().length < 4) {
+    throw new VaultEncryptionError("Cannot stage credential: valid API key of at least 4 characters is required");
+  }
+
+  const trimmedKey = apiKey.trim();
+
+  // Snapshot initial state before beginning async provider validation
+  const existingRecord = prismaClient.organizationApiKey?.findUnique
+    ? await prismaClient.organizationApiKey.findUnique({
+        where: {
+          orgId_provider_purpose: {
+            orgId,
+            provider,
+            purpose,
+          },
+        },
+        select: {
+          id: true,
+          updatedAt: true,
+        },
+      })
+    : null;
+
+  // 1. Stage and Validate candidate key BEFORE touching the database
+  let validationResult: KeyValidationResult;
+  if (skipValidation) {
+    validationResult = {
+      valid: true,
+      category: "VALID",
+      message: "Validation skipped.",
+      testedModel: "skip",
+      latencyMs: 0,
+    };
+  } else {
+    validationResult = await validateGeminiKey({
+      apiKey: trimmedKey,
+      purpose,
+    });
+  }
+
+  // If validation fails, fail-closed: DO NOT TOUCH the database! Existing active key remains safe.
+  if (!validationResult.valid) {
+    throw new VaultValidationError(
+      validationResult.message,
+      validationResult.category,
+      validationResult
+    );
+  }
+
+  // 2. Encryption
+  const last4 = trimmedKey.slice(-4);
+  const payload = encryptCredential(
+    trimmedKey,
+    {
+      orgId,
+      provider,
+      purpose,
+    },
+    overrideKeyring
+  );
+
+  // 3. Atomic Compare-And-Swap (CAS) Activation
+  let record: OrganizationCredentialMetadata;
+
+  if (existingRecord) {
+    // An existing record was found before validation.
+    // Atomically update ONLY if updatedAt has not changed during validation.
+    const updateResult = await prismaClient.organizationApiKey.updateMany({
+      where: {
+        id: existingRecord.id,
+        updatedAt: existingRecord.updatedAt,
+      },
+      data: {
+        encryptedKey: payload.encryptedKey,
+        keyIv: payload.keyIv,
+        keyAuthTag: payload.keyAuthTag,
+        keyVersion: payload.keyVersion,
+        last4,
+        status: CredentialStatus.ACTIVE,
+        lastValidatedAt: new Date(),
+        createdByUserId: userId ?? null,
+        updatedAt: new Date(),
+      },
+    });
+
+    if (updateResult.count === 0) {
+      throw new VaultConcurrencyError(
+        `Concurrent credential update detected for org '${orgId}' and purpose '${purpose}'. ` +
+        "Another write modified the credential during validation."
+      );
+    }
+
+    record = (await prismaClient.organizationApiKey.findUniqueOrThrow({
+      where: { id: existingRecord.id },
+      select: safeCredentialSelect,
+    })) as OrganizationCredentialMetadata;
+  } else {
+    // No existing record prior to validation: attempt create.
+    // If another concurrent request created the record, Prisma throws P2002 (unique violation).
+    try {
+      record = (await prismaClient.organizationApiKey.create({
+        data: {
+          orgId,
+          provider,
+          purpose,
+          encryptedKey: payload.encryptedKey,
+          keyIv: payload.keyIv,
+          keyAuthTag: payload.keyAuthTag,
+          keyVersion: payload.keyVersion,
+          last4,
+          status: CredentialStatus.ACTIVE,
+          lastValidatedAt: new Date(),
+          createdByUserId: userId ?? null,
+        },
+        select: safeCredentialSelect,
+      })) as OrganizationCredentialMetadata;
+    } catch (err: unknown) {
+      if (
+        typeof err === "object" &&
+        err !== null &&
+        "code" in err &&
+        (err as { code: string }).code === "P2002"
+      ) {
+        throw new VaultConcurrencyError(
+          `Concurrent credential creation detected for org '${orgId}' and purpose '${purpose}'. ` +
+          "Another write created the credential during validation."
+        );
+      }
+      throw err;
+    }
+  }
+
+  return {
+    metadata: record,
+    validationResult,
+  };
+}
+
+/**
+ * Transitions an organization credential to REVOKED status.
+ * Preserves historical record while immediately disabling resolution.
+ */
+export async function revokeOrganizationCredential(
+  orgId: string,
+  purpose: CredentialPurpose,
+  provider: AiProvider = AiProvider.GEMINI,
+  prismaClient: DatabaseClient = db
+): Promise<OrganizationCredentialMetadata> {
+  return prismaClient.organizationApiKey.update({
+    where: {
+      orgId_provider_purpose: {
+        orgId,
+        provider,
+        purpose,
+      },
+    },
+    data: {
+      status: CredentialStatus.REVOKED,
+      updatedAt: new Date(),
+    },
+    select: safeCredentialSelect,
+  });
 }
