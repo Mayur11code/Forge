@@ -217,7 +217,7 @@ they exist to prevent. Keep them.
 |---|---|
 | `src/lib/workflow/` | engine: `execution/{evaluator,resolver,state,mutex,wrapper,trigger}`, `graph-ui/compiler`, `maintenance` |
 | `src/lib/ai/agent/` | agent runtime, tools, registry, policy, outbox, session service |
-| `src/lib/ai/` | provider binding, `semantic-cache`, prompts |
+| `src/lib/ai/` | provider binding, organization-aware resolver (BYOK), `semantic-cache`, prompts |
 | `src/lib/vector/` | text extraction, semantic chunking, Pinecone client |
 | `src/lib/events/` | event schemas, queue, router, worker factory |
 | `src/lib/tasks/` | canonical task/project writes — the shared write path |
@@ -227,7 +227,7 @@ they exist to prevent. Keep them.
 | `src/lib/redis/`, `src/lib/pusher/`, `src/lib/emails/` | clients |
 | `src/app/actions/` | server actions; the UI's write surface |
 | `src/app/api/` | route handlers; each authenticates itself |
-| `src/tests/` | 85 suites, 1,410 tests, node environment, in-memory Prisma double, db-guard |
+| `src/tests/` | 93 suites, 1,471 tests, node environment, in-memory Prisma double, db-guard |
 
 Tests run against an in-memory Prisma double, and a setup guard makes that
 structural rather than conventional: `jest.setup-db-guard.ts` fails any suite that
@@ -257,7 +257,7 @@ root holds the README, the assets, and the documentation.
 ### database
 
 ```bash
-npx prisma migrate deploy   # 26 applied migrations (1 offline unapplied migration for BYOK)
+npx prisma migrate deploy   # 27 applied migrations (including BYOK organization_api_key)
 npm run build               # runs `prisma generate` first
 ```
 
@@ -312,6 +312,7 @@ The codebase has undergone systematic production-grade hardening passes:
 2. **H2 — Zero-Downtime Credential Rotation:** Dynamic primary-to-fallback failover for Gemini, Pinecone, and QStash with non-retryable error classification and secret-redacting audit telemetry.
 3. **H3 — Distributed Rate Limiting & AI Admission Control:** Multi-tier sliding-window rate limiting for public/auth API routes and token-bucket admission control for resource-intensive AI operations, backed by distributed Upstash Redis.
 4. **BYOK Phase 1 & 1.1 — Secure Credential Vault:** Server-only authenticated encryption (`AES-256-GCM`) with contextual Authenticated Additional Data (AAD) binding tenant identity, provider, and purpose. Strict 32-byte key validation (64-hex / 44-base64), versioned keyrings, `PENDING_VALIDATION` lifecycle invariants, and reviewable offline Prisma migration.
+5. **BYOK Phase 2 & 3 — Key Management, Validation & Organization-Aware Provider Resolution:** Admin settings UI (`ApiKeyManagementCard`) and server actions (`apiKeyActions.ts`) for independent `GENERATION` and `EMBEDDING` Gemini slots. Safe staged key replacement lifecycle with CAS concurrency serialization (preexisting active keys preserved if candidate validation fails or races). Bounded runtime validation against Google (`gemini-3.6-flash`, `gemini-embedding-001`) with strict error categorization. Authoritative subscription entitlement fallback policy (`resolveOrganizationAiPolicy`). Dynamic tenant-isolated provider resolver (`resolveOrganizationLanguageModel`, `resolveOrganizationEmbeddingModel`, `resolveOrganizationGenerativeAiClient`) wired across Chat RAG, Triage, Agent Loop, Stream Audit, Embedding Worker, and Vector Retrieval. Strict refusal to silently fall back on broken or quota-exhausted keys.
 
 ---
 
