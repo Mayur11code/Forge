@@ -6,6 +6,7 @@ import type { JsonValue } from "@/lib/workflow-types/type";
 import type { StepExecutionStatus } from "@prisma/client";
 import { Redis } from '@upstash/redis';
 import { pusherServer } from "@/lib/pusher/pusher-server";
+import { workflowChannelName } from "@/lib/pusher/workflow-channel";
 
 
 export const redis = Redis.fromEnv();
@@ -61,7 +62,7 @@ function describeError(error: unknown): string {
  */
 const broadcastStatus = async (runId: string, stepId: string, status: string) => {
   await pusherServer
-    .trigger(`private-workflow-${runId}`, "STEP_STATE_CHANGE", {
+    .trigger(workflowChannelName(runId), "STEP_STATE_CHANGE", {
       stepId,
       status,
       timestamp: Date.now(),

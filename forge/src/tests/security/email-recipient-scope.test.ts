@@ -19,6 +19,7 @@ jest.mock("@/lib/pusher/pusher-server", () => ({
 import { db } from "@/lib/prisma/db";
 import { executeSendEmail } from "@/lib/emails/core-service";
 import { pusherServer } from "@/lib/pusher/pusher-server";
+import { organizationChannelName } from "@/lib/pusher/org-channel";
 import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 
 const membershipFindUniqueMock = db.membership.findUnique as jest.Mock;
@@ -81,7 +82,7 @@ describe("SEND_EMAIL recipient resolution", () => {
       ),
     });
     expect(pusherTriggerMock).toHaveBeenCalledWith(
-      `org-${ORG_A}`,
+      organizationChannelName(ORG_A),
       "job-completed",
       { message: expect.any(String) },
     );

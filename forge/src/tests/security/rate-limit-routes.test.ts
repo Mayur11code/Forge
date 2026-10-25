@@ -279,9 +279,7 @@ describe("H3 Route & Action Boundary Verification", () => {
 
       expect(res.status).toBe(200);
       expect(res.headers.get("X-RateLimit-Remaining")).toBe("4");
-      expect(startWorkflowMock).toHaveBeenCalledWith("org_target", "wf_target", {
-        projectId: "cmnj8u44p0003a0gcvqgt25dv",
-      });
+      expect(startWorkflowMock).toHaveBeenCalledWith("org_target", "wf_target", {});
     });
   });
 
