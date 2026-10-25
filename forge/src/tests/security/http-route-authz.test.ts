@@ -46,6 +46,14 @@ jest.mock("@/lib/tasks/create-task", () => ({
   createTaskInOrg: jest.fn(),
 }));
 
+jest.mock("@/lib/security/rate-limit", () => {
+  const actual = jest.requireActual("@/lib/security/rate-limit");
+  return {
+    ...actual,
+    checkRateLimit: jest.fn().mockResolvedValue({ allowed: true, headers: {} }),
+  };
+});
+
 jest.mock("@/lib/ai/provider", () => ({ googleProvider: {} }));
 jest.mock("@/lib/ai/schemas", () => ({
   architectureReportSchema: {},

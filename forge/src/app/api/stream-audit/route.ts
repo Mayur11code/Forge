@@ -1,14 +1,16 @@
 // src/app/api/stream-audit/route.ts
 import { streamText, Output } from 'ai';
-import { googleProvider } from '@/lib/ai/provider';
+import { resolveOrganizationLanguageModel, AiResolverError } from '@/lib/ai/resolver';
 import { architectureReportSchema } from '@/lib/ai/schemas';
 import { auth } from '@/lib/auth/auth';
+import { db } from '@/lib/prisma/db';
 
 export const runtime = 'nodejs';
 
-// S3 (security) — AUTHENTICATE. This endpoint drives a paid model against the
-// shared provider key. Without a check it was an anonymous, unthrottled cost
-// sink. Require an authenticated session before invoking the model.
+// S3 (security) — AUTHENTICATE and TENANT-AUTHORIZE.
+// This endpoint drives a paid model. Requires an authenticated session,
+// validates tenant membership before accessing organization credentials,
+// and enforces entitlement policy via resolveOrganizationLanguageModel.
 export async function POST(req: Request) {
   try {
     const session = await auth();
@@ -30,8 +32,48 @@ export async function POST(req: Request) {
       );
     }
 
+    const rawOrgId =
+      typeof body.orgId === 'string' && body.orgId.trim()
+        ? body.orgId.trim()
+        : null;
+
+    let targetOrgId = rawOrgId;
+
+    if (targetOrgId) {
+      const membership = await db.membership.findUnique({
+        where: {
+          userId_orgId: {
+            userId: session.user.id,
+            orgId: targetOrgId,
+          },
+        },
+      });
+
+      if (!membership) {
+        return Response.json(
+          { error: 'Forbidden: You do not have access to this organization.' },
+          { status: 403 }
+        );
+      }
+    } else {
+      const userMembership = await db.membership.findFirst({
+        where: { userId: session.user.id },
+        select: { orgId: true },
+      });
+
+      if (!userMembership) {
+        return Response.json(
+          { error: 'Forbidden: User does not belong to any organization.' },
+          { status: 403 }
+        );
+      }
+      targetOrgId = userMembership.orgId;
+    }
+
+    const model = await resolveOrganizationLanguageModel({ orgId: targetOrgId });
+
     const result = streamText({
-      model: googleProvider('gemini-3.6-flash'),
+      model,
       output: Output.object({
         schema: architectureReportSchema,
       }),
@@ -43,6 +85,13 @@ export async function POST(req: Request) {
 
     return result.toTextStreamResponse();
   } catch (error) {
+    if (error instanceof AiResolverError) {
+      return Response.json(
+        { error: error.message, code: error.code },
+        { status: error.code === 'ORGANIZATION_KEY_REQUIRED' ? 402 : 400 }
+      );
+    }
+
     console.error('Stream audit failed:', error);
 
     return Response.json(

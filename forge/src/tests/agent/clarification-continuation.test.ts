@@ -49,6 +49,18 @@ jest.mock("@/lib/ai/agent/status", () => ({ publishAgentStatus: jest.fn() }));
 
 jest.mock("@/lib/auth/auth", () => ({ auth: jest.fn() }));
 
+jest.mock("@/lib/security/vault/policy", () => ({
+  resolveOrganizationAiPolicy: jest.fn().mockResolvedValue({
+    orgId: "org_1",
+    purpose: "GENERATION",
+    allowPlatformFallback: true,
+    requiresByok: false,
+    tierResolved: true,
+    tierIdentifier: "plan_test",
+    reason: "Active subscription entitled to Forge platform AI fallback.",
+  }),
+}));
+
 jest.mock("@/lib/ai/agent/model", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { MockLanguageModelV3 } = require("ai/test");

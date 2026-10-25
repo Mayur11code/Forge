@@ -52,6 +52,18 @@ jest.mock("@/lib/prisma/db", () => {
 
 jest.mock("@/lib/events/queue", () => ({ publishEvent: jest.fn() }));
 
+jest.mock("@/lib/security/vault/policy", () => ({
+  resolveOrganizationAiPolicy: jest.fn().mockResolvedValue({
+    orgId: "org_1",
+    purpose: "GENERATION",
+    allowPlatformFallback: true,
+    requiresByok: false,
+    tierResolved: true,
+    tierIdentifier: "plan_test",
+    reason: "Active subscription entitled to Forge platform AI fallback.",
+  }),
+}));
+
 // Only the model call is replaced. The rest of `ai` is real, because the tool
 // registry builds its tools with the real `tool()` helper.
 jest.mock("ai", () => {
