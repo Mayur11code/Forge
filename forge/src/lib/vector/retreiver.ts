@@ -2,6 +2,81 @@
 import { embed } from 'ai';
 import { resolveOrganizationEmbeddingModel } from '@/lib/ai/resolver';
 import { getTenantVectorStore } from './client';
+import { db } from '@/lib/prisma/db';
+
+/**
+ * Verifies that candidate vector matches correspond to active, existing records in the database
+ * belonging to the specified tenant organization.
+ * Filters out stale vectors from tasks or attachments that have been deleted in PostgreSQL
+ * during the asynchronous Pinecone cleanup window.
+ */
+export async function filterActiveRagCandidates(
+    matches: Array<{ id: string; metadata?: Record<string, unknown>; score?: number }>,
+    orgId: string
+) {
+    if (!matches || matches.length === 0) return [];
+
+    const taskCandidateIds = new Set<string>();
+    const attachmentCandidateIds = new Set<string>();
+
+    for (const match of matches) {
+        const entityId = match.id.split("#")[0];
+        const type = match.metadata?.type;
+        const taskId = typeof match.metadata?.taskId === "string" ? match.metadata.taskId : undefined;
+
+        if (type === "document") {
+            if (entityId) attachmentCandidateIds.add(entityId);
+            if (taskId) taskCandidateIds.add(taskId);
+        } else {
+            // Task vector
+            const idToVerify = taskId || entityId;
+            if (idToVerify) taskCandidateIds.add(idToVerify);
+        }
+    }
+
+    // Execute bounded, batched lookups
+    const [existingTasks, existingAttachments] = await Promise.all([
+        taskCandidateIds.size > 0
+            ? db.task.findMany({
+                  where: {
+                      id: { in: Array.from(taskCandidateIds) },
+                      project: { orgId },
+                  },
+                  select: { id: true },
+              })
+            : [],
+        attachmentCandidateIds.size > 0
+            ? db.attachment.findMany({
+                  where: {
+                      id: { in: Array.from(attachmentCandidateIds) },
+                      task: { project: { orgId } },
+                  },
+                  select: { id: true, taskId: true },
+              })
+            : [],
+    ]);
+
+    const activeTaskIds = new Set(existingTasks.map((t) => t.id));
+    const activeAttachmentIds = new Set(existingAttachments.map((a) => a.id));
+
+    // Filter matches: only retain chunks whose underlying resources exist and belong to orgId
+    return matches.filter((match) => {
+        const entityId = match.id.split("#")[0];
+        const type = match.metadata?.type;
+        const taskId = typeof match.metadata?.taskId === "string" ? match.metadata.taskId : undefined;
+
+        if (type === "document") {
+            // Document chunk requires both attachment and parent task to exist in org
+            if (!activeAttachmentIds.has(entityId)) return false;
+            if (taskId && !activeTaskIds.has(taskId)) return false;
+            return true;
+        } else {
+            // Task chunk requires task to exist in org
+            const idToVerify = taskId || entityId;
+            return activeTaskIds.has(idToVerify);
+        }
+    });
+}
 
 /**
  * Converts a raw user query string into a vector embedding using the global provider,
@@ -16,8 +91,6 @@ export async function retrieveRelevantContext(
         if (!orgId) throw new Error("CRITICAL: Tenant isolation key (orgId) missing during retrieval.");
 
         // 1. Generate Query Vector Embedding via the Global Singleton Provider
-        // We use the 'embed' function from the Vercel AI SDK passed into our singleton instance
-        // 1. Generate query vector embedding
         const { embedding } = await embed({
             model: await resolveOrganizationEmbeddingModel({ orgId }),
             value: userQuery,
@@ -44,10 +117,20 @@ export async function retrieveRelevantContext(
             return "";
         }
 
-        // 4. Assemble and Format the Context Block
-        const compiledContextBlocks = searchHits.matches
+        // 4. Guard against stale vectors: batch-validate that resources still exist in DB
+        const activeMatches = await filterActiveRagCandidates(
+            searchHits.matches as Array<{ id: string; metadata?: Record<string, unknown>; score?: number }>,
+            orgId
+        );
+
+        if (activeMatches.length === 0) {
+            return "";
+        }
+
+        // 5. Assemble and Format the Context Block
+        const compiledContextBlocks = activeMatches
             .map((hit, index) => {
-                const textPayload = hit.metadata?.text;
+                const textPayload = typeof hit.metadata?.text === "string" ? hit.metadata.text : undefined;
                 if (!textPayload) return null;
 
                 // Extract relational variables if they exist on metadata

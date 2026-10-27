@@ -24,6 +24,13 @@
 
 jest.mock("server-only", () => ({}));
 
+const mockVectorDeleteByTask = jest.fn().mockResolvedValue(undefined);
+jest.mock("@/lib/vector/client", () => ({
+  getTenantVectorStore: jest.fn(() => ({
+    deleteByTask: mockVectorDeleteByTask,
+  })),
+}));
+
 jest.mock("@/lib/auth/auth", () => ({ auth: jest.fn() }));
 
 jest.mock("@/lib/prisma/db", () => ({
@@ -36,6 +43,13 @@ jest.mock("@/lib/prisma/db", () => ({
       delete: jest.fn(),
     },
     organization: { update: jest.fn() },
+    domainOutboxEvent: {
+      findUnique: jest.fn().mockResolvedValue(null),
+      upsert: jest.fn().mockResolvedValue({ id: "outbox_1" }),
+      update: jest.fn().mockResolvedValue({ id: "outbox_1" }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     $transaction: jest.fn(),
   },
 }));
@@ -253,7 +267,12 @@ describe("S9 deleteAttachment is authenticated and tenant-scoped", () => {
       task: { project: { orgId: "org_1" } },
     });
     onlyDeleteSpy().mockResolvedValue({ success: true });
-    transaction.mockResolvedValue([]);
+    transaction.mockImplementation(async (arg: unknown) => {
+      if (typeof arg === "function") {
+        return await (arg as (tx: unknown) => Promise<unknown>)(db);
+      }
+      return Array.isArray(arg) ? Promise.all(arg) : arg;
+    });
 
     await deleteAttachment("att_1");
 
@@ -271,6 +290,7 @@ describe("S9 deleteAttachment is authenticated and tenant-scoped", () => {
     expect(onlyDeleteSpy()).toHaveBeenCalledWith("key_1");
     expect(attachmentDelete).toHaveBeenCalled();
     expect(organizationUpdate).toHaveBeenCalled();
+    expect(mockVectorDeleteByTask).toHaveBeenCalledWith("att_1");
   });
 
   it("refuses a foreign attachment without touching storage", async () => {
