@@ -6,6 +6,9 @@ import { fileWorkerHandler } from "@/app/api/worker/file-worker/fw";
 import { emailWorkerHandler } from "@/app/api/worker/email-worker/ew";
 import { cronWorkerHandler } from "@/app/api/worker/cron-worker/cw";
 import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
+import { taskDeletedWorkerHandler } from "@/app/api/worker/embedding-worker/task-deleted";
+import { domainCleanupWorkerHandler } from "@/app/api/worker/embedding-worker/domain-cleanup";
+import { handleDomainMaintenance } from "./domain-maintenance/dm";
 import { handleAgentLoop } from "./agent-loop/al";
 import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentMaintenance } from "./agent-maintenance/am";
@@ -19,6 +22,9 @@ const handleCron = createWorker("CRON_DAILY_DIGEST", cronWorkerHandler);
 // 2. Create the CDC Workers routing to the single Idempotent handler
 // FIX: Point the EMBEDDING_REQUESTED event directly to our Gemini worker
 const handleEmbedding = createWorker("EMBEDDING_REQUESTED", embeddingWorkerHandler);
+const handleTaskDeleted = createWorker("TASK_DELETED", taskDeletedWorkerHandler);
+const handleDomainCleanup = createWorker("DOMAIN_CLEANUP_REQUESTED", domainCleanupWorkerHandler);
+const handleDomainMaintenanceEvent = createWorker("DOMAIN_MAINTENANCE_REQUESTED", handleDomainMaintenance);
 const handleAgentLoopEvent = createWorker("AGENT_LOOP_REQUESTED", handleAgentLoop);
 
 // With USE_MULTI_TOPICS = false every event is published to the single "events"
@@ -121,6 +127,15 @@ export async function POST(req: NextRequest) {
 
       case "SEND_EMAIL":
         return await handleEmail(req);
+
+      case "TASK_DELETED":
+        return await handleTaskDeleted(req);
+
+      case "DOMAIN_CLEANUP_REQUESTED":
+        return await handleDomainCleanup(req);
+
+      case "DOMAIN_MAINTENANCE_REQUESTED":
+        return await handleDomainMaintenanceEvent(req);
 
       case "EMBEDDING_REQUESTED":
         return await handleEmbedding(req);

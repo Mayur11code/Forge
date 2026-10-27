@@ -63,6 +63,8 @@ const topicMap: Record<EventType, string> = {
     AGENT_LOOP_REQUESTED: "agent-loop-requested",
   AGENT_TOOL_EXECUTION_REQUESTED: "agent-tool-execution-requested",
   AGENT_MAINTENANCE_REQUESTED: "agent-maintenance-requested",
+  DOMAIN_CLEANUP_REQUESTED: "domain-cleanup",
+  DOMAIN_MAINTENANCE_REQUESTED: "domain-maintenance-requested",
 };
 
 export function getTopic(event: EventType): string {
