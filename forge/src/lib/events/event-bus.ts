@@ -10,7 +10,7 @@ import { EventType, EventPayloadMap } from "./schema";
  * (src/lib/prisma/extended.ts) already interpolates the task title into a
  * subject and body, so the bus does not need the title itself.
  *
- * `TASK_UPDATED` and `TASK_DELETED` are listed because they are dispatched, but
+ * `TASK_UPDATED` is listed because it is dispatched (TASK_DELETED routes to vector cleanup), but
  * note they have no routing rule below - see `dispatchEvent`.
  */
 export type TriggerPayloads = {
@@ -32,6 +32,7 @@ export type TriggerPayloads = {
     body: string;
   };
   TASK_DELETED: {
+    attachmentIds?: string[];
     taskId: string;
     orgId: string;
     projectId: string;
@@ -141,6 +142,29 @@ const EVENT_ROUTING: RoutingTable = {
         userId: p.userId,
         subject: p.subject,
         body: p.body,
+      },
+    }),
+  ],
+
+  TASK_DELETED: [
+    (p) => ({
+      type: "TASK_DELETED",
+      payload: {
+        orgId: p.orgId,
+        taskId: p.taskId,
+        projectId: p.projectId,
+        attachmentIds: p.attachmentIds ?? [],
+      },
+    }),
+    (p) => ({
+      type: "ANALYTICS_EVENT",
+      payload: {
+        orgId: p.orgId,
+        eventName: "TASK_DELETED",
+        metadata: {
+          taskId: p.taskId,
+          projectId: p.projectId,
+        },
       },
     }),
   ],
@@ -258,30 +282,36 @@ const EVENT_ROUTING: RoutingTable = {
  *
  * `Promise.allSettled` is deliberate: one failing job must not stop the others.
  */
+export interface DispatchEventResult {
+  ok: boolean;
+  errors: unknown[];
+}
+
 export async function dispatchEvent<T extends keyof TriggerPayloads>(
   trigger: T,
   payload: TriggerPayloads[T],
-) {
-    const handlers = EVENT_ROUTING[trigger];
+): Promise<DispatchEventResult> {
+  const handlers = EVENT_ROUTING[trigger];
 
-    if (!handlers) return;
+  if (!handlers) return { ok: true, errors: [] };
 
-    const results = await Promise.allSettled(
-        handlers.map((handlerFn) => {
-            const job = handlerFn(payload);
-            return publishEvent(job.type, job.payload);
-        })
-    );
+  const results = await Promise.allSettled(
+    handlers.map((handlerFn) => {
+      const job = handlerFn(payload);
+      return publishEvent(job.type, job.payload);
+    }),
+  );
 
-    // Log errors for failed jobs so they don't disappear into the void
-    results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-            console.error(
-                `Event failed at index ${index} for trigger "${trigger}":`, 
-                result.reason
-            );
-            //sentry later
+  const errors: unknown[] = [];
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      console.error(
+        `Event failed at index ${index} for trigger "${trigger}":`,
+        result.reason,
+      );
+      errors.push(result.reason);
+    }
+  });
 
-            }
-    });
+  return { ok: errors.length === 0, errors };
 }
