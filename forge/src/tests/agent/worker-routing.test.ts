@@ -25,6 +25,12 @@ jest.mock("@/app/api/worker/email-worker/ew", () => ({
 jest.mock("@/app/api/worker/cron-worker/cw", () => ({
   cronWorkerHandler: jest.fn(),
 }));
+jest.mock("@/app/api/worker/embedding-worker/task-deleted", () => ({
+  taskDeletedWorkerHandler: jest.fn(),
+}));
+jest.mock("@/app/api/worker/embedding-worker/domain-cleanup", () => ({
+  domainCleanupWorkerHandler: jest.fn(),
+}));
 jest.mock("@/app/api/worker/embedding-worker/ew", () => ({
   embeddingWorkerHandler: jest.fn(),
 }));
@@ -40,6 +46,9 @@ jest.mock("@/app/api/worker/agent-maintenance/am", () => ({
 
 jest.mock("@/app/api/worker/workflow-maintenance/wm", () => ({
   handleWorkflowMaintenance: jest.fn(),
+}));
+jest.mock("@/app/api/worker/domain-maintenance/dm", () => ({
+  handleDomainMaintenance: jest.fn(),
 }));
 
 // The workflow engine's shared handler. Mocked so the dispatcher test does not
@@ -117,6 +126,7 @@ import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentLoop } from "@/app/api/worker/agent-loop/al";
 import { handleWorkflowMaintenance } from "@/app/api/worker/workflow-maintenance/wm";
 import { handleAgentMaintenance } from "@/app/api/worker/agent-maintenance/am";
+import { handleDomainMaintenance } from "@/app/api/worker/domain-maintenance/dm";
 import { handleWorkflowEvent } from "@/app/api/workflow/wf";
 import { POST } from "@/app/api/worker/route";
 
@@ -132,6 +142,9 @@ const workflowMaintenanceHandlerMock =
   >;
 const maintenanceHandlerMock = handleAgentMaintenance as jest.MockedFunction<
   typeof handleAgentMaintenance
+>;
+const domainMaintenanceHandlerMock = handleDomainMaintenance as jest.MockedFunction<
+  typeof handleDomainMaintenance
 >;
 
 function bindings(): Map<string, unknown> {
@@ -176,6 +189,12 @@ describe("event to handler bindings", () => {
     // scheduled tick into the "known event with no handler" 500.
     expect(bindings().get("WORKFLOW_MAINTENANCE_REQUESTED")).toBe(
       workflowMaintenanceHandlerMock,
+    );
+  });
+
+  it("binds DOMAIN_MAINTENANCE_REQUESTED to the domain maintenance worker", () => {
+    expect(bindings().get("DOMAIN_MAINTENANCE_REQUESTED")).toBe(
+      domainMaintenanceHandlerMock,
     );
   });
 
@@ -229,6 +248,26 @@ describe("dispatch", () => {
     await expect(res.json()).resolves.toEqual({
       ok: true,
       eventType: "WORKFLOW_MAINTENANCE_REQUESTED",
+    });
+  });
+
+  it("routes DOMAIN_CLEANUP_REQUESTED", async () => {
+    const res = await post("DOMAIN_CLEANUP_REQUESTED");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      eventType: "DOMAIN_CLEANUP_REQUESTED",
+    });
+  });
+
+  it("routes DOMAIN_MAINTENANCE_REQUESTED", async () => {
+    const res = await post("DOMAIN_MAINTENANCE_REQUESTED");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      ok: true,
+      eventType: "DOMAIN_MAINTENANCE_REQUESTED",
     });
   });
 

@@ -22,6 +22,8 @@ export const EventTypes = [
   "AGENT_LOOP_REQUESTED",
   "AGENT_TOOL_EXECUTION_REQUESTED",
   "AGENT_MAINTENANCE_REQUESTED",
+  "DOMAIN_CLEANUP_REQUESTED",
+  "DOMAIN_MAINTENANCE_REQUESTED",
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
@@ -47,6 +49,7 @@ export const eventSchemas = {
   }),
 
   TASK_DELETED: baseEventSchema.extend({
+    attachmentIds: z.array(z.string()).optional(),
     taskId: z.string(),
     projectId: z.string(),
   }),
@@ -183,6 +186,16 @@ export const eventSchemas = {
     // only useful answer to a typo in an external config.
     .strict(),
 
+  DOMAIN_CLEANUP_REQUESTED: z.object({
+    outboxEventId: z.string(),
+    orgId: z.string().optional(),
+  }),
+
+  DOMAIN_MAINTENANCE_REQUESTED: z
+    .object({
+      limit: z.number().int().min(1).max(500).default(50),
+    })
+    .strict(),
 } satisfies Record<EventType, z.ZodTypeAny>;
 
 // -----------------------------
