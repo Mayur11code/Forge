@@ -1,7 +1,7 @@
 
 import { z } from 'zod';
 
-export const VectorMetadataSchema = z.object({
+const BaseVectorMetadataSchema = z.object({
   // The actual semantic chunk representation
   text: z.string().min(1, "Text chunk cannot be empty"),
   
@@ -16,7 +16,13 @@ export const VectorMetadataSchema = z.object({
   // Optional relations (Must remain flat strings, NEVER nested objects)
   taskId: z.string().optional(),
   status: z.enum(['TODO', 'IN_PROGRESS', 'DONE']).optional(),
-})
+
+  // Authoritative versioning for data freshness
+  sourceVersion: z.string().min(1).optional(),
+  parentTaskVersion: z.string().min(1).optional(),
+});
+
+export const VectorMetadataSchema = BaseVectorMetadataSchema
 // THE SANITIZER: Pinecone crashes on null/undefined. 
 // This transformation scrubs the object before it hits the network.
 .transform((data) => {
@@ -32,7 +38,7 @@ export const PineconeRecordSchema = z.object({
 });
 
 // Single Source of Truth for TypeScript Types
-export type VectorMetadata = z.infer<typeof VectorMetadataSchema>;
+export type VectorMetadata = z.input<typeof BaseVectorMetadataSchema>;
 export type PineconeRecord = z.infer<typeof PineconeRecordSchema>;
 
 

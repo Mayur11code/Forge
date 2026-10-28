@@ -10,8 +10,8 @@ import { EventType, EventPayloadMap } from "./schema";
  * (src/lib/prisma/extended.ts) already interpolates the task title into a
  * subject and body, so the bus does not need the title itself.
  *
- * `TASK_UPDATED` is listed because it is dispatched (TASK_DELETED routes to vector cleanup), but
- * note they have no routing rule below - see `dispatchEvent`.
+ * `TASK_UPDATED` routes to `EMBEDDING_REQUESTED` to synchronize vector index state
+ * on task modifications, maintaining strict vector freshness.
  */
 export type TriggerPayloads = {
   USER_SIGNED_UP: { orgId: string; userId: string };
@@ -146,6 +146,29 @@ const EVENT_ROUTING: RoutingTable = {
     }),
   ],
 
+  TASK_UPDATED: [
+    (p) => ({
+      type: "EMBEDDING_REQUESTED",
+      payload: {
+        orgId: p.orgId,
+        entityId: p.taskId,
+        type: "TASK",
+      },
+    }),
+
+    (p) => ({
+      type: "ANALYTICS_EVENT",
+      payload: {
+        orgId: p.orgId,
+        eventName: "TASK_UPDATED",
+        metadata: {
+          taskId: p.taskId,
+          projectId: p.projectId,
+        },
+      },
+    }),
+  ],
+
   TASK_DELETED: [
     (p) => ({
       type: "TASK_DELETED",
@@ -273,12 +296,8 @@ const EVENT_ROUTING: RoutingTable = {
 /**
  * Fan a trigger out to every job its rules produce.
  *
- * A trigger with no rule is a no-op, not an error: `TASK_UPDATED` and
- * `TASK_DELETED` are dispatched by the Prisma extension but have no routing
- * entry, so today a task edit or delete produces no event at all. That is a real
- * gap - the vector index goes stale on every update - but it is a product
- * decision rather than a type error, so it is left visible here instead of
- * being papered over with a cast.
+ * A trigger with no rule is a no-op, not an error. `TASK_UPDATED` routes to
+ * `EMBEDDING_REQUESTED` to trigger vector re-embedding on task updates.
  *
  * `Promise.allSettled` is deliberate: one failing job must not stop the others.
  */
