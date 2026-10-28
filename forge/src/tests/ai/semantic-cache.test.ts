@@ -1279,12 +1279,19 @@ describe('Forge Semantic Cache — production hardening', () => {
     });
 
     it('captures task and attachment provenance, including the parent task', async () => {
+      const taskR = taskRow('task_1');
+      const attR = attachmentRow('att_1', 'task_1');
       mockTenantVectorQuery.mockResolvedValueOnce({
         matches: [
           {
             id: 'task_1#0',
             score: 0.9,
-            metadata: { type: 'task', taskId: 'task_1', text: 'Task body' },
+            metadata: {
+              type: 'task',
+              taskId: 'task_1',
+              text: 'Task body',
+              sourceVersion: taskSourceVersion(taskR),
+            },
           },
           {
             id: 'att_1#0',
@@ -1293,14 +1300,14 @@ describe('Forge Semantic Cache — production hardening', () => {
               type: 'document',
               taskId: 'task_1',
               text: 'Attachment body',
+              sourceVersion: attachmentSourceVersion(attR),
+              parentTaskVersion: taskSourceVersion(taskR),
             },
           },
         ],
       });
-      mockDb.task.findMany.mockResolvedValue([taskRow('task_1')]);
-      mockDb.attachment.findMany.mockResolvedValue([
-        attachmentRow('att_1', 'task_1'),
-      ]);
+      mockDb.task.findMany.mockResolvedValue([taskR]);
+      mockDb.attachment.findMany.mockResolvedValue([attR]);
 
       const result = await retrieveRelevantContextWithProvenance(
         'What is task 1?',
@@ -1492,7 +1499,12 @@ describe('Forge Semantic Cache — production hardening', () => {
           {
             id: 'task_1#0',
             score: 0.92,
-            metadata: { type: 'task', taskId: 'task_1', text: 'Steps' },
+            metadata: {
+              type: 'task',
+              taskId: 'task_1',
+              text: 'Steps',
+              sourceVersion: taskSourceVersion(taskRow('task_1')),
+            },
           },
         ],
       });
@@ -1517,7 +1529,12 @@ describe('Forge Semantic Cache — production hardening', () => {
           {
             id: 'task_1#0',
             score: 0.92,
-            metadata: { type: 'task', taskId: 'task_1', text: 'Steps' },
+            metadata: {
+              type: 'task',
+              taskId: 'task_1',
+              text: 'Steps',
+              sourceVersion: taskSourceVersion(taskRow('task_1')),
+            },
           },
         ],
       });
@@ -1548,7 +1565,12 @@ describe('Forge Semantic Cache — production hardening', () => {
           {
             id: 'task_1#0',
             score: 0.92,
-            metadata: { type: 'task', taskId: 'task_1', text: 'Steps' },
+            metadata: {
+              type: 'task',
+              taskId: 'task_1',
+              text: 'Steps',
+              sourceVersion: taskSourceVersion(taskRow('task_1')),
+            },
           },
         ],
       });
@@ -1585,6 +1607,7 @@ describe('Forge Semantic Cache — production hardening', () => {
               type: 'task',
               taskId: 'task_1',
               text: 'Deployment steps',
+              sourceVersion: taskSourceVersion(taskRow('task_1')),
             },
           },
         ],
@@ -1636,7 +1659,12 @@ describe('Forge Semantic Cache — production hardening', () => {
           {
             id: 'task_1#0',
             score: 0.92,
-            metadata: { type: 'task', taskId: 'task_1', text: 'Steps' },
+            metadata: {
+              type: 'task',
+              taskId: 'task_1',
+              text: 'Steps',
+              sourceVersion: taskSourceVersion(taskRow('task_1')),
+            },
           },
         ],
       });
