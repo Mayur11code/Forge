@@ -74,6 +74,45 @@ describe("Production Hardening H1 — Environment Validation & Airgap", () => {
       expect(() => getAiEnv({})).toThrow(/GEMINI_API_KEY/);
     });
 
+    it("defaults ENABLE_SEMANTIC_CACHE to false when it is not set", () => {
+      const parsed = getAiEnv({ GEMINI_API_KEY: "valid-gemini-key" });
+      expect(parsed.ENABLE_SEMANTIC_CACHE).toBe("false");
+    });
+
+    it("accepts explicit ENABLE_SEMANTIC_CACHE=false", () => {
+      const parsed = getAiEnv({
+        GEMINI_API_KEY: "valid-gemini-key",
+        ENABLE_SEMANTIC_CACHE: "false",
+      });
+      expect(parsed.ENABLE_SEMANTIC_CACHE).toBe("false");
+    });
+
+    it("accepts explicit ENABLE_SEMANTIC_CACHE=true", () => {
+      const parsed = getAiEnv({
+        GEMINI_API_KEY: "valid-gemini-key",
+        ENABLE_SEMANTIC_CACHE: "true",
+      });
+      expect(parsed.ENABLE_SEMANTIC_CACHE).toBe("true");
+    });
+
+    it.each(["1", "TRUE", "yes", "enabled", ""])(
+      "rejects malformed ENABLE_SEMANTIC_CACHE value %p",
+      (value) => {
+        expect(() =>
+          getAiEnv({
+            GEMINI_API_KEY: "valid-gemini-key",
+            ENABLE_SEMANTIC_CACHE: value,
+          })
+        ).toThrow(EnvValidationError);
+        expect(() =>
+          getAiEnv({
+            GEMINI_API_KEY: "valid-gemini-key",
+            ENABLE_SEMANTIC_CACHE: value,
+          })
+        ).toThrow(/ENABLE_SEMANTIC_CACHE/);
+      }
+    );
+
     it("validates QStash environment and rejects malformed URLs", () => {
       const parsed = getQstashEnv({
         QSTASH_URL: "https://qstash.upstash.io",
