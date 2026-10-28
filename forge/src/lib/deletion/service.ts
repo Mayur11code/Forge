@@ -21,6 +21,7 @@ import {
 } from "./outbox";
 import { getTenantVectorStore } from "@/lib/vector/client";
 import { UTApi } from "uploadthing/server";
+import { invalidateSemanticCacheBestEffort } from "@/lib/ai/cache-lifecycle";
 
 const utapi = new UTApi();
 
@@ -115,6 +116,14 @@ export async function deleteTaskTransactionally(
     : await db.$transaction(executeInTx, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       });
+
+  // The deletion is committed. Drop the org's cached answers so they cannot be
+  // reused for the pre-deletion source set. Only safe when this call owns the
+  // transaction: with an external tx the commit has not happened yet, and the
+  // caller is responsible for invalidating once its transaction commits.
+  if (!existingTx) {
+    await invalidateSemanticCacheBestEffort(result.orgId);
+  }
 
   // Fast-path dispatch trigger (non-blocking, best-effort latency optimization)
   dispatchDomainOutboxBatch(10).catch((err) => {
@@ -237,6 +246,10 @@ export async function deleteProjectTransactionally(
   const result = await db.$transaction(executeInTx, {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
   });
+
+  // Deletion is committed: cached answers for the old project/task set are no
+  // longer reusable. Best-effort and feature-flag gated.
+  await invalidateSemanticCacheBestEffort(result.orgId);
 
   // Fast-path dispatch trigger
   dispatchDomainOutboxBatch(10).catch((err) => {

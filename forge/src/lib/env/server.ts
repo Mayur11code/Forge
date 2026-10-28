@@ -91,6 +91,10 @@ export const aiServerSchema = z.object({
     .positive("AGENT_APPROVAL_TIMEOUT_MS must be a positive number")
     .default(600000),
   AGENT_LOOP_REQUESTED_TOPIC: z.string().optional(),
+  ENABLE_SEMANTIC_CACHE: z
+    .enum(["true", "false"])
+    .optional()
+    .default("false"),
 });
 
 /**

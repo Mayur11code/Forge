@@ -1,35 +1,37 @@
 // src/lib/ai/cache-stream.ts
+import crypto from "crypto";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
 } from 'ai';
 
-const CHUNK_SIZE = 20;
-const CHUNK_DELAY_MS = 15;
+export interface SimulateCachedStreamOptions {
+  headers?: Record<string, string> | HeadersInit;
+}
 
-const sleep = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms));
+/**
+ * Returns a simulated AI SDK UI-message stream response for a cached text answer.
+ * Emits text-start, text-delta, and text-end events immediately without artificial delay
+ * to avoid holding serverless compute connections open.
+ */
+export function simulateCachedStream(
+  text: string,
+  options?: SimulateCachedStreamOptions
+): Response {
+  const messageId = `cached-${crypto.randomUUID()}`;
 
-export function simulateCachedStream(text: string): Response {
   const stream = createUIMessageStream({
-    execute: async ({ writer }) => {
-      const messageId = 'cached-answer';
-
+    execute: ({ writer }) => {
       writer.write({
         type: 'text-start',
         id: messageId,
       });
 
-      // Slice by characters so markdown, whitespace, and code blocks are preserved.
-      for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-        writer.write({
-          type: 'text-delta',
-          id: messageId,
-          delta: text.slice(i, i + CHUNK_SIZE),
-        });
-
-        await sleep(CHUNK_DELAY_MS);
-      }
+      writer.write({
+        type: 'text-delta',
+        id: messageId,
+        delta: text,
+      });
 
       writer.write({
         type: 'text-end',
@@ -38,10 +40,11 @@ export function simulateCachedStream(text: string): Response {
     },
   });
 
+  const mergedHeaders = new Headers(options?.headers);
+  mergedHeaders.set('X-Cache-Hit', 'HIT');
+
   return createUIMessageStreamResponse({
     stream,
-    headers: {
-      'X-Cache-Hit': 'HIT',
-    },
+    headers: mergedHeaders,
   });
 }
