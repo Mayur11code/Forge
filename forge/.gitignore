@@ -47,3 +47,5 @@ next-env.d.ts
 # local live-verification scratch (dev server stdout, throwaway probe scripts)
 dev-server.log
 tmp-*.mjs
+pp.md
+
