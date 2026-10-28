@@ -818,7 +818,12 @@ describe("Forge H4.5 — Transactional Outbox & Durable Deletion Lifecycle", () 
         matches: [
           {
             id: "task_active#0",
-            metadata: { type: "task", taskId: "task_active", text: "Active task instructions." },
+            metadata: {
+              type: "task",
+              taskId: "task_active",
+              text: "Active task instructions.",
+              sourceVersion: "task:2026-01-01T00:00:00.000Z:proj_1",
+            },
             score: 0.95,
           },
           {
@@ -829,7 +834,9 @@ describe("Forge H4.5 — Transactional Outbox & Durable Deletion Lifecycle", () 
         ],
       });
       // DB lookup returns only task_active
-      (db.task.findMany as jest.Mock).mockResolvedValue([{ id: "task_active" }]);
+      (db.task.findMany as jest.Mock).mockResolvedValue([
+        { id: "task_active", updatedAt: new Date("2026-01-01T00:00:00.000Z"), projectId: "proj_1" },
+      ]);
       (db.attachment.findMany as jest.Mock).mockResolvedValue([]);
 
       const context = await retrieveRelevantContext("find active task", ORG_A);
