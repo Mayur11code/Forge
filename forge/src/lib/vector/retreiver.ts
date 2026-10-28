@@ -4,9 +4,9 @@ import { resolveOrganizationEmbeddingModel } from '@/lib/ai/resolver';
 import { getTenantVectorStore } from './client';
 import { db } from '@/lib/prisma/db';
 import {
-    resolveSourceProvenance,
+    taskSourceVersion,
+    attachmentSourceVersion,
     type SourceProvenance,
-    type SourceRef,
 } from './provenance';
 
 /**
@@ -117,53 +117,6 @@ export interface RetrievedContext {
     provenanceComplete: boolean;
 }
 
-/**
- * Maps vector matches to the source records they were built from.
- *
- * A "document" chunk is built from an attachment whose text also embeds the
- * parent task's title/identifiers, so the parent task is an input to the chunk
- * and is recorded as a separate source. An unknown or unattributable match makes
- * provenance incomplete rather than being guessed at.
- */
-function refsFromMatches(
-    matches: Array<{ id: string; metadata?: Record<string, unknown> }>
-): { refs: SourceRef[]; complete: boolean } {
-    const refs: SourceRef[] = [];
-    let complete = true;
-
-    for (const match of matches) {
-        const entityId = match.id.split("#")[0];
-        const type = match.metadata?.type;
-        const taskId =
-            typeof match.metadata?.taskId === "string"
-                ? match.metadata.taskId
-                : undefined;
-
-        if (!entityId) {
-            complete = false;
-            continue;
-        }
-
-        if (type === "document") {
-            refs.push({ type: "attachment", id: entityId });
-            if (taskId) {
-                refs.push({ type: "task", id: taskId });
-            } else {
-                // Attachment chunk text embeds the parent task; without its id
-                // the chunk's inputs cannot be re-validated.
-                complete = false;
-            }
-        } else if (type === "task") {
-            refs.push({ type: "task", id: taskId ?? entityId });
-        } else {
-            // Source kind is not one the embedding worker produces.
-            complete = false;
-        }
-    }
-
-    return { refs, complete };
-}
-
 async function runRetrieval(
     userQuery: string,
     orgId: string,
@@ -217,13 +170,142 @@ async function runRetrieval(
             return { context: "", provenance: [], provenanceComplete: false };
         }
 
-        // 5. Assemble and Format the Context Block
-        const compiledContextBlocks = activeMatches
-            .map((hit, index) => {
+        // 5. Strict Freshness Validation:
+        // A vector is current only when its indexed content corresponds to the current authoritative source state.
+        // Missing, legacy, or mismatched versions must be excluded from authoritative context and cache operations.
+        const taskCandidateIds = new Set<string>();
+        const attachmentCandidateIds = new Set<string>();
+
+        for (const match of activeMatches) {
+            const entityId = match.id.split("#")[0];
+            const type = match.metadata?.type;
+            const taskId = typeof match.metadata?.taskId === "string" ? match.metadata.taskId : undefined;
+
+            if (type === "document") {
+                if (entityId) attachmentCandidateIds.add(entityId);
+                if (taskId) taskCandidateIds.add(taskId);
+            } else if (type === "task") {
+                const id = taskId || entityId;
+                if (id) taskCandidateIds.add(id);
+            }
+        }
+
+        const [taskRows, attachmentRows] = await Promise.all([
+            taskCandidateIds.size > 0
+                ? db.task.findMany({
+                      where: { id: { in: Array.from(taskCandidateIds) }, project: { orgId } },
+                      select: { id: true, updatedAt: true, projectId: true },
+                  })
+                : [],
+            attachmentCandidateIds.size > 0
+                ? db.attachment.findMany({
+                      where: { id: { in: Array.from(attachmentCandidateIds) }, task: { project: { orgId } } },
+                      select: {
+                          id: true,
+                          taskId: true,
+                          createdAt: true,
+                          size: true,
+                          name: true,
+                          task: { select: { updatedAt: true, projectId: true } },
+                      },
+                  })
+                : [],
+        ]);
+
+        const liveTaskVersions = new Map<string, string>();
+        for (const t of taskRows) {
+            liveTaskVersions.set(t.id, taskSourceVersion(t));
+        }
+
+        const liveAttachmentVersions = new Map<string, string>();
+        const liveAttachmentParentTasks = new Map<string, { taskId: string; version: string }>();
+        for (const a of attachmentRows) {
+            liveAttachmentVersions.set(a.id, attachmentSourceVersion(a));
+            const parentVersion =
+                liveTaskVersions.get(a.taskId) ||
+                (a.task
+                    ? taskSourceVersion({
+                          updatedAt: a.task.updatedAt,
+                          projectId: (a.task as { projectId?: string }).projectId ?? '',
+                      })
+                    : undefined);
+            if (parentVersion) {
+                liveAttachmentParentTasks.set(a.id, {
+                    taskId: a.taskId,
+                    version: parentVersion,
+                });
+            }
+        }
+
+        interface VerifiedMatchItem {
+            match: typeof activeMatches[0];
+            provenance: SourceProvenance[];
+        }
+
+        const verifiedFreshMatches: VerifiedMatchItem[] = [];
+        let anyMatchIneligible = searchHits.matches.length !== activeMatches.length;
+
+        for (const match of activeMatches) {
+            const entityId = match.id.split("#")[0];
+            const type = match.metadata?.type;
+            const taskId = typeof match.metadata?.taskId === "string" ? match.metadata.taskId : undefined;
+            const indexedVersion = typeof match.metadata?.sourceVersion === "string" ? match.metadata.sourceVersion : undefined;
+            const indexedParentTaskVersion = typeof match.metadata?.parentTaskVersion === "string" ? match.metadata.parentTaskVersion : undefined;
+
+            if (!indexedVersion) {
+                // Missing, empty, or legacy version metadata -> ineligible
+                anyMatchIneligible = true;
+                continue;
+            }
+
+            if (type === "task") {
+                const targetTaskId = taskId || entityId;
+                const currentVersion = liveTaskVersions.get(targetTaskId);
+                if (!currentVersion || currentVersion !== indexedVersion) {
+                    // Stale or missing in DB -> ineligible
+                    anyMatchIneligible = true;
+                    continue;
+                }
+                verifiedFreshMatches.push({
+                    match,
+                    provenance: [{ type: "task", id: targetTaskId, version: currentVersion }],
+                });
+            } else if (type === "document") {
+                const currentAttVersion = liveAttachmentVersions.get(entityId);
+                const parentTaskInfo = liveAttachmentParentTasks.get(entityId);
+
+                if (
+                    !currentAttVersion ||
+                    !parentTaskInfo ||
+                    !indexedParentTaskVersion ||
+                    indexedVersion !== currentAttVersion ||
+                    indexedParentTaskVersion !== parentTaskInfo.version
+                ) {
+                    // Stale attachment or stale parent task -> ineligible
+                    anyMatchIneligible = true;
+                    continue;
+                }
+
+                verifiedFreshMatches.push({
+                    match,
+                    provenance: [
+                        { type: "attachment", id: entityId, version: currentAttVersion },
+                        { type: "task", id: parentTaskInfo.taskId, version: parentTaskInfo.version },
+                    ],
+                });
+            } else {
+                // Unknown source kind
+                anyMatchIneligible = true;
+            }
+        }
+
+        // 6. Assemble and Format the Context Block ONLY from verified fresh matches
+        const compiledContextBlocks = verifiedFreshMatches
+            .map((item, index) => {
+                const hit = item.match;
                 const textPayload = typeof hit.metadata?.text === "string" ? hit.metadata.text : undefined;
                 if (!textPayload) return null;
 
-                // Extract relational variables if they exist on metadata
                 const taskId = hit.metadata?.taskId || "Unknown ID";
                 const scorePercentage = Math.round(hit.score ? hit.score * 100 : 0);
 
@@ -232,21 +314,28 @@ async function runRetrieval(
             .filter(Boolean)
             .join("\n\n---\n\n");
 
-        if (!collectProvenance) {
-            return { context: compiledContextBlocks, provenance: [], provenanceComplete: false };
+        // 7. Structured Provenance
+        const seenSources = new Set<string>();
+        const provenance: SourceProvenance[] = [];
+        for (const item of verifiedFreshMatches) {
+            for (const src of item.provenance) {
+                const key = `${src.type}:${src.id}`;
+                if (!seenSources.has(key)) {
+                    seenSources.add(key);
+                    provenance.push(src);
+                }
+            }
         }
 
-        // 6. Capture structured provenance with the versions observed right now.
-        const { refs, complete: refsComplete } = refsFromMatches(activeMatches);
-        const resolved = await resolveSourceProvenance(orgId, refs);
+        const provenanceComplete =
+            !anyMatchIneligible &&
+            verifiedFreshMatches.length > 0 &&
+            verifiedFreshMatches.length === searchHits.matches.length;
 
         return {
             context: compiledContextBlocks,
-            provenance: resolved.sources,
-            provenanceComplete:
-                refsComplete &&
-                resolved.complete &&
-                resolved.sources.length > 0,
+            provenance: collectProvenance ? provenance : [],
+            provenanceComplete: collectProvenance ? provenanceComplete : false,
         };
 
     } catch (error: unknown) {

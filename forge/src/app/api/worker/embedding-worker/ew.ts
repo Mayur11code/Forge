@@ -14,6 +14,8 @@ import {
 } from "@/lib/security/credential-rotation";
 import { resolveOrganizationGenerativeAiClient } from "@/lib/ai/resolver";
 import { CredentialPurpose, type Task } from "@prisma/client";
+import { taskSourceVersion, attachmentSourceVersion } from "@/lib/vector/provenance";
+import { publishEvent } from "@/lib/events/queue";
 
 // 1. PERFECTLY MATCH THE ZOD SCHEMA
 interface EmbeddingEventParams {
@@ -54,6 +56,8 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
         let resolvedProjectId = "";
         let vectorEntityType: "task" | "document" = "task";
         let parentTaskId: string = entityId;
+        let sourceVersion: string | undefined = undefined;
+        let parentTaskVersion: string | undefined = undefined;
 
         if (type === "TASK") {
             // Tenant-scoped task query
@@ -70,6 +74,7 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
                     priority: true,
                     projectId: true,
                     assigneeId: true,
+                    updatedAt: true,
                 },
             });
 
@@ -103,6 +108,10 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
             resolvedProjectId = task.projectId || "";
             vectorEntityType = "task";
             parentTaskId = task.id;
+            sourceVersion = taskSourceVersion({
+                updatedAt: task.updatedAt,
+                projectId: resolvedProjectId,
+            });
 
         } else if (type === "ATTACHMENT") {
             // Tenant-scoped attachment query through task -> project -> orgId
@@ -118,11 +127,13 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
                     name: true,
                     size: true,
                     taskId: true,
+                    createdAt: true,
                     task: {
                         select: {
                             id: true,
                             title: true,
                             projectId: true,
+                            updatedAt: true,
                         },
                     },
                 },
@@ -177,6 +188,17 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
             resolvedProjectId = attachment.task.projectId || "";
             vectorEntityType = "document";
             parentTaskId = attachment.taskId;
+            sourceVersion = attachmentSourceVersion({
+                createdAt: attachment.createdAt,
+                size: attachment.size,
+                taskId: attachment.taskId,
+                name: cleanName,
+                task: { updatedAt: attachment.task.updatedAt },
+            });
+            parentTaskVersion = taskSourceVersion({
+                updatedAt: attachment.task.updatedAt,
+                projectId: resolvedProjectId,
+            });
 
         } else {
             console.warn(
@@ -265,12 +287,41 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
                     taskId: parentTaskId,
                     projectId: resolvedProjectId,
                     type: vectorEntityType,
+                    ...(sourceVersion ? { sourceVersion } : {}),
+                    ...(parentTaskVersion ? { parentTaskVersion } : {}),
                 }
             );
         });
 
         await Promise.all(upsertPromises);
         console.log(`✅ [EMBEDDING] Successfully synchronized ${chunks.length} chunks to Pinecone via Gemini.`);
+
+        // 6. Refresh child attachments if a task was re-embedded (attachment text embeds parent task title)
+        if (type === "TASK" && typeof prisma.attachment?.findMany === "function") {
+            try {
+                const childAttachments = await prisma.attachment.findMany({
+                    where: {
+                        taskId: entityId,
+                        task: { project: { orgId } },
+                    },
+                    select: { id: true },
+                });
+
+                if (childAttachments && childAttachments.length > 0) {
+                    await Promise.allSettled(
+                        childAttachments.map((att) =>
+                            publishEvent("EMBEDDING_REQUESTED", {
+                                orgId,
+                                entityId: att.id,
+                                type: "ATTACHMENT",
+                            })
+                        )
+                    );
+                }
+            } catch (refreshErr) {
+                console.warn("[EMBEDDING] Non-blocking child attachment refresh notice:", refreshErr);
+            }
+        }
 
     } catch (error: unknown) {
         console.error("❌ [EMBEDDING] Worker Execution Error:", error);

@@ -23,9 +23,14 @@
 // version below; a user who lost organization membership is rejected by the
 // membership check in `checkSemanticCache`.
 
-import { db } from '@/lib/prisma/db';
-
 import type { SemanticSourceType } from './schema';
+
+async function getDb() {
+  // Lazy-resolve db to prevent module-evaluation PrismaClient instantiation
+  // in unit tests that only test vector formatting or embedding logic.
+  const { db } = await import('@/lib/prisma/db');
+  return db;
+}
 
 export interface SourceRef {
   type: SemanticSourceType;
@@ -95,6 +100,7 @@ type AttachmentVersionRow = {
   taskId: string;
   createdAt: Date;
   size: number;
+  name?: string;
   task: { updatedAt: Date };
 };
 
@@ -113,14 +119,16 @@ export function attachmentSourceVersion(attachment: {
   createdAt: Date;
   size: number;
   taskId: string;
-  task: { updatedAt: Date };
+  name?: string;
+  task?: { updatedAt: Date };
 }): string {
   return [
     'attachment',
     toIso(attachment.createdAt),
     attachment.size,
     attachment.taskId,
-    toIso(attachment.task.updatedAt),
+    ...(attachment.name ? [attachment.name] : []),
+    ...(attachment.task?.updatedAt ? [toIso(attachment.task.updatedAt)] : []),
   ].join(':');
 }
 
@@ -153,21 +161,23 @@ export async function resolveSourceProvenance(
     .filter((ref) => ref.type === 'attachment')
     .map((ref) => ref.id);
 
+  const prismaDb = await getDb();
   const [tasks, attachments] = await Promise.all([
     taskIds.length > 0
-      ? (db.task.findMany({
+      ? (prismaDb.task.findMany({
           where: { id: { in: taskIds }, project: { orgId } },
           select: { id: true, updatedAt: true, projectId: true },
         }) as unknown as Promise<TaskVersionRow[]>)
       : Promise.resolve<TaskVersionRow[]>([]),
     attachmentIds.length > 0
-      ? (db.attachment.findMany({
+      ? (prismaDb.attachment.findMany({
           where: { id: { in: attachmentIds }, task: { project: { orgId } } },
           select: {
             id: true,
             taskId: true,
             createdAt: true,
             size: true,
+            name: true,
             task: { select: { updatedAt: true } },
           },
         }) as unknown as Promise<AttachmentVersionRow[]>)
