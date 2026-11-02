@@ -68,6 +68,38 @@ jest.mock("@/lib/prisma/db", () => {
       updateMany: jest.fn(),
       findMany: jest.fn(),
     },
+    vectorEntityHead: {
+      upsert: jest.fn().mockImplementation((args: any) =>
+        Promise.resolve({
+          id: "head_test_1",
+          orgId: args.create?.orgId ?? "test_org",
+          entityType: args.create?.entityType ?? "TASK",
+          entityId: args.create?.entityId ?? "test_entity",
+          isTombstone: true,
+          activeGenId: null,
+        })
+      ),
+      findUnique: jest.fn().mockResolvedValue({
+        id: "head_test_1",
+        orgId: "test_org",
+        isTombstone: true,
+        activeGenId: null,
+      }),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: "head_test_1",
+        orgId: "test_org",
+        isTombstone: true,
+        activeGenId: null,
+      }),
+    },
+    vectorGeneration: {
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: "gen_test_1",
+        status: "WRITING",
+      }),
+    },
+    $executeRaw: jest.fn().mockResolvedValue(1),
+    $queryRaw: jest.fn().mockResolvedValue([{ id: "test_id" }]),
     $transaction: jest.fn(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     $extends: jest.fn((ext: any) => ({

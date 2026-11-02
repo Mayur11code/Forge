@@ -728,3 +728,69 @@ model OrganizationApiKey {
   @@index([orgId])
   @@index([status])
 }
+
+// -----------------------------------------------------------------------------
+// Vector Generation V2: Durable Entity Head and Generation State Models
+// -----------------------------------------------------------------------------
+
+enum VectorEntityType {
+  TASK
+  ATTACHMENT
+}
+
+enum VectorGenerationStatus {
+  WRITING
+  WRITTEN
+  ACTIVE
+  OBSOLETE
+  PURGING
+  PURGED
+  FAILED
+}
+
+model VectorEntityHead {
+  id           String           @id @default(cuid())
+  orgId        String
+  entityType   VectorEntityType
+  entityId     String
+  activeGenId  String?          @unique
+  isTombstone  Boolean          @default(false)
+  tombstonedAt DateTime?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  generations      VectorGeneration[] @relation("HeadGenerations")
+  activeGeneration VectorGeneration?  @relation("ActiveGeneration", fields: [activeGenId], references: [id], onDelete: SetNull)
+
+  @@unique([orgId, entityType, entityId])
+  @@index([entityId])
+  @@index([orgId, isTombstone])
+}
+
+model VectorGeneration {
+  id                 String                 @id
+  headId             String
+  head               VectorEntityHead       @relation("HeadGenerations", fields: [headId], references: [id], onDelete: Restrict)
+  sourceVersion      String
+  parentTaskVersion  String?
+  embeddingModelId   String
+  embeddingDimension Int
+  contractVersion    String
+  expectedChunkCount Int
+  manifestDigest     String?
+  status             VectorGenerationStatus @default(WRITING)
+  claimToken         String?
+  leaseExpiresAt     DateTime?
+  writeAttempts      Int                    @default(0)
+  cleanupAttempts    Int                    @default(0)
+  lastError          String?                @db.Text
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  activeForHead VectorEntityHead? @relation("ActiveGeneration")
+
+  @@unique([id, headId])
+  @@index([headId, status])
+  @@index([status, leaseExpiresAt])
+  @@index([claimToken])
+}

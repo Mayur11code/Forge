@@ -22,6 +22,7 @@ import {
 import { getTenantVectorStore } from "@/lib/vector/client";
 import { UTApi } from "uploadthing/server";
 import { invalidateSemanticCacheBestEffort } from "@/lib/ai/cache-lifecycle";
+import { tombstoneEntityHead } from "@/lib/vector/generation-state";
 
 const utapi = new UTApi();
 
@@ -45,6 +46,11 @@ export async function deleteTaskTransactionally(
   existingTx?: Prisma.TransactionClient
 ): Promise<DeleteTaskResult> {
   const executeInTx = async (tx: Prisma.TransactionClient): Promise<DeleteTaskResult> => {
+    // Enforce global lock ordering (Task -> VectorEntityHead): acquire row lock on Task first
+    await tx.$queryRaw`
+      SELECT id FROM "Task" WHERE id = ${taskId} FOR UPDATE
+    `;
+
     // 1. Capture relationships BEFORE deletion
     const taskToDelete = await tx.task.findUnique({
       where: { id: taskId },
@@ -65,7 +71,14 @@ export async function deleteTaskTransactionally(
     const projectId = taskToDelete.projectId;
     const attachmentIds = taskToDelete.attachments.map((a) => a.id);
 
-    // 2. Record durable outbox intent for the task itself (discrete resource payload)
+    // 2. Record durable vector tombstone and outbox intent for the task itself
+    await tombstoneEntityHead({
+      orgId,
+      entityType: "TASK",
+      entityId: taskId,
+      tx,
+    });
+
     await recordDomainDeletionIntent({
       tx,
       orgId,
@@ -79,8 +92,15 @@ export async function deleteTaskTransactionally(
       },
     });
 
-    // 3. Record durable outbox intent for each child attachment (bounded per resource)
+    // 3. Record durable vector tombstones and outbox intent for each child attachment
     for (const attachment of taskToDelete.attachments) {
+      await tombstoneEntityHead({
+        orgId,
+        entityType: "ATTACHMENT",
+        entityId: attachment.id,
+        tx,
+      });
+
       await recordDomainDeletionIntent({
         tx,
         orgId,
@@ -150,6 +170,11 @@ export async function deleteProjectTransactionally(
   existingTx?: Prisma.TransactionClient
 ): Promise<DeleteProjectResult> {
   const executeInTx = async (tx: Prisma.TransactionClient): Promise<DeleteProjectResult> => {
+    // Enforce global lock ordering (Project -> VectorEntityHead): acquire row lock on Project first
+    await tx.$queryRaw`
+      SELECT id FROM "Project" WHERE id = ${projectId} FOR UPDATE
+    `;
+
     // 1. Capture project, all tasks, and all attachments BEFORE deletion
     const projectToDelete = await tx.project.findUnique({
       where: { id: projectId },
@@ -186,9 +211,16 @@ export async function deleteProjectTransactionally(
     const deletedTaskIds: string[] = [];
     const deletedAttachmentIds: string[] = [];
 
-    // 2. Record discrete outbox events for all tasks and attachments (minimal O(1) payloads)
+    // 2. Record discrete tombstones and outbox events for all tasks and attachments
     for (const task of projectToDelete.tasks) {
       deletedTaskIds.push(task.id);
+
+      await tombstoneEntityHead({
+        orgId,
+        entityType: "TASK",
+        entityId: task.id,
+        tx,
+      });
 
       await recordDomainDeletionIntent({
         tx,
@@ -205,6 +237,13 @@ export async function deleteProjectTransactionally(
 
       for (const attachment of task.attachments) {
         deletedAttachmentIds.push(attachment.id);
+
+        await tombstoneEntityHead({
+          orgId,
+          entityType: "ATTACHMENT",
+          entityId: attachment.id,
+          tx,
+        });
 
         await recordDomainDeletionIntent({
           tx,
@@ -306,8 +345,20 @@ export async function deleteAttachmentTransactionally(
   const fileKey = file.fileKey;
   const size = file.size;
 
-  // 2. Commit DB deletion, quota decrement, and outbox intent atomically in PostgreSQL
+  // 2. Commit DB deletion, vector tombstone, quota decrement, and outbox intent atomically in PostgreSQL
   await db.$transaction(async (tx) => {
+    // Enforce global lock ordering (Attachment -> VectorEntityHead): acquire row lock on Attachment first
+    await tx.$queryRaw`
+      SELECT id FROM "Attachment" WHERE id = ${attachmentId} FOR UPDATE
+    `;
+
+    await tombstoneEntityHead({
+      orgId,
+      entityType: "ATTACHMENT",
+      entityId: attachmentId,
+      tx,
+    });
+
     await recordDomainDeletionIntent({
       tx,
       orgId,
