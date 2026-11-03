@@ -22,6 +22,8 @@ jest.mock("@/lib/prisma/db", () => ({ db: {} }));
 import {
   getOrCreateEntityHead,
   reserveGeneration,
+  renewGenerationLease,
+  failGeneration,
   markGenerationWritten,
   activateGeneration,
   tombstoneEntityHead,
@@ -34,6 +36,8 @@ import {
   ConcurrentWriterConflictError,
   ChunkCountMismatchError,
   ManifestDigestMismatchError,
+  MissingManifestDigestError,
+  InvalidInputError,
 } from "@/lib/vector/generation-state";
 import { taskSourceVersion, attachmentSourceVersion } from "@/lib/vector/provenance";
 import {
@@ -194,6 +198,31 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
       },
 
       task: {
+        findFirst: jest.fn().mockImplementation(({ where }) => {
+          if (where.id) {
+            const t = tasks.get(where.id);
+            if (!t) return Promise.resolve(null);
+            if (where.project?.orgId) {
+              const p = projects.get(t.projectId);
+              if (!p || p.orgId !== where.project.orgId) return Promise.resolve(null);
+            }
+            return Promise.resolve({
+              ...t,
+              project: projects.get(t.projectId),
+            });
+          }
+          return Promise.resolve(null);
+        }),
+        findMany: jest.fn().mockImplementation(({ where, orderBy }) => {
+          let list = Array.from(tasks.values());
+          if (where?.projectId) {
+            list = list.filter((t) => t.projectId === where.projectId);
+          }
+          if (orderBy?.id === "asc") {
+            list.sort((a, b) => a.id.localeCompare(b.id));
+          }
+          return Promise.resolve(list.map((t) => ({ ...t })));
+        }),
         findUnique: jest.fn().mockImplementation(({ where }) => {
           const t = tasks.get(where.id);
           if (!t) return Promise.resolve(null);
@@ -216,6 +245,33 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
       attachment: {
         findFirst: jest.fn().mockImplementation(({ where }) => {
+          const att = attachments.get(where.id);
+          if (!att) return Promise.resolve(null);
+          const task = tasks.get(att.taskId);
+          const project = task ? projects.get(task.projectId) : null;
+          if (where.task?.project?.orgId && project?.orgId !== where.task.project.orgId) {
+            return Promise.resolve(null);
+          }
+          return Promise.resolve({
+            ...att,
+            task: task ? { ...task, project } : null,
+          });
+        }),
+        findMany: jest.fn().mockImplementation(({ where, orderBy }) => {
+          let list = Array.from(attachments.values());
+          if (where?.taskId) {
+            if (typeof where.taskId === "string") {
+              list = list.filter((a) => a.taskId === where.taskId);
+            } else if (where.taskId.in) {
+              list = list.filter((a) => where.taskId.in.includes(a.taskId));
+            }
+          }
+          if (orderBy?.id === "asc") {
+            list.sort((a, b) => a.id.localeCompare(b.id));
+          }
+          return Promise.resolve(list.map((a) => ({ ...a })));
+        }),
+        findUnique: jest.fn().mockImplementation(({ where }) => {
           const att = attachments.get(where.id);
           if (!att) return Promise.resolve(null);
           const task = tasks.get(att.taskId);
@@ -320,12 +376,31 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // 4. Head lock query
         if (queryText.includes('FROM "VectorEntityHead"')) {
+          if (queryText.includes('"orgId" =') && queryText.includes('"entityType" =')) {
+            const orgId = params[0];
+            const entityType = params[1];
+            const entityId = params[2];
+            const key = headKey(orgId, entityType, entityId);
+            const h = heads.get(key);
+            if (!h) return [];
+            return [{
+              id: h.id,
+              orgId: h.orgId,
+              entityType: h.entityType,
+              entityId: h.entityId,
+              activeGenId: h.activeGenId,
+              isTombstone: h.isTombstone,
+            }];
+          }
+
           const headId = params[0];
           for (const h of heads.values()) {
             if (h.id === headId) {
               return [{
                 id: h.id,
                 orgId: h.orgId,
+                entityType: h.entityType,
+                entityId: h.entityId,
                 activeGenId: h.activeGenId,
                 isTombstone: h.isTombstone,
               }];
@@ -343,6 +418,14 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
               (g) => g.headId === headId && g.status === "WRITING" && g.leaseExpiresAt > new Date()
             );
             return liveWriters.map((w) => ({ id: w.id, claimToken: w.claimToken }));
+          }
+
+          // Ordered generation lock for tombstoning
+          if (queryText.includes("ORDER BY id ASC")) {
+            const headId = params[0];
+            const list = Array.from(generations.values()).filter((g) => g.headId === headId);
+            list.sort((a, b) => a.id.localeCompare(b.id));
+            return list.map((g) => ({ id: g.id, status: g.status }));
           }
 
           // Single generation lock for activation or markGenerationWritten
@@ -404,24 +487,98 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           return 1;
         }
 
-        // Mark WRITTEN
+        // Mark WRITTEN (Conditional update with fencing check)
         if (queryText.includes("SET status = 'WRITTEN'")) {
           const manifestDigest = params[0];
           const genId = params[1];
+          const claimToken = params[2];
 
           const gen = generations.get(genId);
           if (!gen) return 0;
           if (gen.status !== "WRITING") return 0;
+          if (claimToken && gen.claimToken !== claimToken) return 0;
+          if (gen.leaseExpiresAt && gen.leaseExpiresAt <= new Date()) return 0;
 
           gen.status = "WRITTEN";
-          if (manifestDigest) gen.manifestDigest = manifestDigest;
+          if (manifestDigest && !gen.manifestDigest) gen.manifestDigest = manifestDigest;
           gen.updatedAt = new Date();
           return 1;
+        }
+
+        // Renew Lease (Conditional update with fencing check)
+        if (queryText.includes('UPDATE "VectorGeneration"') && queryText.includes('"leaseExpiresAt" = clock_timestamp() + make_interval')) {
+          const extensionSeconds = params[0];
+          const genId = params[1];
+          const claimToken = params[2];
+
+          const gen = generations.get(genId);
+          if (!gen) return 0;
+          if (gen.status !== "WRITING") return 0;
+          if (gen.claimToken !== claimToken) return 0;
+          if (gen.leaseExpiresAt && gen.leaseExpiresAt <= new Date()) return 0;
+
+          gen.leaseExpiresAt = new Date(Date.now() + extensionSeconds * 1000);
+          gen.updatedAt = new Date();
+          return 1;
+        }
+
+        // Fail generation (explicit worker failure via failGeneration)
+        if (queryText.includes("SET status = 'FAILED'") && queryText.includes('WHERE id =')) {
+          const errorMessage = params[0];
+          const genId = params[1];
+          const claimToken = params[2];
+
+          const gen = generations.get(genId);
+          if (!gen) return 0;
+          if (gen.status !== "WRITING" && gen.status !== "WRITTEN") return 0;
+          if (gen.claimToken !== claimToken) return 0;
+
+          gen.status = "FAILED";
+          gen.lastError = errorMessage;
+          gen.claimToken = null;
+          gen.leaseExpiresAt = null;
+          gen.updatedAt = new Date();
+          return 1;
+        }
+
+        // Expired writer cleanup in reserveGeneration
+        if (queryText.includes("SET status = 'FAILED'") && queryText.includes('WHERE "headId" =') && queryText.includes('<= clock_timestamp()')) {
+          const headId = params[0];
+          let count = 0;
+          for (const g of generations.values()) {
+            if (g.headId === headId && g.status === "WRITING" && g.leaseExpiresAt && g.leaseExpiresAt <= new Date()) {
+              g.status = "FAILED";
+              g.claimToken = null;
+              g.leaseExpiresAt = null;
+              g.lastError = "Writer lease expired; superseded by subsequent reservation";
+              g.updatedAt = new Date();
+              count++;
+            }
+          }
+          return count;
+        }
+
+        // Fail generation on tombstone
+        if (queryText.includes("SET status = 'FAILED'") && queryText.includes('WHERE "headId" =')) {
+          const headId = params[0];
+          let count = 0;
+          for (const g of generations.values()) {
+            if (g.headId === headId && (g.status === "WRITING" || g.status === "WRITTEN")) {
+              g.status = "FAILED";
+              g.claimToken = null;
+              g.leaseExpiresAt = null;
+              g.lastError = "Entity tombstoned before activation";
+              g.updatedAt = new Date();
+              count++;
+            }
+          }
+          return count;
         }
 
         // Obsolete previous active generation
         if (queryText.includes("SET status = 'OBSOLETE'")) {
           const genId = params[0];
+          const headId = params[1];
           const gen = generations.get(genId);
           if (gen && gen.status === "ACTIVE") {
             gen.status = "OBSOLETE";
@@ -434,15 +591,21 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         // Activate new generation
         if (queryText.includes("SET status = 'ACTIVE'")) {
           const genId = params[0];
+          const headId = params[1];
+          const claimToken = params[2];
+
           const gen = generations.get(genId);
-          if (gen && gen.status === "WRITTEN") {
-            gen.status = "ACTIVE";
-            gen.claimToken = null;
-            gen.leaseExpiresAt = null;
-            gen.updatedAt = new Date();
-            return 1;
-          }
-          return 0;
+          if (!gen) return 0;
+          if (gen.headId !== headId) return 0;
+          if (gen.status !== "WRITTEN") return 0;
+          if (claimToken && gen.claimToken !== claimToken) return 0;
+          if (gen.leaseExpiresAt && gen.leaseExpiresAt <= new Date()) return 0;
+
+          gen.status = "ACTIVE";
+          gen.claimToken = null;
+          gen.leaseExpiresAt = null;
+          gen.updatedAt = new Date();
+          return 1;
         }
 
         // Update head pointer
@@ -1061,5 +1224,431 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         tx: mockTx,
       })
     ).rejects.toThrow(EntityNotFoundError);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Strict Manifest Digest Validation Tests (Section 5)
+  // ---------------------------------------------------------------------------
+  it("rejects markGenerationWritten when required manifest digest is missing in receipt", async () => {
+    const { generation, claimToken } = await reserveGeneration({
+      orgId: ORG_A,
+      entityType: "TASK",
+      entityId: TASK_1,
+      sourceVersion: "src_digest_test",
+      embeddingModelId: "text-embedding-3-small",
+      embeddingDimension: 1536,
+      contractVersion: "v2",
+      expectedChunkCount: 2,
+      manifestDigest: "sha256:required_digest_abc",
+      tx: mockTx,
+    });
+
+    await expect(
+      markGenerationWritten({
+        receipt: {
+          generationId: generation.id,
+          claimToken,
+          writtenChunkCount: 2,
+          // manifestDigest omitted
+        },
+        tx: mockTx,
+      })
+    ).rejects.toThrow(MissingManifestDigestError);
+  });
+
+  it("rejects markGenerationWritten when manifest digest does not match expected digest", async () => {
+    const { generation, claimToken } = await reserveGeneration({
+      orgId: ORG_A,
+      entityType: "TASK",
+      entityId: TASK_1,
+      sourceVersion: "src_digest_test",
+      embeddingModelId: "text-embedding-3-small",
+      embeddingDimension: 1536,
+      contractVersion: "v2",
+      expectedChunkCount: 2,
+      manifestDigest: "sha256:required_digest_abc",
+      tx: mockTx,
+    });
+
+    await expect(
+      markGenerationWritten({
+        receipt: {
+          generationId: generation.id,
+          claimToken,
+          writtenChunkCount: 2,
+          manifestDigest: "sha256:wrong_digest_xyz",
+        },
+        tx: mockTx,
+      })
+    ).rejects.toThrow(ManifestDigestMismatchError);
+  });
+
+  it("accepts markGenerationWritten when required manifest digest matches exactly", async () => {
+    const { generation, claimToken } = await reserveGeneration({
+      orgId: ORG_A,
+      entityType: "TASK",
+      entityId: TASK_1,
+      sourceVersion: "src_digest_test",
+      embeddingModelId: "text-embedding-3-small",
+      embeddingDimension: 1536,
+      contractVersion: "v2",
+      expectedChunkCount: 2,
+      manifestDigest: "sha256:required_digest_abc",
+      tx: mockTx,
+    });
+
+    const written = await markGenerationWritten({
+      receipt: {
+        generationId: generation.id,
+        claimToken,
+        writtenChunkCount: 2,
+        manifestDigest: "sha256:required_digest_abc",
+      },
+      tx: mockTx,
+    });
+
+    expect(written.status).toBe("WRITTEN");
+    expect(written.manifestDigest).toBe("sha256:required_digest_abc");
+  });
+
+  it("preserves optional-digest behavior when reservation did not require a digest", async () => {
+    const { generation, claimToken } = await reserveGeneration({
+      orgId: ORG_A,
+      entityType: "TASK",
+      entityId: TASK_1,
+      sourceVersion: "src_digest_test",
+      embeddingModelId: "text-embedding-3-small",
+      embeddingDimension: 1536,
+      contractVersion: "v2",
+      expectedChunkCount: 2,
+      // no manifestDigest specified during reservation
+      tx: mockTx,
+    });
+
+    const written = await markGenerationWritten({
+      receipt: {
+        generationId: generation.id,
+        claimToken,
+        writtenChunkCount: 2,
+        manifestDigest: "sha256:optional_digest_xyz",
+      },
+      tx: mockTx,
+    });
+
+    expect(written.status).toBe("WRITTEN");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Input Validation and State Model Integrity (Section 9)
+  // ---------------------------------------------------------------------------
+  it("rejects reservation with invalid input values", async () => {
+    // Non-positive embedding dimension
+    await expect(
+      reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 0,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      })
+    ).rejects.toThrow(InvalidInputError);
+
+    // Negative expectedChunkCount
+    await expect(
+      reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: -1,
+        tx: mockTx,
+      })
+    ).rejects.toThrow(InvalidInputError);
+
+    // Out-of-bounds leaseDurationSeconds
+    await expect(
+      reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        leaseDurationSeconds: 99999,
+        tx: mockTx,
+      })
+    ).rejects.toThrow(InvalidInputError);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tenant Scope Boundary Verification (Section 4)
+  // ---------------------------------------------------------------------------
+  it("rejects reservation when authoritative entity does not exist in the specified tenant", async () => {
+    await expect(
+      reserveGeneration({
+        orgId: "org_cross_tenant_imposter",
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      })
+    ).rejects.toThrow(EntityNotFoundError);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Lease Renewal Verification (Section 6)
+  // ---------------------------------------------------------------------------
+  describe("renewGenerationLease", () => {
+    it("successfully extends an active writer lease", async () => {
+      const { generation, claimToken } = await reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        leaseDurationSeconds: 60,
+        tx: mockTx,
+      });
+
+      const renewed = await renewGenerationLease({
+        generationId: generation.id,
+        claimToken,
+        extensionSeconds: 600,
+        tx: mockTx,
+      });
+
+      expect(renewed.id).toBe(generation.id);
+      expect(renewed.status).toBe("WRITING");
+      expect(renewed.leaseExpiresAt!.getTime()).toBeGreaterThan(generation.leaseExpiresAt!.getTime());
+    });
+
+    it("rejects lease renewal when the lease has already expired", async () => {
+      const { generation, claimToken } = await reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      });
+
+      // Simulate lease expiration
+      generations.get(generation.id).leaseExpiresAt = new Date(Date.now() - 10000);
+
+      await expect(
+        renewGenerationLease({
+          generationId: generation.id,
+          claimToken,
+          extensionSeconds: 300,
+          tx: mockTx,
+        })
+      ).rejects.toThrow(LeaseExpiredError);
+    });
+
+    it("rejects lease renewal on claim token mismatch", async () => {
+      const { generation } = await reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      });
+
+      await expect(
+        renewGenerationLease({
+          generationId: generation.id,
+          claimToken: "claim_imposter_token",
+          extensionSeconds: 300,
+          tx: mockTx,
+        })
+      ).rejects.toThrow(OwnershipTokenMismatchError);
+    });
+
+    it("rejects lease renewal when status is not WRITING", async () => {
+      const { generation, claimToken } = await reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      });
+
+      await markGenerationWritten({
+        receipt: {
+          generationId: generation.id,
+          claimToken,
+          writtenChunkCount: 2,
+        },
+        tx: mockTx,
+      });
+
+      await expect(
+        renewGenerationLease({
+          generationId: generation.id,
+          claimToken,
+          extensionSeconds: 300,
+          tx: mockTx,
+        })
+      ).rejects.toThrow(InvalidStateTransitionError);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Writer Failure Transition Verification
+  // ---------------------------------------------------------------------------
+  describe("failGeneration", () => {
+    it("transitions WRITING generation to FAILED and clears lease and claim token", async () => {
+      const { generation, claimToken } = await reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      });
+
+      const failed = await failGeneration({
+        generationId: generation.id,
+        claimToken,
+        errorMessage: "Worker crashed due to out of memory error",
+        tx: mockTx,
+      });
+
+      expect(failed.status).toBe("FAILED");
+      expect(failed.claimToken).toBeNull();
+      expect(failed.leaseExpiresAt).toBeNull();
+      expect(failed.lastError).toBe("Worker crashed due to out of memory error");
+    });
+
+    it("transitions WRITTEN generation to FAILED and clears lease and claim token", async () => {
+      const { generation, claimToken } = await reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      });
+
+      await markGenerationWritten({
+        receipt: {
+          generationId: generation.id,
+          claimToken,
+          writtenChunkCount: 2,
+        },
+        tx: mockTx,
+      });
+
+      const failed = await failGeneration({
+        generationId: generation.id,
+        claimToken,
+        errorMessage: "Pre-activation verification checksum failed",
+        tx: mockTx,
+      });
+
+      expect(failed.status).toBe("FAILED");
+      expect(failed.claimToken).toBeNull();
+      expect(failed.leaseExpiresAt).toBeNull();
+    });
+
+    it("rejects failure transition on claim token mismatch", async () => {
+      const { generation } = await reserveGeneration({
+        orgId: ORG_A,
+        entityType: "TASK",
+        entityId: TASK_1,
+        sourceVersion: "v1",
+        embeddingModelId: "text-embedding-3-small",
+        embeddingDimension: 1536,
+        contractVersion: "v2",
+        expectedChunkCount: 2,
+        tx: mockTx,
+      });
+
+      await expect(
+        failGeneration({
+          generationId: generation.id,
+          claimToken: "claim_wrong_token",
+          errorMessage: "Failed attempt",
+          tx: mockTx,
+        })
+      ).rejects.toThrow(OwnershipTokenMismatchError);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Expired Writer Supersession in reserveGeneration
+  // ---------------------------------------------------------------------------
+  it("marks expired WRITING generation as FAILED when a new reservation is created", async () => {
+    const { generation: expiredGen } = await reserveGeneration({
+      orgId: ORG_A,
+      entityType: "TASK",
+      entityId: TASK_1,
+      sourceVersion: "v1",
+      embeddingModelId: "text-embedding-3-small",
+      embeddingDimension: 1536,
+      contractVersion: "v2",
+      expectedChunkCount: 2,
+      tx: mockTx,
+    });
+
+    // Simulate writer lease expiration
+    generations.get(expiredGen.id).leaseExpiresAt = new Date(Date.now() - 5000);
+
+    // Subsequent reservation succeeds and marks expired generation FAILED
+    const { generation: newGen, claimToken: newClaimToken } = await reserveGeneration({
+      orgId: ORG_A,
+      entityType: "TASK",
+      entityId: TASK_1,
+      sourceVersion: "v2",
+      embeddingModelId: "text-embedding-3-small",
+      embeddingDimension: 1536,
+      contractVersion: "v2",
+      expectedChunkCount: 3,
+      tx: mockTx,
+    });
+
+    expect(newGen.id).not.toBe(expiredGen.id);
+    expect(newGen.status).toBe("WRITING");
+    expect(newClaimToken).toBeDefined();
+
+    // Check that expired generation was superseded and marked FAILED
+    const genInStore = generations.get(expiredGen.id);
+    expect(genInStore.status).toBe("FAILED");
+    expect(genInStore.claimToken).toBeNull();
+    expect(genInStore.leaseExpiresAt).toBeNull();
+    expect(genInStore.lastError).toBe("Writer lease expired; superseded by subsequent reservation");
   });
 });
