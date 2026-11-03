@@ -46,12 +46,51 @@ export async function deleteTaskTransactionally(
   existingTx?: Prisma.TransactionClient
 ): Promise<DeleteTaskResult> {
   const executeInTx = async (tx: Prisma.TransactionClient): Promise<DeleteTaskResult> => {
-    // Enforce global lock ordering (Task -> VectorEntityHead): acquire row lock on Task first
-    await tx.$queryRaw`
-      SELECT id FROM "Task" WHERE id = ${taskId} FOR UPDATE
-    `;
+    // 1. Discover parent Project ID prior to acquiring canonical row locks
+    const initialTask = await tx.task.findUnique({
+      where: { id: taskId },
+      select: { projectId: true },
+    });
 
-    // 1. Capture relationships BEFORE deletion
+    if (!initialTask) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+
+    // 2. Canonical Lock Order Step 1: Lock parent Project row
+    if (typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Project" WHERE id = ${initialTask.projectId} FOR UPDATE
+      `;
+    }
+
+    // 3. Canonical Lock Order Step 2: Lock Task row
+    if (typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Task" WHERE id = ${taskId} FOR UPDATE
+      `;
+    }
+
+    // 4. Canonical Lock Order Step 3: Discover and lock child Attachments in deterministic ascending ID order
+    const initialAttachments =
+      (await tx.attachment.findMany?.({
+        where: { taskId },
+        select: { id: true },
+        orderBy: { id: "asc" },
+      })) ?? [];
+    const childAttachmentIds = Array.isArray(initialAttachments)
+      ? initialAttachments.map((a) => a.id)
+      : [];
+
+    if (childAttachmentIds.length > 0 && typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Attachment"
+        WHERE id = ANY(${childAttachmentIds}::text[])
+        ORDER BY id ASC
+        FOR UPDATE
+      `;
+    }
+
+    // 5. Revalidate relationships after acquiring locks
     const taskToDelete = await tx.task.findUnique({
       where: { id: taskId },
       select: {
@@ -59,19 +98,22 @@ export async function deleteTaskTransactionally(
         title: true,
         projectId: true,
         project: { select: { orgId: true } },
-        attachments: { select: { id: true, fileKey: true, size: true } },
+        attachments: {
+          select: { id: true, fileKey: true, size: true },
+          orderBy: { id: "asc" },
+        },
       },
     });
 
     if (!taskToDelete) {
-      throw new Error(`Task ${taskId} not found`);
+      throw new Error(`Task ${taskId} not found after lock acquisition`);
     }
 
     const orgId = taskToDelete.project?.orgId ?? "default_org";
     const projectId = taskToDelete.projectId;
     const attachmentIds = taskToDelete.attachments.map((a) => a.id);
 
-    // 2. Record durable vector tombstone and outbox intent for the task itself
+    // 6. Canonical Lock Order Step 4: Record durable vector tombstones in deterministic order
     await tombstoneEntityHead({
       orgId,
       entityType: "TASK",
@@ -92,7 +134,7 @@ export async function deleteTaskTransactionally(
       },
     });
 
-    // 3. Record durable vector tombstones and outbox intent for each child attachment
+    // Tombstone child attachments in deterministic ascending ID order
     for (const attachment of taskToDelete.attachments) {
       await tombstoneEntityHead({
         orgId,
@@ -117,7 +159,7 @@ export async function deleteTaskTransactionally(
       });
     }
 
-    // 4. Delete the task (PostgreSQL cascades comments and attachments)
+    // 7. Delete the task (PostgreSQL cascades comments and attachments)
     await tx.task.delete({
       where: { id: taskId },
     });
@@ -170,12 +212,52 @@ export async function deleteProjectTransactionally(
   existingTx?: Prisma.TransactionClient
 ): Promise<DeleteProjectResult> {
   const executeInTx = async (tx: Prisma.TransactionClient): Promise<DeleteProjectResult> => {
-    // Enforce global lock ordering (Project -> VectorEntityHead): acquire row lock on Project first
-    await tx.$queryRaw`
-      SELECT id FROM "Project" WHERE id = ${projectId} FOR UPDATE
-    `;
+    // 1. Canonical Lock Order Step 1: Lock Project row first
+    if (typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Project" WHERE id = ${projectId} FOR UPDATE
+      `;
+    }
 
-    // 1. Capture project, all tasks, and all attachments BEFORE deletion
+    // 2. Canonical Lock Order Step 2: Discover and lock all child Tasks in deterministic ascending ID order
+    const tasksToLock =
+      (await tx.task.findMany?.({
+        where: { projectId },
+        select: { id: true },
+        orderBy: { id: "asc" },
+      })) ?? [];
+    const childTaskIds = Array.isArray(tasksToLock) ? tasksToLock.map((t) => t.id) : [];
+
+    if (childTaskIds.length > 0 && typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Task"
+        WHERE id = ANY(${childTaskIds}::text[])
+        ORDER BY id ASC
+        FOR UPDATE
+      `;
+    }
+
+    // 3. Canonical Lock Order Step 3: Discover and lock all child Attachments in deterministic ascending ID order
+    const attsToLock =
+      childTaskIds.length > 0
+        ? (await tx.attachment.findMany?.({
+            where: { taskId: { in: childTaskIds } },
+            select: { id: true },
+            orderBy: { id: "asc" },
+          })) ?? []
+        : [];
+    const childAttachmentIds = Array.isArray(attsToLock) ? attsToLock.map((a) => a.id) : [];
+
+    if (childAttachmentIds.length > 0 && typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Attachment"
+        WHERE id = ANY(${childAttachmentIds}::text[])
+        ORDER BY id ASC
+        FOR UPDATE
+      `;
+    }
+
+    // 4. Revalidate project, tasks, and attachments after acquiring canonical business row locks
     const projectToDelete = await tx.project.findUnique({
       where: { id: projectId },
       select: {
@@ -184,14 +266,18 @@ export async function deleteProjectTransactionally(
         tasks: {
           select: {
             id: true,
-            attachments: { select: { id: true, fileKey: true, size: true } },
+            attachments: {
+              select: { id: true, fileKey: true, size: true },
+              orderBy: { id: "asc" },
+            },
           },
+          orderBy: { id: "asc" },
         },
       },
     });
 
     if (!projectToDelete) {
-      throw new Error(`Project ${projectId} not found`);
+      throw new Error(`Project ${projectId} not found after lock acquisition`);
     }
 
     const totalTaskCount = projectToDelete.tasks.length;
@@ -211,7 +297,7 @@ export async function deleteProjectTransactionally(
     const deletedTaskIds: string[] = [];
     const deletedAttachmentIds: string[] = [];
 
-    // 2. Record discrete tombstones and outbox events for all tasks and attachments
+    // 5. Canonical Lock Order Step 4: Record discrete tombstones and outbox events in deterministic order
     for (const task of projectToDelete.tasks) {
       deletedTaskIds.push(task.id);
 
@@ -314,7 +400,7 @@ export async function deleteAttachmentTransactionally(
   attachmentId: string,
   userId: string
 ): Promise<DeleteAttachmentResult> {
-  // 1. Authenticate & verify tenant membership
+  // 1. Authenticate & verify tenant membership and parent relationship
   const file = await db.attachment.findFirst({
     where: {
       id: attachmentId,
@@ -331,7 +417,8 @@ export async function deleteAttachmentTransactionally(
       task: {
         select: {
           id: true,
-          project: { select: { orgId: true } },
+          projectId: true,
+          project: { select: { id: true, orgId: true } },
         },
       },
     },
@@ -339,19 +426,81 @@ export async function deleteAttachmentTransactionally(
 
   if (!file) throw new Error("Attachment record not found in database.");
   if (!file.fileKey) throw new Error("No remote file key associated with this record.");
-
   const orgId = file.task?.project?.orgId ?? "default_org";
-  const taskId = file.task?.id ?? "";
+  const parentProjectId = file.task?.project?.id;
+  const parentTaskId = file.task?.id ?? "";
   const fileKey = file.fileKey;
   const size = file.size;
 
   // 2. Commit DB deletion, vector tombstone, quota decrement, and outbox intent atomically in PostgreSQL
   await db.$transaction(async (tx) => {
-    // Enforce global lock ordering (Attachment -> VectorEntityHead): acquire row lock on Attachment first
-    await tx.$queryRaw`
-      SELECT id FROM "Attachment" WHERE id = ${attachmentId} FOR UPDATE
-    `;
+    // Canonical Lock Order: Project -> Task -> Attachment -> VectorEntityHead
+    // 2A. Lock Project first (if identified)
+    if (parentProjectId && typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Project" WHERE id = ${parentProjectId} FOR UPDATE
+      `;
+    }
 
+    // 2B. Lock Task second (if identified)
+    if (parentTaskId && typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Task" WHERE id = ${parentTaskId} FOR UPDATE
+      `;
+    }
+
+    // 2C. Lock Attachment third
+    if (typeof tx.$queryRaw === "function") {
+      await tx.$queryRaw`
+        SELECT id FROM "Attachment" WHERE id = ${attachmentId} FOR UPDATE
+      `;
+    }
+
+    // 2D. Revalidate that the locked Attachment still belongs to the previously identified Task and Project
+    const lockedFile = tx.attachment.findUnique
+      ? await tx.attachment.findUnique({
+          where: { id: attachmentId },
+          select: {
+            id: true,
+            fileKey: true,
+            size: true,
+            taskId: true,
+            task: {
+              select: {
+                id: true,
+                projectId: true,
+                project: { select: { id: true, orgId: true } },
+              },
+            },
+          },
+        })
+      : await tx.attachment.findFirst({
+          where: { id: attachmentId },
+          select: {
+            id: true,
+            fileKey: true,
+            size: true,
+            taskId: true,
+            task: {
+              select: {
+                id: true,
+                projectId: true,
+                project: { select: { id: true, orgId: true } },
+              },
+            },
+          },
+        });
+
+    if (
+      !lockedFile ||
+      (parentTaskId && lockedFile.taskId && lockedFile.taskId !== parentTaskId) ||
+      (parentProjectId && lockedFile.task?.projectId && lockedFile.task.projectId !== parentProjectId) ||
+      (orgId && lockedFile.task?.project?.orgId && lockedFile.task.project.orgId !== orgId)
+    ) {
+      throw new Error("Attachment relationship changed or record was deleted concurrently.");
+    }
+
+    // 2E. Lock & Tombstone VectorEntityHead
     await tombstoneEntityHead({
       orgId,
       entityType: "ATTACHMENT",
@@ -368,7 +517,7 @@ export async function deleteAttachmentTransactionally(
       payload: {
         attachmentId,
         orgId,
-        taskId,
+        taskId: parentTaskId,
         fileKey,
         size,
       },

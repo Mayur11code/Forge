@@ -760,8 +760,9 @@ model VectorEntityHead {
   updatedAt    DateTime         @updatedAt
 
   generations      VectorGeneration[] @relation("HeadGenerations")
-  activeGeneration VectorGeneration?  @relation("ActiveGeneration", fields: [activeGenId], references: [id], onDelete: SetNull)
+  activeGeneration VectorGeneration?  @relation("ActiveGeneration", fields: [activeGenId, id], references: [id, headId], onDelete: Restrict)
 
+  @@unique([activeGenId, id])
   @@unique([orgId, entityType, entityId])
   @@index([entityId])
   @@index([orgId, isTombstone])
