@@ -13,7 +13,11 @@ import {
   AiResolverError,
 } from '@/lib/ai/resolver';
 import { enforceTokenBudget } from '@/lib/ai/token-manager';
-import { retrieveRelevantContext } from '@/lib/vector/retreiver';
+import {
+  retrieveRelevantContext,
+  retrieveRelevantContextWithProvenance,
+  type RetrievedContext,
+} from '@/lib/vector/retreiver';
 import { getOrgAccess } from '@/features/organizations/getOrgAccess';
 import {
   checkSemanticCache,
@@ -25,10 +29,19 @@ import {
   createRateLimitResponse,
   RATE_LIMIT_POLICIES,
 } from '@/lib/security/rate-limit';
+import { getAiEnv } from '@/lib/env/server';
+import { fingerprintPriorHistory } from '@/lib/ai/cache-identity';
 
 export const maxDuration = 60;
 
 const CHAT_HISTORY_BUDGET = 12_000;
+
+/**
+ * Version of the static system prompt template below. Part of cache identity,
+ * because a different instruction produces a different answer for the same
+ * sources.
+ */
+const CHAT_PROMPT_VERSION = 'v1';
 
 type ChatRequestBody = {
   messages: UIMessage[];
@@ -64,6 +77,19 @@ function getLatestUserText(messages: ModelMessage[]): string {
     .map((part) => part.text)
     .join('\n')
     .trim();
+}
+
+/**
+ * Reads the concrete model id off a resolved AI SDK model. If the id cannot be
+ * determined, the model cannot be part of a verifiable cache identity and the
+ * caller must skip caching rather than guess a default.
+ */
+function readResolvedModelId(model: unknown): string | null {
+  if (typeof model === 'string') {
+    return model.length > 0 ? model : null;
+  }
+  const modelId = (model as { modelId?: unknown } | null)?.modelId;
+  return typeof modelId === 'string' && modelId.length > 0 ? modelId : null;
 }
 
 export async function POST(req: Request) {
@@ -119,46 +145,144 @@ export async function POST(req: Request) {
     }
 
     const orgId = orgAccess.organization.id;
+    const userId = orgAccess.userId;
 
-    // 1. Create the embedding once using organization-aware resolver
-    const embeddingModel = await resolveOrganizationEmbeddingModel({ orgId });
-    const { embedding: queryEmbedding } = await embed({
-      model: embeddingModel,
-      value: latestMessage,
-      providerOptions: {
-        google: {
-          outputDimensionality: 768,
-        },
-      },
-    });
-
-    // 2. Semantic cache lookup: Pinecone finds a similar query; Redis holds its answer.
-    const cachedAnswer = await checkSemanticCache(queryEmbedding, orgId);
-
-    if (cachedAnswer) {
-      /*
-       * IMPORTANT:
-       * simulateCachedStream must return an AI SDK UI-message stream response,
-       * compatible with useChat / toUIMessageStreamResponse().
-       */
-      return simulateCachedStream(cachedAnswer);
+    let cacheEnabled = false;
+    try {
+      const aiEnv = getAiEnv();
+      cacheEnabled = aiEnv.ENABLE_SEMANTIC_CACHE === "true";
+    } catch {
+      cacheEnabled = false;
     }
 
-    // 3. Normal RAG path on cache miss.
-    const retrievedContext = await retrieveRelevantContext(
-      latestMessage,
-      orgId,
-    );
-
+    // The exact messages the model will see. Token budgeting can drop history,
+    // so it must run before the cache identity is derived from that history.
     const safeMessages = enforceTokenBudget(
       [...modelMessages],
       CHAT_HISTORY_BUDGET,
     );
+    // Prior history fingerprint excludes the current user turn so semantically
+    // equivalent rephrasings can match while earlier context remains isolated.
+    const historyFingerprint = fingerprintPriorHistory(safeMessages);
 
-    const languageModel = await resolveOrganizationLanguageModel({ orgId });
+    let queryEmbedding: number[] | undefined = undefined;
+    let embeddingModelId: string | null = null;
+    let cacheModelId: string | null = null;
+    let languageModel:
+      | Awaited<ReturnType<typeof resolveOrganizationLanguageModel>>
+      | undefined;
+    let retrieval: RetrievedContext | undefined = undefined;
+
+    if (cacheEnabled) {
+      try {
+        const embeddingModel = await resolveOrganizationEmbeddingModel({
+          orgId,
+        });
+        embeddingModelId = readResolvedModelId(embeddingModel);
+
+        if (embeddingModelId) {
+          const { embedding } = await embed({
+            model: embeddingModel,
+            value: latestMessage,
+            providerOptions: {
+              google: {
+                outputDimensionality: 768,
+              },
+            },
+          });
+          queryEmbedding = embedding;
+        } else {
+          // Without a concrete embedding model id the entry could not be
+          // re-validated later; do not cache at all for this request.
+          cacheEnabled = false;
+          console.warn(
+            "⚠️ [CHAT API] Embedding model id unavailable; semantic cache disabled for this request."
+          );
+        }
+      } catch (err) {
+        if (err instanceof AiResolverError) {
+          throw err;
+        }
+        console.warn(
+          "⚠️ [CHAT API] Cache embedding failed, failing open to uncached RAG:",
+          err instanceof Error ? err.message : "Unknown error"
+        );
+      }
+
+      if (queryEmbedding && queryEmbedding.length === 768) {
+        // Step 4: Run current RAG retrieval using precomputed embedding to obtain structured provenance
+        retrieval = await retrieveRelevantContextWithProvenance(
+          latestMessage,
+          orgId,
+          queryEmbedding,
+        );
+
+        // Step 5: If retrieval provenance is complete and non-empty, evaluate semantic cache
+        if (retrieval.provenanceComplete && retrieval.provenance.length > 0) {
+          languageModel = await resolveOrganizationLanguageModel({ orgId });
+          cacheModelId = readResolvedModelId(languageModel);
+
+          if (cacheModelId && embeddingModelId) {
+            const cachedAnswer = await checkSemanticCache(
+              queryEmbedding,
+              {
+                orgId,
+                userId,
+                modelId: cacheModelId,
+                embeddingModelId,
+                promptVersion: CHAT_PROMPT_VERSION,
+                historyFingerprint,
+              },
+              retrieval.provenance,
+            );
+
+            if (cachedAnswer) {
+              return simulateCachedStream(cachedAnswer, {
+                headers: rateLimitResult.headers,
+              });
+            }
+          } else {
+            cacheEnabled = false;
+            console.warn(
+              "⚠️ [CHAT API] Language model id unavailable; semantic cache disabled for this request."
+            );
+          }
+        }
+      }
+    }
+
+    // Normal RAG path on cache miss, rejected candidate, or cache disabled.
+    // Reuses already-computed retrieval when available to avoid duplicate vector retrieval.
+    if (!retrieval) {
+      retrieval = cacheEnabled
+        ? await retrieveRelevantContextWithProvenance(
+            latestMessage,
+            orgId,
+            queryEmbedding,
+          )
+        : ({
+            context: await retrieveRelevantContext(
+              latestMessage,
+              orgId,
+              queryEmbedding,
+            ),
+            provenance: [],
+            provenanceComplete: false,
+          } satisfies RetrievedContext);
+    }
+
+    const retrievedContext = retrieval.context;
+
+    if (!languageModel) {
+      languageModel = await resolveOrganizationLanguageModel({ orgId });
+    }
+    const activeLanguageModel = languageModel;
+    if (!cacheModelId && activeLanguageModel) {
+      cacheModelId = readResolvedModelId(activeLanguageModel);
+    }
 
     const result = streamText({
-      model: languageModel,
+      model: activeLanguageModel,
       system: `You are the Engineered Forge AI assistant.
 You must answer the user's query strictly using the organizational context provided below.
 If the answer is not contained in the context, politely say that you do not have that information. Do not hallucinate data.
@@ -171,7 +295,23 @@ ${retrievedContext || 'No relevant project context found in the database.'}`,
 
       // Runs after generation completes. Cache failure must not affect the response.
       onFinish: async ({ text }) => {
-        if (!text.trim()) {
+        if (
+          !text.trim() ||
+          !cacheEnabled ||
+          !queryEmbedding ||
+          !cacheModelId ||
+          !embeddingModelId
+        ) {
+          return;
+        }
+
+        // Never cache an answer whose sources cannot be re-validated: a
+        // "nothing found" response is the most dangerous thing to reuse for a
+        // different query later.
+        if (
+          !retrieval.provenanceComplete ||
+          retrieval.provenance.length === 0
+        ) {
           return;
         }
 
@@ -179,7 +319,16 @@ ${retrievedContext || 'No relevant project context found in the database.'}`,
           queryEmbedding,
           latestMessage,
           text,
-          orgId,
+          {
+            orgId,
+            userId,
+            modelId: cacheModelId,
+            embeddingModelId,
+            promptVersion: CHAT_PROMPT_VERSION,
+            historyFingerprint,
+            provenanceComplete: retrieval.provenanceComplete,
+            sources: retrieval.provenance,
+          },
         );
       },
     });

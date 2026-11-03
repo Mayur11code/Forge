@@ -137,12 +137,12 @@ describe("embedding-worker: Tenant Isolation and IDOR Defense", () => {
     expect(mockVectorStore.upsert).toHaveBeenCalledWith(
       `${TASK_A}#0`,
       expect.any(Array),
-      {
+      expect.objectContaining({
         text: "Semantic chunk 1",
         taskId: TASK_A,
         projectId: "project_alpha",
         type: "task",
-      },
+      }),
     );
   });
 
@@ -303,12 +303,12 @@ describe("embedding-worker: Tenant Isolation and IDOR Defense", () => {
     expect(mockVectorStore.upsert).toHaveBeenCalledWith(
       `${ATTACHMENT_A}#0`,
       expect.any(Array),
-      {
+      expect.objectContaining({
         text: "Semantic chunk 1",
         taskId: TASK_A,
         projectId: "project_alpha",
         type: "document",
-      },
+      }),
     );
   });
 

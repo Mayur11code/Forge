@@ -1,6 +1,6 @@
 import "server-only";
 // src/lib/vector/client.ts
-import { Pinecone } from '@pinecone-database/pinecone';
+import { Pinecone, type RecordMetadata } from '@pinecone-database/pinecone';
 import { VectorMetadata, PineconeRecordSchema } from './schema';
 import { getVectorEnv } from '@/lib/env/server';
 import {
@@ -36,9 +36,9 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // 3. Export the Strongly-Typed Raw Index
-// By passing the Generic <VectorMetadata>, the Pinecone SDK automatically provides
+// By passing the Generic <T>, the Pinecone SDK automatically provides
 // type checking and autocomplete for our specific metadata fields on queries.
-export const getRawPineconeIndex = () => pinecone.index<VectorMetadata>(indexName);
+export const getRawPineconeIndex = <T extends RecordMetadata = RecordMetadata>() => pinecone.index<T>(indexName);
 
 
 
