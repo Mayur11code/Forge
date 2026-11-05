@@ -1,12 +1,19 @@
 // src/tests/worker/embedding-worker-byok.test.ts
 jest.mock("server-only", () => ({}));
+jest.mock("@/lib/prisma/db", () => ({ db: {} }));
 
 import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
 import { resolveOrganizationGenerativeAiClient, AiResolverError } from "@/lib/ai/resolver";
 import { prisma } from "@/lib/prisma/extended";
-import { getTenantVectorStore } from "@/lib/vector/client";
+import { getTenantVectorStore, verifyPhysicalPersistence } from "@/lib/vector/client";
 import { buildSemanticPayload } from "@/lib/vector/text-extractor";
 import { chunkTextSemantically } from "@/lib/vector/semantic-chunker";
+import {
+  reserveGeneration,
+  markGenerationWritten,
+  activateGeneration,
+  failGeneration,
+} from "@/lib/vector/generation-state";
 import { CredentialPurpose } from "@prisma/client";
 
 jest.mock("@/lib/prisma/extended", () => ({
@@ -24,6 +31,14 @@ jest.mock("@/lib/prisma/extended", () => ({
 
 jest.mock("@/lib/vector/client", () => ({
   getTenantVectorStore: jest.fn(),
+  verifyPhysicalPersistence: jest.fn(),
+}));
+
+jest.mock("@/lib/vector/generation-state", () => ({
+  reserveGeneration: jest.fn(),
+  markGenerationWritten: jest.fn(),
+  activateGeneration: jest.fn(),
+  failGeneration: jest.fn(),
 }));
 
 jest.mock("@/lib/vector/text-extractor", () => ({
@@ -50,7 +65,11 @@ describe("embedding-worker: Organization BYOK Integration", () => {
   const orgId = "org-embedding-tenant";
   const entityId = "task-123";
 
-  let mockVectorStore: { deleteByTask: jest.Mock; upsert: jest.Mock };
+  let mockVectorStore: {
+    deleteByTask: jest.Mock;
+    upsert: jest.Mock;
+    upsertGenerationVectors: jest.Mock;
+  };
   let mockBatchEmbedContents: jest.Mock;
 
   beforeEach(() => {
@@ -59,8 +78,24 @@ describe("embedding-worker: Organization BYOK Integration", () => {
     mockVectorStore = {
       deleteByTask: jest.fn().mockResolvedValue(undefined),
       upsert: jest.fn().mockResolvedValue(undefined),
+      upsertGenerationVectors: jest.fn().mockResolvedValue(undefined),
     };
     (getTenantVectorStore as jest.Mock).mockReturnValue(mockVectorStore);
+
+    (reserveGeneration as jest.Mock).mockResolvedValue({
+      generation: { id: "gen-byok-123", expectedChunkCount: 2 },
+      claimToken: "claim-token-123",
+      head: { id: "head-123", latestRevision: 1 },
+    });
+    (markGenerationWritten as jest.Mock).mockResolvedValue({ id: "gen-byok-123", status: "WRITTEN" });
+    (activateGeneration as jest.Mock).mockResolvedValue({ id: "head-123", activeGenId: "gen-byok-123" });
+    (verifyPhysicalPersistence as jest.Mock).mockResolvedValue({
+      verified: true,
+      chunksFound: 2,
+      manifestDigest: "mock-digest-byok",
+      readBackLatencyMs: 30,
+      attempts: 1,
+    });
 
     (prisma.task.findFirst as jest.Mock).mockResolvedValue({
       id: entityId,
@@ -118,7 +153,8 @@ describe("embedding-worker: Organization BYOK Integration", () => {
       model: "gemini-embedding-001",
     });
     expect(mockBatchEmbedContents).toHaveBeenCalledTimes(1);
-    expect(mockVectorStore.upsert).toHaveBeenCalledTimes(2);
+    expect(mockVectorStore.upsertGenerationVectors).toHaveBeenCalledTimes(1);
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
   });
 
   it("aborts execution when organization has no credential and platform fallback is denied", async () => {
@@ -146,9 +182,10 @@ describe("embedding-worker: Organization BYOK Integration", () => {
       })
     ).rejects.toThrow("ORGANIZATION_KEY_REQUIRED");
 
-    // Vector store was wiped, but batchEmbedContents and upsert were never reached
+    // Invariant I-4: Zero pre-wipe deletion
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
     expect(mockBatchEmbedContents).not.toHaveBeenCalled();
-    expect(mockVectorStore.upsert).not.toHaveBeenCalled();
+    expect(mockVectorStore.upsertGenerationVectors).not.toHaveBeenCalled();
   });
 
   it("uses platform client when organization has no credential and policy permits platform fallback", async () => {
@@ -185,7 +222,8 @@ describe("embedding-worker: Organization BYOK Integration", () => {
       model: "gemini-embedding-001",
     });
     expect(mockBatchEmbedContents).toHaveBeenCalledTimes(1);
-    expect(mockVectorStore.upsert).toHaveBeenCalledTimes(2);
+    expect(mockVectorStore.upsertGenerationVectors).toHaveBeenCalledTimes(1);
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
   });
 
   it("aborts execution when credential is in status INVALID or REVOKED, refusing platform fallback", async () => {
@@ -213,7 +251,8 @@ describe("embedding-worker: Organization BYOK Integration", () => {
       })
     ).rejects.toThrow("CREDENTIAL_NOT_ACTIVE");
 
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
     expect(mockBatchEmbedContents).not.toHaveBeenCalled();
-    expect(mockVectorStore.upsert).not.toHaveBeenCalled();
+    expect(mockVectorStore.upsertGenerationVectors).not.toHaveBeenCalled();
   });
 });

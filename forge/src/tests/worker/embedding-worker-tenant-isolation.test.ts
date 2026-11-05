@@ -1,12 +1,19 @@
 // src/tests/worker/embedding-worker-tenant-isolation.test.ts
 jest.mock("server-only", () => ({}));
+jest.mock("@/lib/prisma/db", () => ({ db: {} }));
 
 import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
 import { resolveOrganizationGenerativeAiClient } from "@/lib/ai/resolver";
 import { prisma } from "@/lib/prisma/extended";
-import { getTenantVectorStore } from "@/lib/vector/client";
+import { getTenantVectorStore, verifyPhysicalPersistence } from "@/lib/vector/client";
 import { buildSemanticPayload } from "@/lib/vector/text-extractor";
 import { chunkTextSemantically } from "@/lib/vector/semantic-chunker";
+import {
+  reserveGeneration,
+  markGenerationWritten,
+  activateGeneration,
+  failGeneration,
+} from "@/lib/vector/generation-state";
 
 jest.mock("@/lib/prisma/extended", () => ({
   prisma: {
@@ -23,6 +30,14 @@ jest.mock("@/lib/prisma/extended", () => ({
 
 jest.mock("@/lib/vector/client", () => ({
   getTenantVectorStore: jest.fn(),
+  verifyPhysicalPersistence: jest.fn(),
+}));
+
+jest.mock("@/lib/vector/generation-state", () => ({
+  reserveGeneration: jest.fn(),
+  markGenerationWritten: jest.fn(),
+  activateGeneration: jest.fn(),
+  failGeneration: jest.fn(),
 }));
 
 jest.mock("@/lib/vector/text-extractor", () => ({
@@ -46,7 +61,11 @@ describe("embedding-worker: Tenant Isolation and IDOR Defense", () => {
   const ATTACHMENT_A = "att_alpha_1";
   const ATTACHMENT_B = "att_beta_1";
 
-  let mockVectorStore: { deleteByTask: jest.Mock; upsert: jest.Mock };
+  let mockVectorStore: {
+    deleteByTask: jest.Mock;
+    upsert: jest.Mock;
+    upsertGenerationVectors: jest.Mock;
+  };
   let mockBatchEmbedContents: jest.Mock;
   let mockAiClient: { getGenerativeModel: jest.Mock };
   let consoleWarnSpy: jest.SpyInstance;
@@ -61,8 +80,24 @@ describe("embedding-worker: Tenant Isolation and IDOR Defense", () => {
     mockVectorStore = {
       deleteByTask: jest.fn().mockResolvedValue(undefined),
       upsert: jest.fn().mockResolvedValue(undefined),
+      upsertGenerationVectors: jest.fn().mockResolvedValue(undefined),
     };
     (getTenantVectorStore as jest.Mock).mockReturnValue(mockVectorStore);
+
+    (reserveGeneration as jest.Mock).mockResolvedValue({
+      generation: { id: "gen_alpha_1", expectedChunkCount: 1 },
+      claimToken: "claim_alpha_token",
+      head: { id: "head_alpha_1", latestRevision: 1 },
+    });
+    (markGenerationWritten as jest.Mock).mockResolvedValue({ id: "gen_alpha_1", status: "WRITTEN" });
+    (activateGeneration as jest.Mock).mockResolvedValue({ id: "head_alpha_1", activeGenId: "gen_alpha_1" });
+    (verifyPhysicalPersistence as jest.Mock).mockResolvedValue({
+      verified: true,
+      chunksFound: 1,
+      manifestDigest: "manifest_digest_123",
+      readBackLatencyMs: 50,
+      attempts: 1,
+    });
 
     mockBatchEmbedContents = jest.fn().mockResolvedValue({
       embeddings: [{ values: new Array(768).fill(0.1) }],
@@ -89,7 +124,7 @@ describe("embedding-worker: Tenant Isolation and IDOR Defense", () => {
     consoleLogSpy.mockRestore();
   });
 
-  it("Org A + Org A task: validates ownership, wipes old vectors, embeds and upserts into Org A namespace", async () => {
+  it("Org A + Org A task: validates ownership, executes non-destructive V2 embedding and upserts into Org A namespace", async () => {
     (prisma.task.findFirst as jest.Mock).mockResolvedValueOnce({
       id: TASK_A,
       title: "Alpha Task",
@@ -129,21 +164,13 @@ describe("embedding-worker: Tenant Isolation and IDOR Defense", () => {
     // 2. Vector store target must match event orgId
     expect(getTenantVectorStore).toHaveBeenCalledWith(ORG_A);
 
-    // 3. Vector deletion must occur only after ownership is verified
-    expect(mockVectorStore.deleteByTask).toHaveBeenCalledWith(TASK_A);
+    // 3. Pre-wipe deletion is eliminated (Invariant I-4)
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
 
-    // 4. Batch embeddings and upsert must proceed with correct metadata
+    // 4. Batch embeddings and generation-scoped upsert must proceed
     expect(mockBatchEmbedContents).toHaveBeenCalledTimes(1);
-    expect(mockVectorStore.upsert).toHaveBeenCalledWith(
-      `${TASK_A}#0`,
-      expect.any(Array),
-      expect.objectContaining({
-        text: "Semantic chunk 1",
-        taskId: TASK_A,
-        projectId: "project_alpha",
-        type: "task",
-      }),
-    );
+    expect(mockVectorStore.upsertGenerationVectors).toHaveBeenCalledTimes(1);
+    expect(activateGeneration).toHaveBeenCalledTimes(1);
   });
 
   it("Org A + Org B task: rejects cross-tenant reference before any vector deletion, embedding, or upsert", async () => {
@@ -296,20 +323,12 @@ describe("embedding-worker: Tenant Isolation and IDOR Defense", () => {
       }),
     });
 
-    // 2. Wipes old vectors for the attachment
-    expect(mockVectorStore.deleteByTask).toHaveBeenCalledWith(ATTACHMENT_A);
+    // 2. Pre-wipe deletion is eliminated (Invariant I-4)
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
 
-    // 3. Upserts with type 'document' and parent taskId
-    expect(mockVectorStore.upsert).toHaveBeenCalledWith(
-      `${ATTACHMENT_A}#0`,
-      expect.any(Array),
-      expect.objectContaining({
-        text: "Semantic chunk 1",
-        taskId: TASK_A,
-        projectId: "project_alpha",
-        type: "document",
-      }),
-    );
+    // 3. Upserts generation-scoped vectors
+    expect(mockVectorStore.upsertGenerationVectors).toHaveBeenCalledTimes(1);
+    expect(activateGeneration).toHaveBeenCalledTimes(1);
   });
 
   it("Rejects unsupported entity types safely without vector mutation", async () => {
