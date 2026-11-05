@@ -1,4 +1,5 @@
 
+import crypto from 'crypto';
 import { z } from 'zod';
 
 const BaseVectorMetadataSchema = z.object({
@@ -188,3 +189,79 @@ export type SemanticCacheRecord = z.infer<
 export type SemanticCachePayload = z.infer<
   typeof SemanticCachePayloadSchema
 >;
+
+// -----------------------------------------------------------------------------
+// Vector V2 Generation-Scoped Schema & Identifiers
+// -----------------------------------------------------------------------------
+
+export const VectorMetadataV2Schema = z.object({
+  contractVersion: z.literal('v2'),
+  entityType: z.enum(['task', 'attachment']),
+  entityId: z.string().min(1),
+  generationId: z.string().min(1),
+  sourceRevision: z.number().int().nonnegative(),
+  chunkIndex: z.number().int().nonnegative(),
+  chunkCount: z.number().int().positive(),
+  orgId: z.string().min(1),
+  projectId: z.string().min(1),
+  text: z.string().min(1),
+  title: z.string().optional(),
+  taskId: z.string().optional(),
+  status: z.enum(['TODO', 'IN_PROGRESS', 'DONE']).optional(),
+  priority: z.string().optional(),
+  manifestDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  parentTaskVersion: z.string().optional(),
+  sourceVersion: z.string().optional(),
+});
+
+export const PineconeRecordV2Schema = z.object({
+  id: z.string().regex(/^(task|attachment)_[a-zA-Z0-9_\-]+_[a-zA-Z0-9_\-]+#\d+$/),
+  values: z.array(z.number()).length(768, 'Embedding must be exactly 768 dimensions'),
+  metadata: VectorMetadataV2Schema.transform((data) => {
+    return Object.fromEntries(
+      Object.entries(data).filter(([, value]) => value != null)
+    ) as z.infer<typeof VectorMetadataV2Schema>;
+  }),
+});
+
+export type VectorMetadataV2 = z.infer<typeof VectorMetadataV2Schema>;
+export type PineconeRecordV2 = z.infer<typeof PineconeRecordV2Schema>;
+
+export function buildVectorId(
+  entityType: 'task' | 'attachment',
+  entityId: string,
+  generationId: string,
+  chunkIndex: number
+): string {
+  return `${entityType}_${entityId}_${generationId}#${chunkIndex}`;
+}
+
+export function parseVectorId(id: string): {
+  entityType: 'task' | 'attachment';
+  entityId: string;
+  generationId: string;
+  chunkIndex: number;
+} | null {
+  const match = id.match(/^(task|attachment)_(.+?)_(gen_[a-zA-Z0-9_\-]+|[a-zA-Z0-9\-]+)#(\d+)$/);
+  if (!match) return null;
+  return {
+    entityType: match[1] as 'task' | 'attachment',
+    entityId: match[2],
+    generationId: match[3],
+    chunkIndex: parseInt(match[4], 10),
+  };
+}
+
+export function computeManifestDigest(
+  chunks: Array<{ chunkIndex: number; id: string; text?: string; contentHash?: string }>
+): string {
+  const sorted = [...chunks].sort((a, b) => a.chunkIndex - b.chunkIndex);
+  const lines = sorted.map((c) => {
+    const hash =
+      c.contentHash ||
+      crypto.createHash('sha256').update(c.text ?? '', 'utf8').digest('hex');
+    return `${c.chunkIndex}:${c.id}:${hash}`;
+  });
+  return crypto.createHash('sha256').update(lines.join('\n'), 'utf8').digest('hex');
+}
+
