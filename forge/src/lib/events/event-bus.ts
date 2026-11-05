@@ -10,8 +10,8 @@ import { EventType, EventPayloadMap } from "./schema";
  * (src/lib/prisma/extended.ts) already interpolates the task title into a
  * subject and body, so the bus does not need the title itself.
  *
- * `TASK_UPDATED` routes to `EMBEDDING_REQUESTED` to synchronize vector index state
- * on task modifications, maintaining strict vector freshness.
+ * `TASK_CREATED` and `TASK_UPDATED` route to analytics and email notifications.
+ * Vector synchronization is authoritatively managed via transactional outbox (VectorOutboxEvent).
  */
 export type TriggerPayloads = {
   USER_SIGNED_UP: { orgId: string; userId: string };
@@ -115,15 +115,6 @@ const EVENT_ROUTING: RoutingTable = {
 
   TASK_CREATED: [
     (p) => ({
-      type: "EMBEDDING_REQUESTED",
-      payload: {
-        orgId: p.orgId,
-        entityId: p.taskId,
-        type: "TASK",
-      },
-    }),
-
-    (p) => ({
       type: "ANALYTICS_EVENT",
       payload: {
         orgId: p.orgId,
@@ -147,15 +138,6 @@ const EVENT_ROUTING: RoutingTable = {
   ],
 
   TASK_UPDATED: [
-    (p) => ({
-      type: "EMBEDDING_REQUESTED",
-      payload: {
-        orgId: p.orgId,
-        entityId: p.taskId,
-        type: "TASK",
-      },
-    }),
-
     (p) => ({
       type: "ANALYTICS_EVENT",
       payload: {
