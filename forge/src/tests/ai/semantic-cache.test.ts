@@ -1267,7 +1267,7 @@ describe('Forge Semantic Cache — production hardening', () => {
       await retrieveRelevantContext('What is task 1?', ORG_A, DUMMY_EMBEDDING);
 
       expect(mockEmbed).not.toHaveBeenCalled();
-      expect(mockTenantVectorQuery).toHaveBeenCalledWith(DUMMY_EMBEDDING, 5);
+      expect(mockTenantVectorQuery).toHaveBeenCalledWith(DUMMY_EMBEDDING, 10);
     });
 
     it('calls embed() when no precomputed embedding is supplied', async () => {
@@ -1585,7 +1585,7 @@ describe('Forge Semantic Cache — production hardening', () => {
       expect(mockNamespaceQuery).toHaveBeenCalledTimes(1);
       // Retrieval was executed once and reused for generation (not duplicated on miss)
       expect(mockTenantVectorQuery).toHaveBeenCalledTimes(1);
-      expect(mockTenantVectorQuery).toHaveBeenCalledWith(DUMMY_EMBEDDING, 5);
+      expect(mockTenantVectorQuery).toHaveBeenCalledWith(DUMMY_EMBEDDING, 10);
       expect(mockStreamText).toHaveBeenCalledTimes(1);
     });
 

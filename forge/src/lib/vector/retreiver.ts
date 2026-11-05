@@ -3,57 +3,148 @@ import { embed } from 'ai';
 import { resolveOrganizationEmbeddingModel } from '@/lib/ai/resolver';
 import { getTenantVectorStore } from './client';
 import { db } from '@/lib/prisma/db';
+import { VectorEntityType } from '@prisma/client';
+import { parseVectorId } from './schema';
 import {
     taskSourceVersion,
     attachmentSourceVersion,
     type SourceProvenance,
 } from './provenance';
 
+export const MAX_SUPPORTED_TOP_K = 25;
+
+export interface ActiveRagCandidateFilterOptions {
+    prismaClient?: any;
+}
+
 /**
- * Verifies that candidate vector matches correspond to active, existing records in the database
+ * Verifies that candidate vector matches correspond to active, authoritative records
  * belonging to the specified tenant organization.
- * Filters out stale vectors from tasks or attachments that have been deleted in PostgreSQL
- * during the asynchronous Pinecone cleanup window.
+ *
+ * Vector V2 Active-Generation Enforcement:
+ * 1. Parses `${entityType}_${entityId}_${generationId}#${chunkIndex}`.
+ * 2. Asserts id.generationId === metadata.generationId, metadata.contractVersion === "v2".
+ * 3. Resolves VectorEntityHead:
+ *    - If head.isTombstone: REJECT.
+ *    - If head.activeGenId === null: REJECT.
+ *    - If candidate.generationId !== head.activeGenId: REJECT (superseded/obsolete).
+ *    - If metadata.sourceRevision !== head.latestRevision: REJECT.
+ * 4. Legacy V1 candidates are rejected if the entity already has an active V2 generation.
  */
 export async function filterActiveRagCandidates(
     matches: Array<{ id: string; metadata?: Record<string, unknown>; score?: number }>,
-    orgId: string
+    orgId: string,
+    options?: ActiveRagCandidateFilterOptions
 ) {
     if (!matches || matches.length === 0) return [];
 
-    const taskCandidateIds = new Set<string>();
-    const attachmentCandidateIds = new Set<string>();
+    const prismaDb = options?.prismaClient ?? db;
+
+    interface ParsedCandidate {
+        match: typeof matches[0];
+        isV2: boolean;
+        entityType?: 'task' | 'attachment';
+        entityId?: string;
+        generationId?: string;
+        chunkIndex?: number;
+        sourceRevision?: number;
+    }
+
+    const parsedCandidates: ParsedCandidate[] = [];
+    const v2EntitiesToLookup: Array<{ entityType: VectorEntityType; entityId: string }> = [];
+    const legacyTaskIds = new Set<string>();
+    const legacyAttachmentIds = new Set<string>();
 
     for (const match of matches) {
-        const entityId = match.id.split("#")[0];
-        const type = match.metadata?.type;
-        const taskId = typeof match.metadata?.taskId === "string" ? match.metadata.taskId : undefined;
+        const meta = match.metadata ?? {};
+        const parsedId = parseVectorId(match.id);
 
-        if (type === "document") {
-            if (entityId) attachmentCandidateIds.add(entityId);
-            if (taskId) taskCandidateIds.add(taskId);
+        if (parsedId && meta.contractVersion === 'v2') {
+            // V2 candidate: verify consistency between parsed ID and metadata
+            if (
+                parsedId.generationId === meta.generationId &&
+                parsedId.entityId === meta.entityId &&
+                parsedId.entityType === meta.entityType &&
+                parsedId.chunkIndex === meta.chunkIndex &&
+                typeof meta.sourceRevision === 'number'
+            ) {
+                const pType = parsedId.entityType === 'task' ? VectorEntityType.TASK : VectorEntityType.ATTACHMENT;
+                parsedCandidates.push({
+                    match,
+                    isV2: true,
+                    entityType: parsedId.entityType,
+                    entityId: parsedId.entityId,
+                    generationId: parsedId.generationId,
+                    chunkIndex: parsedId.chunkIndex,
+                    sourceRevision: meta.sourceRevision as number,
+                });
+                v2EntitiesToLookup.push({ entityType: pType, entityId: parsedId.entityId });
+            } else {
+                // Corrupted or mismatched metadata/ID
+                continue;
+            }
         } else {
-            // Task vector
-            const idToVerify = taskId || entityId;
-            if (idToVerify) taskCandidateIds.add(idToVerify);
+            // Legacy V1 candidate
+            const entityId = match.id.split('#')[0];
+            const type = meta.type;
+            const taskId = typeof meta.taskId === 'string' ? meta.taskId : undefined;
+            const isDoc = type === 'document';
+            const legacyEntityType = isDoc ? VectorEntityType.ATTACHMENT : VectorEntityType.TASK;
+
+            parsedCandidates.push({
+                match,
+                isV2: false,
+                entityType: isDoc ? 'attachment' : 'task',
+                entityId,
+            });
+
+            if (entityId) {
+                v2EntitiesToLookup.push({ entityType: legacyEntityType, entityId });
+            }
+
+            if (type === 'document') {
+                if (entityId) legacyAttachmentIds.add(entityId);
+                if (taskId) legacyTaskIds.add(taskId);
+            } else {
+                const idToVerify = taskId || entityId;
+                if (idToVerify) legacyTaskIds.add(idToVerify);
+            }
         }
     }
 
     // Execute bounded, batched lookups
-    const [existingTasks, existingAttachments] = await Promise.all([
-        taskCandidateIds.size > 0
-            ? db.task.findMany({
+    const [heads, legacyTasks, legacyAttachments] = await Promise.all([
+        v2EntitiesToLookup.length > 0 && typeof prismaDb.vectorEntityHead?.findMany === 'function'
+            ? prismaDb.vectorEntityHead.findMany({
                   where: {
-                      id: { in: Array.from(taskCandidateIds) },
+                      orgId,
+                      OR: v2EntitiesToLookup.map((e) => ({
+                          entityType: e.entityType,
+                          entityId: e.entityId,
+                      })),
+                  },
+                  select: {
+                      entityType: true,
+                      entityId: true,
+                      activeGenId: true,
+                      latestRevision: true,
+                      isTombstone: true,
+                  },
+              })
+            : [],
+        legacyTaskIds.size > 0
+            ? prismaDb.task.findMany({
+                  where: {
+                      id: { in: Array.from(legacyTaskIds) },
                       project: { orgId },
                   },
                   select: { id: true },
               })
             : [],
-        attachmentCandidateIds.size > 0
-            ? db.attachment.findMany({
+        legacyAttachmentIds.size > 0
+            ? prismaDb.attachment.findMany({
                   where: {
-                      id: { in: Array.from(attachmentCandidateIds) },
+                      id: { in: Array.from(legacyAttachmentIds) },
                       task: { project: { orgId } },
                   },
                   select: { id: true, taskId: true },
@@ -61,26 +152,57 @@ export async function filterActiveRagCandidates(
             : [],
     ]);
 
-    const activeTaskIds = new Set(existingTasks.map((t) => t.id));
-    const activeAttachmentIds = new Set(existingAttachments.map((a) => a.id));
+    // Index heads by `${entityType}:${entityId}`
+    const headMap = new Map<string, typeof heads[0]>();
+    for (const h of heads) {
+        headMap.set(`${h.entityType}:${h.entityId}`, h);
+    }
 
-    // Filter matches: only retain chunks whose underlying resources exist and belong to orgId
-    return matches.filter((match) => {
-        const entityId = match.id.split("#")[0];
-        const type = match.metadata?.type;
-        const taskId = typeof match.metadata?.taskId === "string" ? match.metadata.taskId : undefined;
+    const activeLegacyTaskIds = new Set(legacyTasks.map((t: any) => t.id));
+    const activeLegacyAttachmentIds = new Set(legacyAttachments.map((a: any) => a.id));
 
-        if (type === "document") {
-            // Document chunk requires both attachment and parent task to exist in org
-            if (!activeAttachmentIds.has(entityId)) return false;
-            if (taskId && !activeTaskIds.has(taskId)) return false;
-            return true;
+    // Filter matches: only retain chunks matching authoritative active head invariants
+    const validMatches: typeof matches = [];
+
+    for (const cand of parsedCandidates) {
+        if (cand.isV2) {
+            const pType = cand.entityType === 'task' ? VectorEntityType.TASK : VectorEntityType.ATTACHMENT;
+            const head = headMap.get(`${pType}:${cand.entityId}`);
+
+            if (!head) continue;
+            // Head must not be tombstoned
+            if (head.isTombstone) continue;
+            // Head must have an active generation
+            if (!head.activeGenId) continue;
+            // Candidate generationId must match head.activeGenId
+            if (cand.generationId !== head.activeGenId) continue;
+            // Source revision in candidate metadata must equal head.latestRevision
+            if (cand.sourceRevision !== head.latestRevision) continue;
+
+            validMatches.push(cand.match);
         } else {
-            // Task chunk requires task to exist in org
-            const idToVerify = taskId || entityId;
-            return activeTaskIds.has(idToVerify);
+            // Legacy V1 candidate: check if entity already has an active V2 generation
+            const taskHead = headMap.get(`${VectorEntityType.TASK}:${cand.entityId}`);
+            if (taskHead?.activeGenId) continue;
+
+            const meta = cand.match.metadata ?? {};
+            const type = meta.type;
+            const taskId = typeof meta.taskId === 'string' ? meta.taskId : undefined;
+
+            if (type === 'document') {
+                if (!activeLegacyAttachmentIds.has(cand.entityId!)) continue;
+                if (taskId && !activeLegacyTaskIds.has(taskId)) continue;
+                validMatches.push(cand.match);
+            } else {
+                const idToVerify = taskId || cand.entityId!;
+                if (activeLegacyTaskIds.has(idToVerify)) {
+                    validMatches.push(cand.match);
+                }
+            }
         }
-    });
+    }
+
+    return validMatches;
 }
 
 /**
@@ -121,7 +243,8 @@ async function runRetrieval(
     userQuery: string,
     orgId: string,
     precomputedEmbedding: number[] | undefined,
-    collectProvenance: boolean
+    collectProvenance: boolean,
+    requestedTopK: number = 5
 ): Promise<RetrievedContext> {
     try {
         if (!userQuery || !userQuery.trim()) {
@@ -129,7 +252,13 @@ async function runRetrieval(
         }
         if (!orgId) throw new Error("CRITICAL: Tenant isolation key (orgId) missing during retrieval.");
 
-        // 1. Reuse precomputed embedding if supplied; otherwise generate via provider
+        // 1. Clamped Top-K Contract
+        const parsedTopK = typeof requestedTopK === "number" && Number.isFinite(requestedTopK) ? Math.floor(requestedTopK) : 5;
+        const clampedTopK = Math.min(Math.max(1, parsedTopK), MAX_SUPPORTED_TOP_K);
+        // Candidate pool oversampling factor: min(clampedTopK * 2, 50)
+        const queryK = Math.min(clampedTopK * 2, 50);
+
+        // 2. Reuse precomputed embedding if supplied; otherwise generate via provider
         let embedding = precomputedEmbedding;
         if (!embedding || embedding.length === 0) {
             const embedResult = await embed({
@@ -149,26 +278,40 @@ async function runRetrieval(
             return { context: "", provenance: [], provenanceComplete: false };
         }
 
-        // 2. Fetch Isolated Tenant Vector Store Instance
+        // 3. Fetch Isolated Tenant Vector Store Instance
         const vectorStore = getTenantVectorStore(orgId);
 
-        // 3. Query the Namespace
-        // Pull the top 5 most semantically relevant chunks from Pinecone
-        const searchHits = await vectorStore.query(embedding, 5);
+        // 4. Query the Namespace with oversampled K
+        const searchHits = await vectorStore.query(embedding, queryK);
+        const matches = (searchHits.matches ?? []) as Array<{ id: string; metadata?: Record<string, unknown>; score?: number }>;
 
-        if (!searchHits.matches || searchHits.matches.length === 0) {
+        if (!matches || matches.length === 0) {
             return { context: "", provenance: [], provenanceComplete: false };
         }
 
-        // 4. Guard against stale vectors: batch-validate that resources still exist in DB
-        const activeMatches = await filterActiveRagCandidates(
-            searchHits.matches as Array<{ id: string; metadata?: Record<string, unknown>; score?: number }>,
-            orgId
-        );
+        // 5. Guard against stale vectors: batch-validate active generation & head invariants
+        let activeMatches = await filterActiveRagCandidates(matches, orgId);
+
+        // 6. Bounded Secondary Fetch:
+        // Only trigger if Pinecone had more results than our initial candidate pool (matches.length >= queryK)
+        // and filtered active candidates < ceil(clampedTopK / 2) and initial queryK < 50
+        if (matches.length >= queryK && activeMatches.length < Math.ceil(clampedTopK / 2) && queryK < 50) {
+            const secondaryHits = await vectorStore.query(embedding, 50);
+            const secondaryMatches = (secondaryHits.matches ?? []) as Array<{ id: string; metadata?: Record<string, unknown>; score?: number }>;
+            const existingIds = new Set(matches.map((m) => m.id));
+            const newMatches = secondaryMatches.filter((m) => !existingIds.has(m.id));
+            if (newMatches.length > 0) {
+                const filteredNew = await filterActiveRagCandidates(newMatches, orgId);
+                activeMatches = [...activeMatches, ...filteredNew];
+            }
+        }
 
         if (activeMatches.length === 0) {
             return { context: "", provenance: [], provenanceComplete: false };
         }
+
+        // Slice to requested clampedTopK
+        activeMatches = activeMatches.slice(0, clampedTopK);
 
         // 5. Strict Freshness Validation:
         // A vector is current only when its indexed content corresponds to the current authoritative source state.
@@ -355,21 +498,18 @@ async function runRetrieval(
 export async function retrieveRelevantContext(
     userQuery: string,
     orgId: string,
-    precomputedEmbedding?: number[]
+    precomputedEmbedding?: number[],
+    topK: number = 5
 ): Promise<string> {
-    const result = await runRetrieval(userQuery, orgId, precomputedEmbedding, false);
+    const result = await runRetrieval(userQuery, orgId, precomputedEmbedding, false, topK);
     return result.context;
 }
 
-/**
- * Retrieval variant that additionally returns structured, versioned provenance
- * for every source that contributed to the context. Required for any response
- * that may be written to the semantic cache.
- */
 export async function retrieveRelevantContextWithProvenance(
     userQuery: string,
     orgId: string,
-    precomputedEmbedding?: number[]
+    precomputedEmbedding?: number[],
+    topK: number = 5
 ): Promise<RetrievedContext> {
-    return runRetrieval(userQuery, orgId, precomputedEmbedding, true);
+    return runRetrieval(userQuery, orgId, precomputedEmbedding, true, topK);
 }
