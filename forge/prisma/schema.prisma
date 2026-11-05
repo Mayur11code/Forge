@@ -510,7 +510,10 @@ model Attachment {
 model EventLog {
   id          String      @id @default(cuid())
 
-  messageId   String      @unique 
+  messageId      String       @unique 
+  outboxEventId  String?
+  claimToken     String?
+  leaseExpiresAt DateTime?
   eventName   String      
   payload     Json?       
 
@@ -521,6 +524,8 @@ model EventLog {
   updatedAt   DateTime    @updatedAt
 
   @@index([status])
+  @@index([status, leaseExpiresAt])
+  @@index([outboxEventId])
   @@index([createdAt])
 }
 
@@ -755,7 +760,8 @@ model VectorEntityHead {
   entityId     String
   activeGenId  String?          @unique
   isTombstone  Boolean          @default(false)
-  tombstonedAt DateTime?
+  tombstonedAt   DateTime?
+  latestRevision Int              @default(0)
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
 
@@ -794,4 +800,38 @@ model VectorGeneration {
   @@index([headId, status])
   @@index([status, leaseExpiresAt])
   @@index([claimToken])
+}
+
+enum VectorOutboxStatus {
+  PENDING
+  CLAIMED
+  DISPATCHED
+  COMPLETED
+  FAILED
+}
+
+model VectorOutboxEvent {
+  id                     String              @id @default(cuid())
+  orgId                  String
+  entityType             VectorEntityType
+  entityId               String
+  sourceRevision         Int
+  contentHash            String
+  pipelineVersion        String              @default("v2")
+  parentTaskVersion      String?
+  status                 VectorOutboxStatus  @default(PENDING)
+
+  dispatchClaimToken     String?
+  dispatchLeaseExpiresAt DateTime?
+  dispatchAttempts       Int                 @default(0)
+  lastDispatchedAt       DateTime?
+  nextRetryAt            DateTime?
+  terminalError          String?             @db.Text
+
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  @@index([status, nextRetryAt])
+  @@index([status, dispatchLeaseExpiresAt])
+  @@index([orgId, entityType, entityId])
 }

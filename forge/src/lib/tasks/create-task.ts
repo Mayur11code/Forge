@@ -20,6 +20,9 @@
 //   as it does for the UI path.
 
 import { prisma } from "@/lib/prisma/extended";
+import { db } from "@/lib/prisma/db";
+import { recordVectorSyncIntent } from "@/lib/vector/outbox";
+import { computeTaskContentHash } from "@/lib/vector/provenance";
 import { createTaskSchema } from "@/core/domain";
 import type { Task } from "@prisma/client";
 

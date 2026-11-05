@@ -18,6 +18,13 @@
 // - No `auth()`, no `notFound()`, no `revalidatePath()`, no `next/*` imports.
 
 import { prisma } from "@/lib/prisma/extended";
+import { db } from "@/lib/prisma/db";
+import { recordVectorSyncIntent } from "@/lib/vector/outbox";
+import {
+  computeTaskContentHash,
+  computeAttachmentContentHash,
+  computeAttachmentParentTaskVersion,
+} from "@/lib/vector/provenance";
 import { updateTaskSchema } from "@/core/domain";
 import type { Prisma, Task } from "@prisma/client";
 
