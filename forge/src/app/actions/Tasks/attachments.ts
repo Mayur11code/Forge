@@ -3,6 +3,11 @@
 import { UTApi } from "uploadthing/server";
 import { db } from "@/lib/prisma/db";
 import { auth } from "@/lib/auth/auth";
+import { recordVectorSyncIntent } from "@/lib/vector/outbox";
+import {
+  computeAttachmentContentHash,
+  computeAttachmentParentTaskVersion,
+} from "@/lib/vector/provenance";
 const utapi = new UTApi();
 
 // S1 (security) — TENANT SCOPE.
