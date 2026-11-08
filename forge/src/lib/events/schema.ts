@@ -28,7 +28,6 @@ export const EventTypes = [
 
 export type EventType = (typeof EventTypes)[number];
 
-
 const baseEventSchema = z.object({
   orgId: z.string(),
   actorId: z.string().optional(),
@@ -76,6 +75,11 @@ export const eventSchemas = {
   EMBEDDING_REQUESTED: baseEventSchema.extend({
     entityId: z.string(),
     type: z.enum(["TASK", "ATTACHMENT"]),
+    outboxEventId: z.string().optional(),
+    sourceRevision: z.number().int().optional(),
+    contentHash: z.string().optional(),
+    pipelineVersion: z.string().optional(),
+    parentTaskVersion: z.string().nullable().optional(),
   }),
 
   AI_SUMMARY_REQUESTED: baseEventSchema.extend({
@@ -107,7 +111,6 @@ export const eventSchemas = {
     runId: z.string(),
     stepRunId: z.string(),
     kind: z.enum(["TRIGGER", "ACTION"]),
-
   }),
 
   /**
@@ -178,12 +181,6 @@ export const eventSchemas = {
     .object({
       limit: z.number().int().min(1).max(1000).default(100),
     })
-    // `.strict()`, unlike every other schema here, because this payload is
-    // written by hand in a QStash schedule body and never travels through
-    // TypeScript. A default Zod object silently strips unknown keys, so a
-    // misspelled `limitt` would pass validation and then sweep with the default
-    // 100 - a schedule that reads as configured and is not. Failing loudly is the
-    // only useful answer to a typo in an external config.
     .strict(),
 
   DOMAIN_CLEANUP_REQUESTED: z.object({

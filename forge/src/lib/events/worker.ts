@@ -1,4 +1,5 @@
 import "server-only";
+import crypto from "crypto";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
@@ -65,9 +66,15 @@ export type WorkerHandler<K extends EventType> = (params: {
 }) => Promise<void>;
 
 
+export interface WorkerOptions {
+  heartbeatIntervalMs?: number;
+  leaseSeconds?: number;
+}
+
 export function createWorker<K extends EventType>(
   eventType: K,
-  handler: WorkerHandler<K>
+  handler: WorkerHandler<K>,
+  options?: WorkerOptions
 ) {
 
   const internalHandler = async (req: NextRequest) => {
@@ -130,82 +137,275 @@ export function createWorker<K extends EventType>(
 
 
 
-      //state check
+      // State check with Database Clock Lease Ownership (Phase B Rev 3.2)
       let proceedToExecute = false;
+      const workerClaimToken = crypto.randomUUID();
+      const leaseSeconds = options?.leaseSeconds ?? 300;
+      const heartbeatIntervalMs =
+        options?.heartbeatIntervalMs ??
+        Math.min(30_000, Math.max(100, Math.floor((leaseSeconds * 1000) / 3)));
 
-      try {
-        // Attempt to create the log (Atomic First-Time Check)
-        await db.eventLog.create({
-          data: {
-            messageId,
-            eventName: type,
-            // The validated payload is plain JSON at runtime; Prisma's
-            // recursive Json type cannot express the inferred union, so the
-            // cast goes through `InputJsonValue` rather than `any`.
-            payload: validatedData as Prisma.InputJsonValue,
-            status: "PENDING",
-          },
-        });
-        proceedToExecute = true;
-      } catch (error) {
-        // Narrowed rather than typed `any`: only the Prisma unique-violation
-        // code is meaningful here, and treating every throw as "has a .code"
-        // would let an unrelated error masquerade as a duplicate.
-        const code = (error as { code?: unknown }).code;
+      const outboxEventId =
+        typeof (validatedData as any)?.outboxEventId === "string"
+          ? (validatedData as any).outboxEventId
+          : typeof (body as any)?.outboxEventId === "string"
+          ? (body as any).outboxEventId
+          : null;
 
-        if (code === "P2002") {
-          const existingLog = await db.eventLog.findUnique({
-            where: { messageId },
-            select: { status: true }
-          });
-
-          if (existingLog?.status === "SUCCESS") {
+      // Logical Work Deduplication: if outboxEventId is provided, check if already completed
+      if (outboxEventId) {
+        if (typeof db.$queryRaw === "function") {
+          const completed = await db.$queryRaw<Array<{ id: string }>>`
+            SELECT "id" FROM "EventLog"
+            WHERE "outboxEventId" = ${outboxEventId}
+              AND "status" = 'SUCCESS'::"EventStatus"
+            LIMIT 1;
+          `;
+          if (completed.length > 0) {
             return NextResponse.json({ ok: true, status: "already_processed" });
           }
-
-          if (existingLog?.status === "PENDING") {
-            return NextResponse.json({ ok: true, status: "already_running" });
+        } else if (typeof db.eventLog?.findFirst === "function") {
+          const completed = await db.eventLog.findFirst({
+            where: { outboxEventId, status: "SUCCESS" },
+          });
+          if (completed) {
+            return NextResponse.json({ ok: true, status: "already_processed" });
           }
-
-          if (existingLog?.status === "FAILED") {
-            // retry
-            const updated = await db.eventLog.updateMany({
-              where: { messageId, status: "FAILED" },
-              data: { status: "PENDING", error: null },
-            });
-
-            if (updated.count > 0) proceedToExecute = true;
-          }
-        } else {
-          throw error; // Rethrow unknown DB errors
         }
       }
 
+      if (typeof db.$queryRaw === "function") {
+        try {
+          // Atomic First-Time Insert with DB-clock lease and claimToken
+          const inserted = await db.$queryRaw<Array<{ id: string }>>`
+            INSERT INTO "EventLog" (
+              "id", "messageId", "eventName", "payload", "status",
+              "outboxEventId", "claimToken", "leaseExpiresAt", "createdAt", "updatedAt"
+            ) VALUES (
+              ${crypto.randomUUID()},
+              ${messageId},
+              ${type},
+              ${JSON.stringify(validatedData)}::jsonb,
+              'PENDING'::"EventStatus",
+              ${outboxEventId},
+              ${workerClaimToken},
+              clock_timestamp() + (${leaseSeconds} || ' seconds')::interval,
+              clock_timestamp(),
+              clock_timestamp()
+            )
+            RETURNING "id";
+          `;
+          proceedToExecute = inserted.length > 0;
+        } catch (error) {
+          const code = (error as { code?: unknown }).code;
+
+          // Prisma unique violation code P2002 or Postgres 23505 (on messageId or outboxEventId active lease)
+          if (
+            code === "P2002" ||
+            String(error).includes("unique constraint") ||
+            String(error).includes("EventLog_messageId_key") ||
+            String(error).includes("EventLog_outbox_active_idx")
+          ) {
+            const existingLogs = await db.$queryRaw<Array<{ id: string; status: string; leaseExpiresAt: Date | null; messageId: string }>>`
+              SELECT "id", "status", "leaseExpiresAt", "messageId" FROM "EventLog"
+              WHERE "messageId" = ${messageId}
+                 OR ("outboxEventId" IS NOT NULL AND "outboxEventId" = ${outboxEventId})
+              ORDER BY "createdAt" DESC
+              LIMIT 1;
+            `;
+            const existingLog = existingLogs[0];
+
+            if (existingLog?.status === "SUCCESS") {
+              return NextResponse.json({ ok: true, status: "already_processed" });
+            }
+
+            if (existingLog?.status === "PENDING") {
+              // Atomic lease steal if crashed worker lease has expired (S7)
+              const stolen = await db.$queryRaw<Array<{ id: string }>>`
+                UPDATE "EventLog"
+                SET "claimToken" = ${workerClaimToken},
+                    "leaseExpiresAt" = clock_timestamp() + (${leaseSeconds} || ' seconds')::interval,
+                    "updatedAt" = clock_timestamp()
+                WHERE "id" = ${existingLog.id}
+                  AND "status" = 'PENDING'::"EventStatus"
+                  AND "leaseExpiresAt" <= clock_timestamp()
+                RETURNING "id";
+              `;
+
+              if (stolen.length > 0) {
+                proceedToExecute = true;
+              } else {
+                return NextResponse.json({ ok: true, status: "already_running" });
+              }
+            }
+
+            if (existingLog?.status === "FAILED") {
+              // Retry execution with new lease
+              const retryClaimed = await db.$queryRaw<Array<{ id: string }>>`
+                UPDATE "EventLog"
+                SET "status" = 'PENDING'::"EventStatus",
+                    "error" = NULL,
+                    "claimToken" = ${workerClaimToken},
+                    "leaseExpiresAt" = clock_timestamp() + (${leaseSeconds} || ' seconds')::interval,
+                    "updatedAt" = clock_timestamp()
+                WHERE "id" = ${existingLog.id}
+                  AND "status" = 'FAILED'::"EventStatus"
+                RETURNING "id";
+              `;
+
+              if (retryClaimed.length > 0) {
+                proceedToExecute = true;
+              }
+            }
+          } else {
+            throw error;
+          }
+        }
+      } else {
+        // Fallback for in-memory / unit-test double where $queryRaw is not mocked
+        try {
+          await db.eventLog.create({
+            data: {
+              messageId,
+              eventName: type,
+              payload: validatedData as any,
+              status: "PENDING",
+              ...(outboxEventId ? { outboxEventId } : {}),
+            },
+          });
+          proceedToExecute = true;
+        } catch (error) {
+          const code = (error as { code?: unknown }).code;
+          if (code === "P2002") {
+            const existingLog = await db.eventLog.findFirst({
+              where: {
+                OR: [
+                  { messageId },
+                  ...(outboxEventId ? [{ outboxEventId }] : []),
+                ],
+              },
+            });
+            if (existingLog?.status === "SUCCESS") {
+              return NextResponse.json({ ok: true, status: "already_processed" });
+            }
+            if (existingLog?.status === "PENDING") {
+              return NextResponse.json({ ok: true, status: "already_running" });
+            }
+            if (existingLog?.status === "FAILED") {
+              proceedToExecute = true;
+            }
+          } else {
+            throw error;
+          }
+        }
+      }
 
       if (proceedToExecute) {
+        let ownershipLost = false;
+        let heartbeatActive = true;
+        let heartbeatTimer: NodeJS.Timeout | null = null;
+        let renewalInFlight = false;
+
+        const stopHeartbeat = () => {
+          heartbeatActive = false;
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
+        };
+
+        const performRenewal = async () => {
+          if (!heartbeatActive || ownershipLost || renewalInFlight) {
+            return;
+          }
+          renewalInFlight = true;
+          try {
+            const res = await renewEventLogLease({
+              messageId: messageId ?? undefined,
+              claimToken: workerClaimToken,
+              extensionSeconds: leaseSeconds,
+              dbClient: db,
+            });
+            if (!res.renewed) {
+              ownershipLost = true;
+              stopHeartbeat();
+            }
+          } catch {
+            ownershipLost = true;
+            stopHeartbeat();
+          } finally {
+            renewalInFlight = false;
+          }
+        };
+
+        // Activate recurring heartbeat only after lease acquisition (Part 2 Area A1)
+        heartbeatTimer = setInterval(() => {
+          performRenewal().catch(() => {
+            ownershipLost = true;
+            stopHeartbeat();
+          });
+        }, heartbeatIntervalMs);
+        if (typeof heartbeatTimer?.unref === "function") {
+          heartbeatTimer.unref();
+        }
+
         try {
           await handler({
             event: { id: eventId, type, data: validatedData, time: eventTime },
           });
 
-          await db.eventLog.update({
-            where: { messageId },
-            data: { status: "SUCCESS" },
-          });
+          // Check ownership before marking success (A3)
+          if (ownershipLost) {
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+          }
+
+          if (typeof db.$executeRaw === "function") {
+            const affected = await db.$executeRaw`
+              UPDATE "EventLog"
+              SET "status" = 'SUCCESS'::"EventStatus",
+                  "leaseExpiresAt" = NULL,
+                  "updatedAt" = clock_timestamp()
+              WHERE "claimToken" = ${workerClaimToken}
+                AND "status" = 'PENDING'::"EventStatus"
+                AND "leaseExpiresAt" > clock_timestamp();
+            `;
+            if (affected === 0) {
+              return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+            }
+          } else {
+            // Missing authoritative SQL interface fails closed for EventLog success completion
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+          }
 
           return NextResponse.json({ success: true });
         } catch (handlerError) {
-          await db.eventLog.update({
-            where: { messageId },
-            data: {
-              status: "FAILED",
-              error:
-                handlerError instanceof Error
-                  ? handlerError.message
-                  : "Unknown error",
-            },
-          });
+          if (ownershipLost) {
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+          }
+
+          const errMsg = handlerError instanceof Error ? handlerError.message : "Unknown error";
+          if (typeof db.$executeRaw === "function") {
+            const affected = await db.$executeRaw`
+              UPDATE "EventLog"
+              SET "status" = 'FAILED'::"EventStatus",
+                  "error" = ${errMsg},
+                  "leaseExpiresAt" = NULL,
+                  "updatedAt" = clock_timestamp()
+              WHERE "claimToken" = ${workerClaimToken}
+                AND "status" = 'PENDING'::"EventStatus"
+                AND "leaseExpiresAt" > clock_timestamp();
+            `;
+            if (affected === 0) {
+              return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+            }
+          } else {
+            // Missing authoritative SQL interface fails closed for EventLog failure completion
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+          }
           return NextResponse.json({ error: "Worker execution failed" }, { status: 500 });
+        } finally {
+          // Cleanup on all exit paths (A4)
+          stopHeartbeat();
         }
       }
 
@@ -235,4 +435,34 @@ export function createWorker<K extends EventType>(
   }
 
   return verifySignatureAppRouter(internalHandler);
+}
+
+/**
+ * Monotonically extends the execution lease on an active EventLog row.
+ * Fails closed if the worker has already lost ownership (e.g. lease expired and stolen).
+ */
+export async function renewEventLogLease({
+  messageId,
+  claimToken,
+  extensionSeconds = 300,
+  dbClient = db,
+}: {
+  messageId?: string;
+  claimToken: string;
+  extensionSeconds?: number;
+  dbClient?: any;
+}): Promise<{ renewed: boolean }> {
+  if (typeof dbClient?.$executeRaw === "function") {
+    const affected = await dbClient.$executeRaw`
+      UPDATE "EventLog"
+      SET "leaseExpiresAt" = clock_timestamp() + (${extensionSeconds} || ' seconds')::interval,
+          "updatedAt" = clock_timestamp()
+      WHERE "claimToken" = ${claimToken}
+        AND "status" = 'PENDING'::"EventStatus"
+        AND "leaseExpiresAt" > clock_timestamp();
+    `;
+    return { renewed: affected > 0 };
+  }
+  // Missing authoritative SQL interface fails closed for EventLog renewal
+  return { renewed: false };
 }

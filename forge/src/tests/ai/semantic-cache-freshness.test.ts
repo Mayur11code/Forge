@@ -33,8 +33,27 @@ jest.mock('@/lib/vector/client', () => ({
   getTenantVectorStore: jest.fn().mockReturnValue({
     query: (...args: unknown[]) => mockTenantVectorQuery(...args),
     upsert: (...args: unknown[]) => mockTenantVectorUpsert(...args),
+    upsertGenerationVectors: (...args: unknown[]) => mockTenantVectorUpsert(...args),
     deleteByTask: (...args: unknown[]) => mockTenantVectorDeleteByTask(...args),
   }),
+  verifyPhysicalPersistence: jest.fn().mockResolvedValue({
+    verified: true,
+    chunksFound: 1,
+    manifestDigest: "digest_freshness",
+    readBackLatencyMs: 10,
+    attempts: 1,
+  }),
+}));
+
+jest.mock("@/lib/vector/generation-state", () => ({
+  reserveGeneration: jest.fn().mockResolvedValue({
+    generation: { id: "gen_freshness_123", expectedChunkCount: 1 },
+    claimToken: "claim_freshness_token",
+    head: { id: "head_freshness_123", latestRevision: 1 },
+  }),
+  markGenerationWritten: jest.fn().mockResolvedValue({ id: "gen_freshness_123", status: "WRITTEN" }),
+  activateGeneration: jest.fn().mockResolvedValue({ id: "head_freshness_123", activeGenId: "gen_freshness_123" }),
+  failGeneration: jest.fn().mockResolvedValue(undefined),
 }));
 
 // Queue publishEvent Mock
@@ -644,7 +663,7 @@ describe('Section 7: Semantic Cache Freshness & Invalidation Specifications', ()
   // 7.D: Event Routing & Embedding Worker Cascade
   // =========================================================================
   describe('7.D: Event Routing & Embedding Worker Cascade', () => {
-    it('routes TASK_UPDATED to EMBEDDING_REQUESTED and ANALYTICS_EVENT', async () => {
+    it('routes TASK_UPDATED to ANALYTICS_EVENT (vector sync handled via transactional outbox)', async () => {
       const payload = {
         taskId: 'task_event_400',
         orgId: ORG_ID,
@@ -657,13 +676,9 @@ describe('Section 7: Semantic Cache Freshness & Invalidation Specifications', ()
       const result = await dispatchEvent('TASK_UPDATED', payload);
 
       expect(result.ok).toBe(true);
-      expect(mockPublishEvent).toHaveBeenCalledWith(
+      expect(mockPublishEvent).not.toHaveBeenCalledWith(
         'EMBEDDING_REQUESTED',
-        {
-          orgId: ORG_ID,
-          entityId: 'task_event_400',
-          type: 'TASK',
-        }
+        expect.anything()
       );
       expect(mockPublishEvent).toHaveBeenCalledWith(
         'ANALYTICS_EVENT',
@@ -709,13 +724,15 @@ describe('Section 7: Semantic Cache Freshness & Invalidation Specifications', ()
 
       // Verifies task vectors upserted with sourceVersion
       expect(mockTenantVectorUpsert).toHaveBeenCalledWith(
-        `${TASK_ID}#0`,
-        expect.any(Array),
-        expect.objectContaining({
-          taskId: TASK_ID,
-          projectId: PROJECT_ID,
-          sourceVersion: expect.stringMatching(/^task:/),
-        })
+        expect.arrayContaining([
+          expect.objectContaining({
+            metadata: expect.objectContaining({
+              taskId: TASK_ID,
+              projectId: PROJECT_ID,
+              sourceVersion: expect.stringMatching(/^task:/),
+            }),
+          }),
+        ])
       );
 
       // Verifies child attachments cascade events dispatched

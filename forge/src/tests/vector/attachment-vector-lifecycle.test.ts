@@ -1,20 +1,27 @@
 // src/tests/vector/attachment-vector-lifecycle.test.ts
 //
 // Verification of attachment vector lifecycle:
-// 1. Deletion identity: wipes vectors by attachment ID prefix (not task ID, not org ID).
-// 2. Stale-vector cleanup: reprocessing an attachment removes old vectors for that attachment.
-// 3. Preservation of parent task vectors: wiping attachment vectors leaves parent task vectors intact.
-// 4. Isolation from sibling/unrelated attachments: wiping attachment A does not touch attachment B.
+// 1. Invariant I-4: Zero pre-wipe deletion (deleteByTask is never called before/during embedding).
+// 2. Generation-scoped vector writes: attachment chunks written via upsertGenerationVectors.
+// 3. Preservation of parent task vectors: writing attachment vectors leaves parent task vectors intact.
+// 4. Isolation from sibling/unrelated attachments: writing attachment A does not touch attachment B.
 // 5. Schema metadata typing: vectors are stored with type 'document', parent taskId, and projectId.
 // 6. Security pre-condition: no deletion, embedding, or upsert occurs before ownership verification.
 
 jest.mock("server-only", () => ({}));
+jest.mock("@/lib/prisma/db", () => ({ db: {} }));
 
 import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
 import { resolveOrganizationGenerativeAiClient } from "@/lib/ai/resolver";
 import { prisma } from "@/lib/prisma/extended";
-import { getTenantVectorStore } from "@/lib/vector/client";
+import { getTenantVectorStore, verifyPhysicalPersistence } from "@/lib/vector/client";
 import { chunkTextSemantically } from "@/lib/vector/semantic-chunker";
+import {
+  reserveGeneration,
+  markGenerationWritten,
+  activateGeneration,
+  failGeneration,
+} from "@/lib/vector/generation-state";
 
 jest.mock("@/lib/prisma/extended", () => ({
   prisma: {
@@ -31,6 +38,14 @@ jest.mock("@/lib/prisma/extended", () => ({
 
 jest.mock("@/lib/vector/client", () => ({
   getTenantVectorStore: jest.fn(),
+  verifyPhysicalPersistence: jest.fn(),
+}));
+
+jest.mock("@/lib/vector/generation-state", () => ({
+  reserveGeneration: jest.fn(),
+  markGenerationWritten: jest.fn(),
+  activateGeneration: jest.fn(),
+  failGeneration: jest.fn(),
 }));
 
 jest.mock("@/lib/vector/semantic-chunker", () => ({
@@ -49,7 +64,11 @@ describe("Attachment Vector Lifecycle & Deletion Identity", () => {
   const ATTACHMENT_A2 = "att_invoice_v1";
   const PROJECT_ID = "proj_sales_1";
 
-  let mockVectorStore: { deleteByTask: jest.Mock; upsert: jest.Mock };
+  let mockVectorStore: {
+    deleteByTask: jest.Mock;
+    upsert: jest.Mock;
+    upsertGenerationVectors: jest.Mock;
+  };
   let mockBatchEmbedContents: jest.Mock;
   let mockAiClient: { getGenerativeModel: jest.Mock };
 
@@ -59,8 +78,24 @@ describe("Attachment Vector Lifecycle & Deletion Identity", () => {
     mockVectorStore = {
       deleteByTask: jest.fn().mockResolvedValue(undefined),
       upsert: jest.fn().mockResolvedValue(undefined),
+      upsertGenerationVectors: jest.fn().mockResolvedValue(undefined),
     };
     (getTenantVectorStore as jest.Mock).mockReturnValue(mockVectorStore);
+
+    (reserveGeneration as jest.Mock).mockResolvedValue({
+      generation: { id: "gen_att_1", expectedChunkCount: 2 },
+      claimToken: "claim_att_token",
+      head: { id: "head_att_1", latestRevision: 1 },
+    });
+    (markGenerationWritten as jest.Mock).mockResolvedValue({ id: "gen_att_1", status: "WRITTEN" });
+    (activateGeneration as jest.Mock).mockResolvedValue({ id: "head_att_1", activeGenId: "gen_att_1" });
+    (verifyPhysicalPersistence as jest.Mock).mockResolvedValue({
+      verified: true,
+      chunksFound: 2,
+      manifestDigest: "manifest_digest_att",
+      readBackLatencyMs: 40,
+      attempts: 1,
+    });
 
     mockBatchEmbedContents = jest.fn().mockResolvedValue({
       embeddings: [
@@ -87,7 +122,7 @@ describe("Attachment Vector Lifecycle & Deletion Identity", () => {
     ]);
   });
 
-  it("wipes vectors using the exact attachment ID prefix without affecting parent task vectors", async () => {
+  it("synchronizes attachment vectors without pre-wipe deletion (Invariant I-4)", async () => {
     (prisma.attachment.findFirst as jest.Mock).mockResolvedValueOnce({
       id: ATTACHMENT_A1,
       name: "Services_Agreement.pdf",
@@ -113,34 +148,15 @@ describe("Attachment Vector Lifecycle & Deletion Identity", () => {
       },
     });
 
-    // 1. Deletion identity must target attachment entityId, NOT parent taskId
-    expect(mockVectorStore.deleteByTask).toHaveBeenCalledWith(ATTACHMENT_A1);
-    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalledWith(TASK_ID);
+    // 1. Invariant I-4: Zero pre-wipe deletion
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
 
-    // 2. Upsert must use deterministic attachment chunk IDs (${attachmentId}#${i})
-    expect(mockVectorStore.upsert).toHaveBeenCalledWith(
-      `${ATTACHMENT_A1}#0`,
-      expect.any(Array),
-      expect.objectContaining({
-        text: "Contract Section 1: Parties and Scope",
-        taskId: TASK_ID,
-        projectId: PROJECT_ID,
-        type: "document",
-      }),
-    );
-    expect(mockVectorStore.upsert).toHaveBeenCalledWith(
-      `${ATTACHMENT_A1}#1`,
-      expect.any(Array),
-      expect.objectContaining({
-        text: "Contract Section 2: Compensation and Terms",
-        taskId: TASK_ID,
-        projectId: PROJECT_ID,
-        type: "document",
-      }),
-    );
+    // 2. Generation-scoped upsert and activation
+    expect(mockVectorStore.upsertGenerationVectors).toHaveBeenCalledTimes(1);
+    expect(activateGeneration).toHaveBeenCalledTimes(1);
   });
 
-  it("reprocessing an attachment removes stale chunks of that attachment and replaces them", async () => {
+  it("reprocessing an attachment creates new generation non-destructively without deleteByTask", async () => {
     // Simulate v2 of the attachment being processed
     (prisma.attachment.findFirst as jest.Mock).mockResolvedValueOnce({
       id: ATTACHMENT_A1,
@@ -174,20 +190,13 @@ describe("Attachment Vector Lifecycle & Deletion Identity", () => {
       },
     });
 
-    // Verified: Wipes stale chunks matching prefix att_contract_v1#
-    expect(mockVectorStore.deleteByTask).toHaveBeenCalledWith(ATTACHMENT_A1);
-    expect(mockVectorStore.upsert).toHaveBeenCalledTimes(1);
-    expect(mockVectorStore.upsert).toHaveBeenCalledWith(
-      `${ATTACHMENT_A1}#0`,
-      expect.any(Array),
-      expect.objectContaining({
-        text: "Updated Contract Section 1: Expanded Scope",
-        type: "document",
-      }),
-    );
+    // Verified: No pre-wipe deletion
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
+    expect(mockVectorStore.upsertGenerationVectors).toHaveBeenCalledTimes(1);
+    expect(activateGeneration).toHaveBeenCalledTimes(1);
   });
 
-  it("preserves sibling attachment vectors when a sibling is reprocessed", async () => {
+  it("preserves sibling attachment vectors when a sibling is reprocessed without deleteByTask", async () => {
     // Sibling attachment A2 is processed
     (prisma.attachment.findFirst as jest.Mock).mockResolvedValueOnce({
       id: ATTACHMENT_A2,
@@ -221,13 +230,13 @@ describe("Attachment Vector Lifecycle & Deletion Identity", () => {
       },
     });
 
-    // Verified: only wipes ATTACHMENT_A2, NEVER ATTACHMENT_A1 or TASK_ID
-    expect(mockVectorStore.deleteByTask).toHaveBeenCalledWith(ATTACHMENT_A2);
-    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalledWith(ATTACHMENT_A1);
-    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalledWith(TASK_ID);
+    // Verified: No deleteByTask on any entity
+    expect(mockVectorStore.deleteByTask).not.toHaveBeenCalled();
+    expect(mockVectorStore.upsertGenerationVectors).toHaveBeenCalledTimes(1);
+    expect(activateGeneration).toHaveBeenCalledTimes(1);
   });
 
-  it("strictly enforces ownership check before vector deletion on cross-tenant attachment", async () => {
+  it("strictly enforces ownership check before vector mutation on cross-tenant attachment", async () => {
     // Attachment exists in DB, but belongs to Org B
     (prisma.attachment.findFirst as jest.Mock).mockResolvedValueOnce(null);
     (prisma.attachment.findUnique as jest.Mock).mockResolvedValueOnce({

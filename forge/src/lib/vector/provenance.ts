@@ -23,12 +23,14 @@
 // version below; a user who lost organization membership is rejected by the
 // membership check in `checkSemanticCache`.
 
-import type { SemanticSourceType } from './schema';
+import crypto from "crypto";
+import { extractPureText } from "./text-extractor";
+import type { SemanticSourceType } from "./schema";
 
 async function getDb() {
   // Lazy-resolve db to prevent module-evaluation PrismaClient instantiation
   // in unit tests that only test vector formatting or embedding logic.
-  const { db } = await import('@/lib/prisma/db');
+  const { db } = await import("@/lib/prisma/db");
   return db;
 }
 
@@ -105,7 +107,7 @@ type AttachmentVersionRow = {
 };
 
 function toIso(value: unknown): string {
-  return value instanceof Date ? value.toISOString() : String(value ?? '');
+  return value instanceof Date ? value.toISOString() : String(value ?? "");
 }
 
 export function taskSourceVersion(task: {
@@ -123,13 +125,13 @@ export function attachmentSourceVersion(attachment: {
   task?: { updatedAt: Date };
 }): string {
   return [
-    'attachment',
+    "attachment",
     toIso(attachment.createdAt),
     attachment.size,
     attachment.taskId,
     ...(attachment.name ? [attachment.name] : []),
     ...(attachment.task?.updatedAt ? [toIso(attachment.task.updatedAt)] : []),
-  ].join(':');
+  ].join(":");
 }
 
 function dedupe(refs: SourceRef[]): SourceRef[] {
@@ -156,9 +158,9 @@ export async function resolveSourceProvenance(
   refs: SourceRef[]
 ): Promise<ProvenanceResolution> {
   const unique = dedupe(refs);
-  const taskIds = unique.filter((ref) => ref.type === 'task').map((ref) => ref.id);
+  const taskIds = unique.filter((ref) => ref.type === "task").map((ref) => ref.id);
   const attachmentIds = unique
-    .filter((ref) => ref.type === 'attachment')
+    .filter((ref) => ref.type === "attachment")
     .map((ref) => ref.id);
 
   const prismaDb = await getDb();
@@ -207,4 +209,67 @@ export async function resolveSourceProvenance(
   }
 
   return { complete, sources };
+}
+
+// ============================================================================
+// Vector V2 Phase B: Canonical Content Hashing & Decoupled Provenance
+// ============================================================================
+
+export const PIPELINE_CONTRACT_VERSION = "v2:gemini-embedding-001:768:chunk-sem-v1";
+
+export function computeTaskContentHash(
+  task: {
+    id: string;
+    projectId: string;
+    title: string;
+    description?: string | null;
+    status: string;
+    priority: string;
+    assigneeId?: string | null;
+  },
+  pipelineVersion: string = PIPELINE_CONTRACT_VERSION
+): string {
+  const canonical = [
+    `pipeline:${pipelineVersion}`,
+    `id:${task.id}`,
+    `projectId:${task.projectId}`,
+    `title:${extractPureText(task.title)}`,
+    `desc:${extractPureText(task.description ?? "")}`,
+    `status:${task.status}`,
+    `priority:${task.priority}`,
+    `assignee:${task.assigneeId ?? ""}`,
+  ].join("\u0000");
+  return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+export function computeAttachmentContentHash(
+  attachment: {
+    id: string;
+    name: string;
+    size: number;
+    fileKey?: string | null;
+    taskId: string;
+  },
+  pipelineVersion: string = PIPELINE_CONTRACT_VERSION
+): string {
+  const canonical = [
+    `pipeline:${pipelineVersion}`,
+    `id:${attachment.id}`,
+    `name:${extractPureText(attachment.name)}`,
+    `size:${attachment.size}`,
+    `fileKey:${attachment.fileKey ?? ""}`,
+    `taskId:${attachment.taskId}`,
+  ].join("\u0000");
+  return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+export function computeAttachmentParentTaskVersion(parentTask: {
+  title: string;
+  projectId: string;
+}): string {
+  const canonical = [
+    `title:${extractPureText(parentTask.title)}`,
+    `projectId:${parentTask.projectId}`,
+  ].join("\u0000");
+  return crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
 }

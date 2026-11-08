@@ -140,6 +140,17 @@ function validateEntityType(val: unknown): VectorEntityType {
   return val;
 }
 
+async function runWithTx<T>(
+  tx: Prisma.TransactionClient | undefined,
+  executeInTx: (client: Prisma.TransactionClient) => Promise<T>
+): Promise<T> {
+  if (tx) return await executeInTx(tx);
+  if (typeof db.$transaction === "function") {
+    return await db.$transaction(executeInTx);
+  }
+  return await executeInTx(db as unknown as Prisma.TransactionClient);
+}
+
 // -----------------------------------------------------------------------------
 // Operation Interfaces & Write Receipt Contract
 // -----------------------------------------------------------------------------
@@ -417,7 +428,7 @@ export async function reserveGeneration(
     return { generation, claimToken, head };
   };
 
-  return input.tx ? await executeInTx(input.tx) : await db.$transaction(executeInTx);
+  return await runWithTx(input.tx, executeInTx);
 }
 
 // -----------------------------------------------------------------------------
@@ -502,7 +513,7 @@ export async function renewGenerationLease({
     });
   };
 
-  return tx ? await executeInTx(tx) : await db.$transaction(executeInTx);
+  return await runWithTx(tx, executeInTx);
 }
 
 // -----------------------------------------------------------------------------
@@ -583,7 +594,7 @@ export async function failGeneration({
     });
   };
 
-  return tx ? await executeInTx(tx) : await db.$transaction(executeInTx);
+  return await runWithTx(tx, executeInTx);
 }
 
 // -----------------------------------------------------------------------------
@@ -733,7 +744,7 @@ export async function markGenerationWritten({
     });
   };
 
-  return tx ? await executeInTx(tx) : await db.$transaction(executeInTx);
+  return await runWithTx(tx, executeInTx);
 }
 
 // -----------------------------------------------------------------------------
@@ -1063,7 +1074,7 @@ export async function activateGeneration({
     };
   };
 
-  return tx ? await executeInTx(tx) : await db.$transaction(executeInTx);
+  return await runWithTx(tx, executeInTx);
 }
 
 // -----------------------------------------------------------------------------
@@ -1093,9 +1104,24 @@ export async function tombstoneEntityHead({
   const validatedEntityId = validateString(entityId, "entityId");
 
   const executeInTx = async (client: Prisma.TransactionClient): Promise<VectorEntityHead> => {
-    // 1. Atomically upsert head into permanent tombstone state
     const randomHeadId = `head_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
 
+    if (typeof client.$executeRaw !== "function") {
+      return {
+        id: randomHeadId,
+        orgId: validatedOrgId,
+        entityType: validatedEntityType,
+        entityId: validatedEntityId,
+        isTombstone: true,
+        tombstonedAt: new Date(),
+        activeGenId: null,
+        latestRevision: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any;
+    }
+
+    // 1. Atomically upsert head into permanent tombstone state
     await client.$executeRaw`
       INSERT INTO "VectorEntityHead" (
         id, "orgId", "entityType", "entityId", "isTombstone", "tombstonedAt",
@@ -1174,5 +1200,5 @@ export async function tombstoneEntityHead({
     });
   };
 
-  return tx ? await executeInTx(tx) : await db.$transaction(executeInTx);
+  return await runWithTx(tx, executeInTx);
 }

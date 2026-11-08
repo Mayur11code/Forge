@@ -20,8 +20,11 @@
 //   as it does for the UI path.
 
 import { prisma } from "@/lib/prisma/extended";
+import { db } from "@/lib/prisma/db";
+import { recordVectorSyncIntent } from "@/lib/vector/outbox";
+import { computeTaskContentHash } from "@/lib/vector/provenance";
 import { createTaskSchema } from "@/core/domain";
-import type { Task } from "@prisma/client";
+import { VectorEntityType, type Task } from "@prisma/client";
 
 /**
  * Trusted actor identity. Supplied by the caller, never by the model.
@@ -125,17 +128,54 @@ export async function createTaskInOrg(
   }
 
   // 4. The single canonical write.
-  //    `prisma` (extended) -> fires TASK_CREATED CDC on task.create.
+  //    Atomically persists the Task and records VectorOutboxEvent intent in a single transaction.
   try {
-    const task = await prisma.task.create({
-      data: {
-        title: data.title,
-        projectId: project.id,
-        description: data.description ?? null,
-        priority: data.priority,
-        assigneeId: data.assigneeId ?? null,
-      },
+    const task = await prisma.$transaction(async (tx) => {
+      const created = await tx.task.create({
+        data: {
+          title: data.title,
+          projectId: project.id,
+          description: data.description ?? null,
+          priority: data.priority,
+          assigneeId: data.assigneeId ?? null,
+        },
+      });
+
+      const contentHash = computeTaskContentHash({
+        id: created.id,
+        projectId: created.projectId,
+        title: created.title,
+        description: created.description,
+        status: created.status,
+        priority: created.priority,
+        assigneeId: created.assigneeId,
+      });
+
+      await recordVectorSyncIntent({
+        tx: tx as any,
+        orgId: actor.orgId,
+        entityType: VectorEntityType.TASK,
+        entityId: created.id,
+        contentHash,
+      });
+
+      return created;
     });
+
+    // 5. Asynchronous notification CDC event fired outside the transaction (P14)
+    try {
+      const { dispatchEvent } = await import("@/lib/events/event-bus");
+      await dispatchEvent("TASK_CREATED", {
+        taskId: task.id,
+        orgId: actor.orgId,
+        projectId: task.projectId,
+        userId: actor.userId ?? "system-cdc",
+        subject: "New Task Created",
+        body: `A new task "${task.title}" has been added.`,
+      });
+    } catch (cdcErr) {
+      console.warn("[CDC] Best-effort TASK_CREATED event dispatch failed:", cdcErr);
+    }
 
     return { success: true, task };
   } catch (error) {

@@ -686,6 +686,7 @@ type TransactionCapableDouble = {
   };
   task: { findMany: unknown; findFirst: unknown; update: unknown };
   membership: { findFirst: unknown };
+  $queryRaw?: unknown;
 };
 
 const runTransaction = <T>(
@@ -785,6 +786,7 @@ const updateManyWorkflows = async ({ where, data }: { where: Row; data: Row }) =
 
 export const prismaDouble = {
   $transaction: jest.fn(runTransaction),
+  $queryRaw: jest.fn(async () => [{ id: "mock_outbox_1", latestRevision: 1 }]),
 
   agentSession: {
     findFirst: jest.fn(findFirstSession),

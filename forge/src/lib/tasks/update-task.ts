@@ -18,8 +18,15 @@
 // - No `auth()`, no `notFound()`, no `revalidatePath()`, no `next/*` imports.
 
 import { prisma } from "@/lib/prisma/extended";
+import { db } from "@/lib/prisma/db";
+import { recordVectorSyncIntent } from "@/lib/vector/outbox";
+import {
+  computeTaskContentHash,
+  computeAttachmentContentHash,
+  computeAttachmentParentTaskVersion,
+} from "@/lib/vector/provenance";
 import { updateTaskSchema } from "@/core/domain";
-import type { Prisma, Task } from "@prisma/client";
+import { VectorEntityType, type Prisma, type Task } from "@prisma/client";
 
 export type UpdateTaskActor = {
   orgId: string;
@@ -65,7 +72,7 @@ export async function updateTaskInOrg(
   //    another org is indistinguishable from one that does not exist.
   const existing = await prisma.task.findFirst({
     where: { id: taskId, project: { orgId: actor.orgId } },
-    select: { id: true },
+    select: { id: true, projectId: true },
   });
 
   if (!existing) {
@@ -129,11 +136,81 @@ export async function updateTaskInOrg(
   }
 
   // 5. The single canonical write.
+  //    Atomically updates the Task, records VectorOutboxEvent intent, and syncs child attachments on title change (I-11).
   try {
-    const task = await prisma.task.update({
-      where: { id: taskId },
-      data,
+    const task = await prisma.$transaction(async (tx) => {
+      const updated = await tx.task.update({
+        where: { id: taskId },
+        data,
+      });
+
+      // 1. Task vector sync intent (monotonic revision increment + outbox coalescing)
+      const contentHash = computeTaskContentHash({
+        id: updated.id,
+        projectId: updated.projectId,
+        title: updated.title,
+        description: updated.description,
+        status: updated.status,
+        priority: updated.priority,
+        assigneeId: updated.assigneeId,
+      });
+
+      await recordVectorSyncIntent({
+        tx: tx as any,
+        orgId: actor.orgId,
+        entityType: VectorEntityType.TASK,
+        entityId: updated.id,
+        contentHash,
+      });
+
+      // 2. Child attachment sync intent if parent title changed (I-11)
+      if (changes.title !== undefined) {
+        const childAttachments = await tx.attachment.findMany({
+          where: { taskId: updated.id },
+          select: { id: true, name: true, size: true, fileKey: true },
+        });
+
+        for (const att of childAttachments) {
+          const attHash = computeAttachmentContentHash({
+            id: att.id,
+            name: att.name,
+            size: att.size,
+            fileKey: att.fileKey,
+            taskId: updated.id,
+          });
+          const parentVersion = computeAttachmentParentTaskVersion({
+            title: updated.title,
+            projectId: updated.projectId,
+          });
+
+          await recordVectorSyncIntent({
+            tx: tx as any,
+            orgId: actor.orgId,
+            entityType: VectorEntityType.ATTACHMENT,
+            entityId: att.id,
+            contentHash: attHash,
+            parentTaskVersion: parentVersion,
+          });
+        }
+      }
+
+      return updated;
     });
+
+    // 6. Asynchronous notification CDC event fired outside the transaction (P14)
+    try {
+      const { dispatchEvent } = await import("@/lib/events/event-bus");
+      await dispatchEvent("TASK_UPDATED", {
+        taskId: task.id,
+        orgId: actor.orgId,
+        projectId: task.projectId,
+        userId: actor.userId ?? "system-cdc",
+        subject: "Task Updated",
+        body: `Task "${task.title}" has been modified.`,
+      });
+    } catch (cdcErr) {
+      console.warn("[CDC] Best-effort TASK_UPDATED event dispatch failed:", cdcErr);
+    }
 
     return { success: true, task };
   } catch (error) {
