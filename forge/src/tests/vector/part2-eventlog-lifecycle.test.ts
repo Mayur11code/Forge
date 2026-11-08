@@ -33,7 +33,7 @@ interface EventLogRow {
   id: string;
   messageId: string;
   eventName: string;
-  payload: any;
+  payload: unknown;
   status: "PENDING" | "SUCCESS" | "FAILED";
   claimToken: string;
   leaseExpiresAt: Date | null;
@@ -57,7 +57,10 @@ class MockEventLogDb {
   }
 
   public eventLog = {
-    updateMany: jest.fn(async ({ where, data }: { where: any; data: any }) => {
+    updateMany: jest.fn(async ({ where, data }: {
+      where: { claimToken?: string; status?: "PENDING" | "SUCCESS" | "FAILED"; leaseExpiresAt?: { gt?: Date } };
+      data: { status?: "PENDING" | "SUCCESS" | "FAILED"; error?: string | null; leaseExpiresAt?: Date | null };
+    }) => {
       let count = 0;
       for (const row of this.rows.values()) {
         const matchesToken = row.claimToken === where.claimToken;
@@ -70,7 +73,7 @@ class MockEventLogDb {
           if (data.status) row.status = data.status;
           if (data.error !== undefined) row.error = data.error;
           if (data.leaseExpiresAt !== undefined) {
-            row.leaseExpiresAt = data.leaseExpiresAt ? new Date(data.leaseExpiresAt) : null;
+            row.leaseExpiresAt = data.leaseExpiresAt;
           }
           count++;
         }
@@ -79,7 +82,7 @@ class MockEventLogDb {
     }),
   };
 
-  public $queryRaw = jest.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+  public $queryRaw = jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     if (this.forceDbError) throw new Error("DB_CONNECTION_ERROR");
     const sql = strings.join("?");
 
@@ -97,19 +100,19 @@ class MockEventLogDb {
     // 2. Insert new EventLog
     if (sql.includes('INSERT INTO "EventLog"')) {
       const [id, messageId, eventName, payloadStr, outboxEventId, claimToken, leaseSeconds] = [
-        values[0],
-        values[1],
-        values[2],
-        values[3],
-        values[4],
-        values[5],
-        values[6],
+        String(values[0]),
+        String(values[1]),
+        String(values[2]),
+        String(values[3]),
+        values[4] ? String(values[4]) : null,
+        String(values[5]),
+        Number(values[6]) || 300,
       ];
 
       // Check unique constraint on messageId
       for (const row of this.rows.values()) {
         if (row.messageId === messageId) {
-          const err: any = new Error("Unique constraint failed on messageId");
+          const err: Error & { code?: string } = Object.assign(new Error("Unique constraint failed on messageId"), { code: "P2002" });
           err.code = "P2002";
           throw err;
         }
@@ -122,8 +125,8 @@ class MockEventLogDb {
         payload: JSON.parse(payloadStr),
         status: "PENDING",
         claimToken,
-        leaseExpiresAt: new Date(Date.now() + (Number(leaseSeconds) || 300) * 1000),
-        outboxEventId: outboxEventId || null,
+        leaseExpiresAt: new Date(Date.now() + leaseSeconds * 1000),
+        outboxEventId,
       };
       this.rows.set(id, row);
       return [{ id }];
@@ -131,7 +134,7 @@ class MockEventLogDb {
 
     // 3. Existing logs query on conflict
     if (sql.includes('SELECT "id", "status", "leaseExpiresAt", "messageId" FROM "EventLog"')) {
-      const messageId = values[0];
+      const messageId = String(values[0]);
       for (const row of this.rows.values()) {
         if (row.messageId === messageId) {
           return [row];
@@ -142,14 +145,14 @@ class MockEventLogDb {
 
     // 4. Steal expired lease
     if (sql.includes('UPDATE "EventLog"') && sql.includes('"leaseExpiresAt" <= clock_timestamp()')) {
-      const [newClaimToken, leaseSeconds, id] = [values[0], values[1], values[2]];
+      const [newClaimToken, leaseSeconds, id] = [String(values[0]), Number(values[1]), String(values[2])];
       const row = this.rows.get(id);
       if (
         row &&
         row.status === "PENDING" &&
         (row.leaseExpiresAt === null || row.leaseExpiresAt.getTime() <= Date.now())
       ) {
-        row.claimToken = newClaimToken;
+        row.claimToken = String(newClaimToken);
         row.leaseExpiresAt = new Date(Date.now() + (Number(leaseSeconds) || 300) * 1000);
         return [{ id: row.id }];
       }
@@ -159,7 +162,7 @@ class MockEventLogDb {
     return [];
   });
 
-  public $executeRaw = jest.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+  public $executeRaw = jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     if (this.disableExecuteRaw) {
       throw new Error("RAW_SQL_DISABLED_FOR_TEST");
     }
@@ -169,7 +172,7 @@ class MockEventLogDb {
     // Renewal: UPDATE "EventLog" SET "leaseExpiresAt" = ... WHERE "claimToken" = ... AND "status" = 'PENDING' AND "leaseExpiresAt" > clock_timestamp()
     if (sql.includes('"leaseExpiresAt" = clock_timestamp()') && sql.includes('"claimToken" = ?')) {
       const extSecs = Number(values[0]) || 300;
-      const claimToken = values[1];
+      const claimToken = String(values[1]);
       this.renewalCalls.push({ claimToken, time: Date.now() });
 
       if (this.forceRenewalFailure) {
@@ -191,7 +194,7 @@ class MockEventLogDb {
 
     // Fenced SUCCESS update: WHERE "claimToken" = ... AND "status" = 'PENDING' AND "leaseExpiresAt" > clock_timestamp()
     if (sql.includes('"status" = \'SUCCESS\'::"EventStatus"') && sql.includes('"claimToken" = ?')) {
-      const claimToken = values[0];
+      const claimToken = String(values[0]);
       for (const row of this.rows.values()) {
         if (row.claimToken === claimToken && row.status === "PENDING") {
           if (row.leaseExpiresAt === null || row.leaseExpiresAt.getTime() <= Date.now()) {
@@ -207,8 +210,8 @@ class MockEventLogDb {
 
     // Fenced FAILED update: WHERE "claimToken" = ... AND "status" = 'PENDING' AND "leaseExpiresAt" > clock_timestamp()
     if (sql.includes('"status" = \'FAILED\'::"EventStatus"') && sql.includes('"claimToken" = ?')) {
-      const errMsg = values[0];
-      const claimToken = values[1];
+      const errMsg = values[0] ? String(values[0]) : null;
+      const claimToken = String(values[1]);
       for (const row of this.rows.values()) {
         if (row.claimToken === claimToken && row.status === "PENDING") {
           if (row.leaseExpiresAt === null || row.leaseExpiresAt.getTime() <= Date.now()) {
@@ -236,7 +239,7 @@ jest.mock("@/lib/prisma/db", () => ({
       if (prop === "$executeRaw" && mockDb?.disableExecuteRaw) {
         return undefined; // Simulate database adapter without $executeRaw
       }
-      return (mockDb as any)?.[prop];
+      return (mockDb as unknown as Record<string | symbol, unknown>)?.[prop];
     },
   }),
 }));
@@ -244,12 +247,12 @@ jest.mock("@/lib/prisma/db", () => ({
 jest.mock("@/lib/prisma/extended", () => ({
   prisma: new Proxy({}, {
     get: (_target, prop) => {
-      return (mockDb as any)?.[prop];
+      return (mockDb as unknown as Record<string | symbol, unknown>)?.[prop];
     },
   }),
 }));
 
-function createWorkerRequest(messageId: string, eventData: any = {}) {
+function createWorkerRequest(messageId: string, eventData: Record<string, unknown> = {}) {
   return new NextRequest("http://localhost/api/worker", {
     method: "POST",
     headers: {
@@ -275,12 +278,12 @@ describe("Part 2.1 Area A: EventLog Worker Lease Lifecycle & Fencing (E2)", () =
   beforeAll(() => {
     mockDb = new MockEventLogDb();
     process.env.ALLOW_UNSIGNED_LOCAL_WORKER = "true";
-    (process.env as any).NODE_ENV = "test";
+    (process.env as Record<string, string | undefined>).NODE_ENV = "test";
   });
 
   afterAll(() => {
     process.env.ALLOW_UNSIGNED_LOCAL_WORKER = originalEnv;
-    (process.env as any).NODE_ENV = originalNodeEnv;
+    (process.env as Record<string, string | undefined>).NODE_ENV = originalNodeEnv;
   });
 
   beforeEach(() => {
@@ -527,7 +530,7 @@ describe("Part 2.1 Area A: EventLog Worker Lease Lifecycle & Fencing (E2)", () =
     let maxConcurrentRenewals = 0;
 
     const originalExecuteRaw = mockDb.$executeRaw;
-    mockDb.$executeRaw = jest.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+    mockDb.$executeRaw = jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const sql = strings.join("?");
       const isRenewal = sql.includes('"leaseExpiresAt" = clock_timestamp()');
       if (isRenewal) {
@@ -600,6 +603,7 @@ describe("Part 2.1 Area A: EventLog Worker Lease Lifecycle & Fencing (E2)", () =
       eventLog: {
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      $executeRaw: undefined,
     };
 
     const res = await renewEventLogLease({

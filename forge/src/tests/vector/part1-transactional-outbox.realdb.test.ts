@@ -13,7 +13,7 @@ jest.mock("server-only", () => ({}));
 
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, VectorEntityType, VectorOutboxStatus } from "@prisma/client";
+import { PrismaClient, VectorEntityType, VectorOutboxStatus, type Prisma } from "@prisma/client";
 import { recordVectorSyncIntent } from "@/lib/vector/outbox";
 import { computeTaskContentHash, computeAttachmentContentHash, computeAttachmentParentTaskVersion } from "@/lib/vector/provenance";
 import crypto from "crypto";
@@ -136,7 +136,7 @@ describeRealDb("Part 1: Real-Database Transactional Outbox Consistency (E3)", ()
       });
 
       await recordVectorSyncIntent({
-        tx: tx as any,
+        tx: tx as unknown as Prisma.TransactionClient,
         orgId: ORG_ID,
         entityType: VectorEntityType.TASK,
         entityId: TASK_ID_SUCCESS,
@@ -190,9 +190,9 @@ describeRealDb("Part 1: Real-Database Transactional Outbox Consistency (E3)", ()
         // 2. Intent persistence fails (e.g. simulated DB error or forced constraint violation)
         throw new Error("INTENT_FAILURE_FORCED_ROLLBACK");
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       transactionThrew = true;
-      expect(err.message).toBe("INTENT_FAILURE_FORCED_ROLLBACK");
+      expect((err as Error).message).toBe("INTENT_FAILURE_FORCED_ROLLBACK");
     }
 
     expect(transactionThrew).toBe(true);
@@ -253,7 +253,7 @@ describeRealDb("Part 1: Real-Database Transactional Outbox Consistency (E3)", ()
       });
 
       await recordVectorSyncIntent({
-        tx: tx as any,
+        tx: tx as unknown as Prisma.TransactionClient,
         orgId: parentTask.project.orgId,
         entityType: VectorEntityType.ATTACHMENT,
         entityId: attachment.id,
@@ -301,9 +301,9 @@ describeRealDb("Part 1: Real-Database Transactional Outbox Consistency (E3)", ()
         // Intent fails
         throw new Error("ATTACHMENT_INTENT_FAILURE");
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       transactionThrew = true;
-      expect(err.message).toBe("ATTACHMENT_INTENT_FAILURE");
+      expect((err as Error).message).toBe("ATTACHMENT_INTENT_FAILURE");
     }
 
     expect(transactionThrew).toBe(true);

@@ -322,14 +322,14 @@ describeRealDb("Part 3.1 — Production Dispatcher Integration Verification (E3 
     const originalQueryRaw = db.$queryRaw.bind(db);
     let queryCount = 0;
 
-    const dbSpy = (jest.spyOn(db, "$queryRaw") as any).mockImplementation(async (...args: any[]) => {
+    const dbSpy = (jest.spyOn(db, "$queryRaw") as unknown as { mockImplementation: (fn: (...args: unknown[]) => unknown) => unknown }).mockImplementation(async (...args: unknown[]) => {
       queryCount++;
       // Call 1 is claimVectorOutboxBatch (succeeds)
       // Call 2 is in handleVectorOutboxPublishFailure (simulated DB error during retry persistence)
       if (queryCount === 2) {
         throw new Error("CRITICAL_DATABASE_DEADLOCK_DURING_RETRY");
       }
-      return (originalQueryRaw as any)(...args);
+      return (originalQueryRaw as (...a: unknown[]) => unknown)(...args);
     });
 
     try {

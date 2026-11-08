@@ -24,7 +24,7 @@ import { db } from "@/lib/prisma/db";
 import { recordVectorSyncIntent } from "@/lib/vector/outbox";
 import { computeTaskContentHash } from "@/lib/vector/provenance";
 import { createTaskSchema } from "@/core/domain";
-import { VectorEntityType, type Task } from "@prisma/client";
+import { Prisma, VectorEntityType, type Task } from "@prisma/client";
 
 /**
  * Trusted actor identity. Supplied by the caller, never by the model.
@@ -152,7 +152,7 @@ export async function createTaskInOrg(
       });
 
       await recordVectorSyncIntent({
-        tx: tx as any,
+        tx: tx as unknown as Prisma.TransactionClient,
         orgId: actor.orgId,
         entityType: VectorEntityType.TASK,
         entityId: created.id,

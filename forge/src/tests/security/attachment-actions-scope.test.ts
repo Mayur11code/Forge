@@ -34,7 +34,7 @@ jest.mock("@/lib/vector/client", () => ({
 jest.mock("@/lib/auth/auth", () => ({ auth: jest.fn() }));
 
 jest.mock("@/lib/prisma/db", () => {
-  const localDb: any = {
+  const localDb: Record<string, unknown> = {
     task: {
       findFirst: jest.fn(),
       findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -58,8 +58,8 @@ jest.mock("@/lib/prisma/db", () => {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findMany: jest.fn().mockResolvedValue([]),
     },
-    $transaction: jest.fn(async (cb: any) =>
-      typeof cb === "function" ? cb(localDb) : Promise.all(cb),
+    $transaction: jest.fn(async (cb: unknown) =>
+      typeof cb === "function" ? (cb as (db: unknown) => unknown)(localDb) : Promise.all(cb as Promise<unknown>[]),
     ),
     $queryRaw: jest.fn().mockResolvedValue([{ id: "mock_head_1", latestRevision: 1 }]),
   };

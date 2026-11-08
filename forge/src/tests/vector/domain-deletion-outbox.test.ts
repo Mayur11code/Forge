@@ -54,8 +54,7 @@ jest.mock("@/lib/ai/resolver", () => ({
 
 // 2. Mock Database with interactive transaction support
 jest.mock("@/lib/prisma/db", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mockDb: any = {
+  const mockDb: Record<string, unknown> = {
     task: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -82,7 +81,7 @@ jest.mock("@/lib/prisma/db", () => {
       updateMany: jest.fn(),
     },
     vectorEntityHead: {
-      upsert: jest.fn().mockImplementation((args: any) =>
+      upsert: jest.fn().mockImplementation((args: { create?: { orgId?: string; entityType?: string; entityId?: string } }) =>
         Promise.resolve({
           id: "head_test_1",
           orgId: args.create?.orgId ?? "test_org",
@@ -1060,10 +1059,8 @@ describe("Forge H4.5 — Transactional Outbox & Durable Deletion Lifecycle", () 
     it("safely handles malformed event payloads missing outboxEventId without throwing", async () => {
       const errSpy = jest.spyOn(console, "error").mockImplementation();
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await domainCleanupWorkerHandler({ event: { id: "e1", type: "DOMAIN_CLEANUP_REQUESTED", time: "", data: {} as any } });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await domainCleanupWorkerHandler({ event: { id: "e2", type: "DOMAIN_CLEANUP_REQUESTED", time: "", data: { outboxEventId: "" } as any } });
+      await domainCleanupWorkerHandler({ event: { id: "e1", type: "DOMAIN_CLEANUP_REQUESTED", time: "", data: {} as unknown as Parameters<typeof domainCleanupWorkerHandler>[0]["event"]["data"] } });
+      await domainCleanupWorkerHandler({ event: { id: "e2", type: "DOMAIN_CLEANUP_REQUESTED", time: "", data: { outboxEventId: "" } as unknown as Parameters<typeof domainCleanupWorkerHandler>[0]["event"]["data"] } });
 
       expect(db.domainOutboxEvent.findUnique).not.toHaveBeenCalled();
       expect(mockVectorDeleteByTask).not.toHaveBeenCalled();

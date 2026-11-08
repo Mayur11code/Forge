@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 jest.mock("@/lib/prisma/db", () => ({ db: {} }));
 // src/tests/vector/generation-state.test.ts
 /**
@@ -74,21 +75,21 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
   const PROJECT_1 = "proj_001";
 
   // In-memory relational store simulation
-  let heads: Map<string, any>;
-  let generations: Map<string, any>;
-  let tasks: Map<string, any>;
-  let attachments: Map<string, any>;
-  let projects: Map<string, any>;
-  let outboxEvents: Map<string, any>;
-  let organizations: Map<string, any>;
+  let heads: Map<string, Record<string, unknown>>;
+  let generations: Map<string, Record<string, unknown>>;
+  let tasks: Map<string, Record<string, unknown>>;
+  let attachments: Map<string, Record<string, unknown>>;
+  let projects: Map<string, Record<string, unknown>>;
+  let outboxEvents: Map<string, Record<string, unknown>>;
+  let organizations: Map<string, Record<string, unknown>>;
 
   function headKey(orgId: string, entityType: string, entityId: string): string {
     return `${orgId}:${entityType}:${entityId}`;
   }
 
   // Transaction client double implementing Prisma Client + raw SQL operations
-  function createMockTxClient(): any {
-    const mockClient: any = {
+  function createMockTxClient(): Prisma.TransactionClient {
+    const mockClient: Record<string, unknown> = {
       vectorEntityHead: {
         upsert: jest.fn().mockImplementation(({ where, create, update }) => {
           const key = headKey(
@@ -132,7 +133,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           return Promise.resolve(null);
         }),
         findUniqueOrThrow: jest.fn().mockImplementation(({ where }) => {
-          return mockClient.vectorEntityHead.findUnique({ where }).then((res: any) => {
+          return (mockClient.vectorEntityHead as { findUnique: (args: unknown) => Promise<unknown> }).findUnique({ where }).then((res: unknown) => {
             if (!res) throw new Error("VectorEntityHead not found");
             return res;
           });
@@ -331,12 +332,12 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         }),
       },
 
-      $queryRaw: jest.fn().mockImplementation(async (query: any, ...params: any[]) => {
-        const queryText = Array.isArray(query) ? query.join("?") : query.text || String(query);
+      $queryRaw: jest.fn().mockImplementation(async (query: unknown, ...params: unknown[]) => {
+        const queryText = Array.isArray(query) ? query.join("?") : typeof query === "object" && query !== null && "text" in query ? String((query as { text: unknown }).text) : String(query);
 
         // 1. Task query for activation or locking
         if (queryText.includes('FROM "Task"')) {
-          const taskId = params[0];
+          const taskId = String(params[0]);
           const task = tasks.get(taskId);
           if (!task) return [];
           const project = projects.get(task.projectId);
@@ -350,7 +351,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // 2. Attachment query for activation or locking
         if (queryText.includes('FROM "Attachment"')) {
-          const attId = params[0];
+          const attId = String(params[0]);
           const att = attachments.get(attId);
           if (!att) return [];
           const task = tasks.get(att.taskId);
@@ -368,7 +369,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // 3. Project query for locking
         if (queryText.includes('FROM "Project"')) {
-          const projectId = params[0];
+          const projectId = String(params[0]);
           const p = projects.get(projectId);
           if (!p) return [];
           return [{ id: p.id, orgId: p.orgId }];
@@ -377,9 +378,9 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         // 4. Head lock query
         if (queryText.includes('FROM "VectorEntityHead"')) {
           if (queryText.includes('"orgId" =') && queryText.includes('"entityType" =')) {
-            const orgId = params[0];
-            const entityType = params[1];
-            const entityId = params[2];
+            const orgId = String(params[0]);
+            const entityType = String(params[1]);
+            const entityId = String(params[2]);
             const key = headKey(orgId, entityType, entityId);
             const h = heads.get(key);
             if (!h) return [];
@@ -393,7 +394,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
             }];
           }
 
-          const headId = params[0];
+          const headId = String(params[0]);
           for (const h of heads.values()) {
             if (h.id === headId) {
               return [{
@@ -413,7 +414,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         if (queryText.includes('FROM "VectorGeneration"')) {
           // Check active writer check
           if (queryText.includes("status = 'WRITING'")) {
-            const headId = params[0];
+            const headId = String(params[0]);
             const liveWriters = Array.from(generations.values()).filter(
               (g) => g.headId === headId && g.status === "WRITING" && g.leaseExpiresAt > new Date()
             );
@@ -422,14 +423,14 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
           // Ordered generation lock for tombstoning
           if (queryText.includes("ORDER BY id ASC")) {
-            const headId = params[0];
+            const headId = String(params[0]);
             const list = Array.from(generations.values()).filter((g) => g.headId === headId);
             list.sort((a, b) => a.id.localeCompare(b.id));
             return list.map((g) => ({ id: g.id, status: g.status }));
           }
 
           // Single generation lock for activation or markGenerationWritten
-          const genId = params[0];
+          const genId = String(params[0]);
           const gen = generations.get(genId);
           if (!gen) return [];
           const isLeaseValid = gen.leaseExpiresAt ? gen.leaseExpiresAt > new Date() : false;
@@ -448,8 +449,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         return [];
       }),
 
-      $executeRaw: jest.fn().mockImplementation(async (query: any, ...params: any[]) => {
-        const queryText = Array.isArray(query) ? query.join("?") : query.text || String(query);
+      $executeRaw: jest.fn().mockImplementation(async (query: unknown, ...params: unknown[]) => {
+        const queryText = Array.isArray(query) ? query.join("?") : typeof query === "object" && query !== null && "text" in query ? String((query as { text: unknown }).text) : String(query);
 
         // Insert Generation
         if (queryText.includes('INSERT INTO "VectorGeneration"')) {
@@ -463,7 +464,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           const expectedChunkCount = params[7];
           const manifestDigest = params[8];
           const claimToken = params[9];
-          const leaseSeconds = params[10];
+          const leaseSeconds = Number(params[10]) || 300;
 
           const gen = {
             id: genId,
@@ -483,15 +484,15 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
             createdAt: new Date(),
             updatedAt: new Date(),
           };
-          generations.set(genId, gen);
+          generations.set(String(genId), gen);
           return 1;
         }
 
         // Mark WRITTEN (Conditional update with fencing check)
         if (queryText.includes("SET status = 'WRITTEN'")) {
           const manifestDigest = params[0];
-          const genId = params[1];
-          const claimToken = params[2];
+          const genId = String(params[1]);
+          const claimToken = String(params[2]);
 
           const gen = generations.get(genId);
           if (!gen) return 0;
@@ -507,9 +508,9 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // Renew Lease (Conditional update with fencing check)
         if (queryText.includes('UPDATE "VectorGeneration"') && queryText.includes('"leaseExpiresAt" = clock_timestamp() + make_interval')) {
-          const extensionSeconds = params[0];
-          const genId = params[1];
-          const claimToken = params[2];
+          const extensionSeconds = Number(params[0]) || 300;
+          const genId = String(params[1]);
+          const claimToken = String(params[2]);
 
           const gen = generations.get(genId);
           if (!gen) return 0;
@@ -525,8 +526,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         // Fail generation (explicit worker failure via failGeneration)
         if (queryText.includes("SET status = 'FAILED'") && queryText.includes('WHERE id =')) {
           const errorMessage = params[0];
-          const genId = params[1];
-          const claimToken = params[2];
+          const genId = String(params[1]);
+          const claimToken = String(params[2]);
 
           const gen = generations.get(genId);
           if (!gen) return 0;
@@ -543,7 +544,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // Expired writer cleanup in reserveGeneration
         if (queryText.includes("SET status = 'FAILED'") && queryText.includes('WHERE "headId" =') && queryText.includes('<= clock_timestamp()')) {
-          const headId = params[0];
+          const headId = String(params[0]);
           let count = 0;
           for (const g of generations.values()) {
             if (g.headId === headId && g.status === "WRITING" && g.leaseExpiresAt && g.leaseExpiresAt <= new Date()) {
@@ -560,7 +561,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // Fail generation on tombstone
         if (queryText.includes("SET status = 'FAILED'") && queryText.includes('WHERE "headId" =')) {
-          const headId = params[0];
+          const headId = String(params[0]);
           let count = 0;
           for (const g of generations.values()) {
             if (g.headId === headId && (g.status === "WRITING" || g.status === "WRITTEN")) {
@@ -577,8 +578,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // Obsolete previous active generation
         if (queryText.includes("SET status = 'OBSOLETE'")) {
-          const genId = params[0];
-          const headId = params[1];
+          const genId = String(params[0]);
+          const headId = String(params[1]);
           const gen = generations.get(genId);
           if (gen && gen.status === "ACTIVE") {
             gen.status = "OBSOLETE";
@@ -590,9 +591,9 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // Activate new generation
         if (queryText.includes("SET status = 'ACTIVE'")) {
-          const genId = params[0];
-          const headId = params[1];
-          const claimToken = params[2];
+          const genId = String(params[0]);
+          const headId = String(params[1]);
+          const claimToken = String(params[2]);
 
           const gen = generations.get(genId);
           if (!gen) return 0;
@@ -625,10 +626,10 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
         // Tombstone upsert
         if (queryText.includes('INSERT INTO "VectorEntityHead"')) {
-          const id = params[0];
-          const orgId = params[1];
-          const entityType = params[2];
-          const entityId = params[3];
+          const id = String(params[0]);
+          const orgId = String(params[1]);
+          const entityType = String(params[2]);
+          const entityId = String(params[3]);
           const key = headKey(orgId, entityType, entityId);
 
           const existing = heads.get(key);
@@ -657,10 +658,10 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
       }),
     };
 
-    return mockClient;
+    return mockClient as unknown as Prisma.TransactionClient;
   }
 
-  let mockTx: any;
+  let mockTx: Prisma.TransactionClient;
 
   beforeEach(() => {
     heads = new Map();
@@ -783,9 +784,9 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
       },
     });
 
-    expect(tombstoned.isTombstone).toBe(true);
-    expect(tombstoned.activeGenId).toBeNull();
-    expect(tombstoned.tombstonedAt).toBeDefined();
+    expect(tombstoned?.isTombstone).toBe(true);
+    expect(tombstoned?.activeGenId).toBeNull();
+    expect(tombstoned?.tombstonedAt).toBeDefined();
   });
 
   // ---------------------------------------------------------------------------

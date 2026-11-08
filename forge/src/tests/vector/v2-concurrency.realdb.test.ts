@@ -187,8 +187,8 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Concurrency & Revisio
 
         throw new Error("INJECTED_DOMAIN_TX_ROLLBACK");
       }, TX_OPTS);
-    } catch (e: any) {
-      expect(e.message).toBe("INJECTED_DOMAIN_TX_ROLLBACK");
+    } catch (e: unknown) {
+      expect((e as Error).message).toBe("INJECTED_DOMAIN_TX_ROLLBACK");
     }
 
     // Verify neither task nor outbox event exists

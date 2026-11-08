@@ -48,4 +48,5 @@ next-env.d.ts
 dev-server.log
 tmp-*.mjs
 pp.md
+docs/pp.md
 

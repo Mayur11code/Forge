@@ -72,14 +72,14 @@ jest.mock("@/lib/vector/outbox", () => ({
 const mockTaskFind = jest.fn();
 jest.mock("@/lib/prisma/extended", () => ({
   prisma: {
-    task: { findFirst: (...args: any[]) => mockTaskFind(...args) },
+    task: { findFirst: (...args: unknown[]) => mockTaskFind(...args) },
     attachment: { findMany: jest.fn().mockResolvedValue([]) },
   },
 }));
 
 jest.mock("@/lib/prisma/db", () => ({
   db: {
-    $transaction: jest.fn(async (cb: any) => {
+    $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => {
       const tx = {
         $queryRaw: jest.fn().mockResolvedValue([{ latestRevision: 1, isTombstone: false }]),
       };
@@ -510,7 +510,7 @@ describe("Part 2 Area B: Generation Worker Lease Lifecycle & Fencing (E2)", () =
     (chunkTextSemantically as jest.Mock).mockResolvedValue(largeChunkList);
 
     let batchCount = 0;
-    mockBatchEmbedContents.mockImplementation(async ({ requests }: any) => {
+    mockBatchEmbedContents.mockImplementation(async ({ requests }: { requests: unknown[] }) => {
       batchCount++;
       if (batchCount === 1) {
         // Lease renewal fails during batch 1 execution

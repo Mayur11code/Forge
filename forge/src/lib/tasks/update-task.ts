@@ -156,7 +156,7 @@ export async function updateTaskInOrg(
       });
 
       await recordVectorSyncIntent({
-        tx: tx as any,
+        tx: tx as unknown as Prisma.TransactionClient,
         orgId: actor.orgId,
         entityType: VectorEntityType.TASK,
         entityId: updated.id,
@@ -184,7 +184,7 @@ export async function updateTaskInOrg(
           });
 
           await recordVectorSyncIntent({
-            tx: tx as any,
+            tx: tx as unknown as Prisma.TransactionClient,
             orgId: actor.orgId,
             entityType: VectorEntityType.ATTACHMENT,
             entityId: att.id,

@@ -145,11 +145,13 @@ export function createWorker<K extends EventType>(
         options?.heartbeatIntervalMs ??
         Math.min(30_000, Math.max(100, Math.floor((leaseSeconds * 1000) / 3)));
 
+      const validatedRecord = (validatedData && typeof validatedData === "object") ? (validatedData as Record<string, unknown>) : null;
+      const bodyRecord = (body && typeof body === "object") ? (body as Record<string, unknown>) : null;
       const outboxEventId =
-        typeof (validatedData as any)?.outboxEventId === "string"
-          ? (validatedData as any).outboxEventId
-          : typeof (body as any)?.outboxEventId === "string"
-          ? (body as any).outboxEventId
+        typeof validatedRecord?.outboxEventId === "string"
+          ? validatedRecord.outboxEventId
+          : typeof bodyRecord?.outboxEventId === "string"
+          ? (bodyRecord.outboxEventId as string)
           : null;
 
       // Logical Work Deduplication: if outboxEventId is provided, check if already completed
@@ -268,7 +270,7 @@ export function createWorker<K extends EventType>(
             data: {
               messageId,
               eventName: type,
-              payload: validatedData as any,
+              payload: validatedData as Prisma.InputJsonValue,
               status: "PENDING",
               ...(outboxEventId ? { outboxEventId } : {}),
             },
@@ -450,10 +452,13 @@ export async function renewEventLogLease({
   messageId?: string;
   claimToken: string;
   extensionSeconds?: number;
-  dbClient?: any;
+  dbClient?: typeof db | { $executeRaw?: unknown };
 }): Promise<{ renewed: boolean }> {
-  if (typeof dbClient?.$executeRaw === "function") {
-    const affected = await dbClient.$executeRaw`
+  if (dbClient && typeof (dbClient as { $executeRaw?: unknown }).$executeRaw === "function") {
+    const rawClient = dbClient as {
+      $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<number>;
+    };
+    const affected = await rawClient.$executeRaw`
       UPDATE "EventLog"
       SET "leaseExpiresAt" = clock_timestamp() + (${extensionSeconds} || ' seconds')::interval,
           "updatedAt" = clock_timestamp()

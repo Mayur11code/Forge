@@ -13,8 +13,26 @@ import {
 
 export const MAX_SUPPORTED_TOP_K = 25;
 
+export type ActiveRagCandidatePrismaClient = {
+    vectorEntityHead?: {
+        findMany: (args?: unknown) => Promise<Array<{
+            entityType: VectorEntityType;
+            entityId: string;
+            activeGenId: string | null;
+            latestRevision: number;
+            isTombstone: boolean;
+        }>>;
+    };
+    task?: {
+        findMany: (args?: unknown) => Promise<Array<{ id: string }>>;
+    };
+    attachment?: {
+        findMany: (args?: unknown) => Promise<Array<{ id: string; taskId?: string }>>;
+    };
+} | typeof db;
+
 export interface ActiveRagCandidateFilterOptions {
-    prismaClient?: any;
+    prismaClient?: ActiveRagCandidatePrismaClient;
 }
 
 /**
@@ -132,7 +150,7 @@ export async function filterActiveRagCandidates(
                   },
               })
             : [],
-        legacyTaskIds.size > 0
+        legacyTaskIds.size > 0 && typeof prismaDb.task?.findMany === 'function'
             ? prismaDb.task.findMany({
                   where: {
                       id: { in: Array.from(legacyTaskIds) },
@@ -141,7 +159,7 @@ export async function filterActiveRagCandidates(
                   select: { id: true },
               })
             : [],
-        legacyAttachmentIds.size > 0
+        legacyAttachmentIds.size > 0 && typeof prismaDb.attachment?.findMany === 'function'
             ? prismaDb.attachment.findMany({
                   where: {
                       id: { in: Array.from(legacyAttachmentIds) },
@@ -158,8 +176,8 @@ export async function filterActiveRagCandidates(
         headMap.set(`${h.entityType}:${h.entityId}`, h);
     }
 
-    const activeLegacyTaskIds = new Set(legacyTasks.map((t: any) => t.id));
-    const activeLegacyAttachmentIds = new Set(legacyAttachments.map((a: any) => a.id));
+    const activeLegacyTaskIds = new Set(legacyTasks.map((t: { id: string }) => t.id));
+    const activeLegacyAttachmentIds = new Set(legacyAttachments.map((a: { id: string }) => a.id));
 
     // Filter matches: only retain chunks matching authoritative active head invariants
     const validMatches: typeof matches = [];

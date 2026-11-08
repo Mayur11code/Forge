@@ -1,6 +1,6 @@
 import "server-only";
 // src/lib/vector/client.ts
-import { Pinecone, type RecordMetadata } from '@pinecone-database/pinecone';
+import { Pinecone, type RecordMetadata, type PineconeRecord } from '@pinecone-database/pinecone';
 import {
   VectorMetadata,
   PineconeRecordSchema,
@@ -159,7 +159,7 @@ export function getTenantVectorStore(orgId: string) {
     async upsertGenerationVectors(records: PineconeRecordV2[]) {
       const sanitized = records.map((r) => PineconeRecordV2Schema.parse(r));
       return executeWithFailover("upsertGenerationVectors", (ns) =>
-        ns.upsert({ records: sanitized as any })
+        ns.upsert({ records: sanitized as PineconeRecord<RecordMetadata>[] })
       );
     },
 
@@ -178,6 +178,26 @@ export function getTenantVectorStore(orgId: string) {
 // Vector V2: Physical Persistence Verification & Bounded Polling
 // -----------------------------------------------------------------------------
 
+export interface VerifiedVectorMetadata {
+  contractVersion?: string | number;
+  generationId?: string;
+  sourceRevision?: number;
+  chunkIndex?: number;
+  entityId?: string;
+  entityType?: string;
+  orgId?: string;
+  chunkCount?: number;
+  text?: string;
+  contentHash?: string;
+  [key: string]: unknown;
+}
+
+export interface VerifiedVectorRecord {
+  id: string;
+  values?: number[];
+  metadata?: VerifiedVectorMetadata;
+}
+
 export interface VerifyPersistenceParams {
   orgId: string;
   generationId: string;
@@ -190,7 +210,7 @@ export interface VerifyPersistenceParams {
   initialDelayMs?: number;
   maxDelayMs?: number;
   perRequestTimeoutMs?: number;
-  fetcher?: (ids: string[]) => Promise<{ records: Record<string, { id: string; values?: number[]; metadata?: any }> }>;
+  fetcher?: (ids: string[]) => Promise<{ records: Record<string, VerifiedVectorRecord> }>;
 }
 
 export type VerifyPersistenceResult =
@@ -290,7 +310,7 @@ export async function verifyPhysicalPersistence({
         : tenantStore!.fetchGenerationVectors(expectedIds);
 
       let timerHandle: NodeJS.Timeout | undefined;
-      let response: { records?: Record<string, { id: string; values?: number[]; metadata?: any }> };
+      let response: { records?: Record<string, VerifiedVectorRecord> };
       try {
         const timeoutPromise = new Promise<never>((_, reject) => {
           timerHandle = setTimeout(() => reject(new Error("PINECONE_FETCH_TIMEOUT")), boundedTimeoutMs);
@@ -551,9 +571,10 @@ export async function verifyPhysicalPersistence({
           attempts,
         };
       }
-    } catch (fetchErr: any) {
-      const status = fetchErr?.status ?? fetchErr?.statusCode ?? fetchErr?.response?.status;
-      const errMsg = String(fetchErr?.message || fetchErr);
+    } catch (fetchErr: unknown) {
+      const err = fetchErr as { status?: number; statusCode?: number; response?: { status?: number }; message?: string } | null | undefined;
+      const status = err?.status ?? err?.statusCode ?? err?.response?.status;
+      const errMsg = String(err?.message || fetchErr);
       if (
         status === 401 ||
         status === 403 ||

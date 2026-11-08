@@ -36,7 +36,7 @@ jest.mock("@/lib/events/queue", () => ({
   publishEvent: jest.fn().mockResolvedValue({ messageId: "msg_mock_123" }),
 }));
 
-import { VectorEntityType, VectorOutboxStatus } from "@prisma/client";
+import { VectorEntityType, VectorOutboxStatus, type PrismaClient } from "@prisma/client";
 import {
   claimVectorOutboxBatch,
   renewVectorOutboxClaimLease,
@@ -99,15 +99,15 @@ class MockOutboxDb {
     return fullRow;
   }
 
-  public $queryRaw = jest.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+  public $queryRaw = jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join("?");
     const now = new Date(this.currentTime);
 
     // 1. claimVectorOutboxBatch
     if (sql.includes('WITH candidates AS') && sql.includes('FOR UPDATE SKIP LOCKED')) {
-      const batchSize = parseInt(values[0], 10) || 25;
+      const batchSize = parseInt(String(values[0]), 10) || 25;
       const claimToken = values[1];
-      const leaseSeconds = parseInt(values[2], 10) || 60;
+      const leaseSeconds = parseInt(String(values[2]), 10) || 60;
 
       const candidates: OutboxRow[] = [];
       for (const row of Array.from(this.rows.values()).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())) {
@@ -122,10 +122,10 @@ class MockOutboxDb {
         }
       }
 
-      const claimed: any[] = [];
+      const claimed: Array<Record<string, unknown>> = [];
       for (const row of candidates) {
         row.status = "CLAIMED";
-        row.dispatchClaimToken = claimToken;
+        row.dispatchClaimToken = claimToken ? String(claimToken) : null;
         row.dispatchLeaseExpiresAt = new Date(this.currentTime + leaseSeconds * 1000);
         row.updatedAt = now;
         claimed.push({
@@ -145,11 +145,11 @@ class MockOutboxDb {
 
     // 2. renewVectorOutboxClaimLease
     if (sql.includes('UPDATE "VectorOutboxEvent"') && sql.includes('"dispatchLeaseExpiresAt" = clock_timestamp() +') && !sql.includes('SET "status" =')) {
-      const extensionSeconds = parseInt(values[0], 10) || 60;
+      const extensionSeconds = parseInt(String(values[0]), 10) || 60;
       const outboxEventId = values[1];
       const claimToken = values[2];
 
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (
         row &&
         row.status === "CLAIMED" &&
@@ -166,11 +166,11 @@ class MockOutboxDb {
 
     // 3. markVectorOutboxDispatched
     if (sql.includes('UPDATE "VectorOutboxEvent"') && sql.includes('"status" = \'DISPATCHED\'::"VectorOutboxStatus"')) {
-      const leaseSeconds = parseInt(values[0], 10) || 600;
+      const leaseSeconds = parseInt(String(values[0]), 10) || 600;
       const outboxEventId = values[1];
       const claimToken = values[2];
 
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (
         row &&
         row.status === "CLAIMED" &&
@@ -190,7 +190,7 @@ class MockOutboxDb {
     // 4. completeVectorOutboxEvent
     if (sql.includes('UPDATE "VectorOutboxEvent"') && sql.includes('"status" = \'COMPLETED\'::"VectorOutboxStatus"')) {
       const outboxEventId = values[0];
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (row && row.status !== "COMPLETED") {
         row.status = "COMPLETED";
         row.dispatchClaimToken = null;
@@ -205,7 +205,7 @@ class MockOutboxDb {
     if (sql.includes('SELECT id, "entityType", "entityId", "sourceRevision", "dispatchAttempts"') && sql.includes('FROM "VectorOutboxEvent"') && sql.includes('WHERE id =')) {
       const outboxEventId = values[0];
       const dispatchClaimToken = values[1];
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (
         row &&
         row.status === "CLAIMED" &&
@@ -231,16 +231,16 @@ class MockOutboxDb {
       const outboxEventId = values[2];
       const sourceRevision = values[3];
 
-      const newer: any[] = [];
+      const newer: OutboxRow[] = [];
       for (const row of this.rows.values()) {
         if (
           row.entityType === entityType &&
           row.entityId === entityId &&
           row.id !== outboxEventId &&
           row.status === "PENDING" &&
-          row.sourceRevision > sourceRevision
+          row.sourceRevision > Number(sourceRevision)
         ) {
-          newer.push({ id: row.id, sourceRevision: row.sourceRevision });
+          newer.push(row);
         }
       }
       return newer;
@@ -256,7 +256,7 @@ class MockOutboxDb {
       const outboxEventId = values[1];
       const claimToken = values[2];
 
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (
         row &&
         row.status === "CLAIMED" &&
@@ -267,7 +267,7 @@ class MockOutboxDb {
         row.status = "FAILED";
         row.dispatchClaimToken = null;
         row.dispatchLeaseExpiresAt = null;
-        row.terminalError = terminalError;
+        row.terminalError = terminalError ? String(terminalError) : null;
         row.updatedAt = now;
         return [{ id: row.id }];
       }
@@ -281,7 +281,7 @@ class MockOutboxDb {
       const outboxEventId = values[2];
       const claimToken = values[3];
 
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (
         row &&
         row.status === "CLAIMED" &&
@@ -292,8 +292,8 @@ class MockOutboxDb {
         row.status = "FAILED";
         row.dispatchClaimToken = null;
         row.dispatchLeaseExpiresAt = null;
-        row.dispatchAttempts = newAttempts;
-        row.terminalError = terminalError;
+        row.dispatchAttempts = Number(newAttempts);
+        row.terminalError = terminalError ? String(terminalError) : null;
         row.updatedAt = now;
         return [{ id: row.id, dispatchAttempts: row.dispatchAttempts }];
       }
@@ -308,7 +308,7 @@ class MockOutboxDb {
       const outboxEventId = values[3];
       const claimToken = values[4];
 
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (
         row &&
         row.status === "CLAIMED" &&
@@ -319,9 +319,9 @@ class MockOutboxDb {
         row.status = "PENDING";
         row.dispatchClaimToken = null;
         row.dispatchLeaseExpiresAt = null;
-        row.dispatchAttempts = newAttempts;
-        row.nextRetryAt = new Date(this.currentTime + backoffSeconds * 1000);
-        row.terminalError = terminalError;
+        row.dispatchAttempts = Number(newAttempts);
+        row.nextRetryAt = new Date(this.currentTime + Number(backoffSeconds) * 1000);
+        row.terminalError = terminalError ? String(terminalError) : null;
         row.updatedAt = now;
         return [{ id: row.id, dispatchAttempts: row.dispatchAttempts, nextRetryAt: row.nextRetryAt }];
       }
@@ -331,7 +331,7 @@ class MockOutboxDb {
     // 10. Check current status fallback
     if (sql.includes('SELECT "status" FROM "VectorOutboxEvent" WHERE id =')) {
       const outboxEventId = values[0];
-      const row = this.rows.get(outboxEventId);
+      const row = this.rows.get(String(outboxEventId));
       if (!row) return [];
       return [{ status: row.status }];
     }
@@ -363,7 +363,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       const token = "disp_worker_1";
       const { rows, claimToken } = await claimVectorOutboxBatch({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         batchSize: 10,
         leaseSeconds: 60,
         claimToken: token,
@@ -390,7 +390,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Dispatcher A claims
       const claimA = await claimVectorOutboxBatch({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         batchSize: 10,
         leaseSeconds: 60,
         claimToken: "token_A",
@@ -400,7 +400,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Dispatcher B attempts to claim while A's lease is active
       const claimB = await claimVectorOutboxBatch({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         batchSize: 10,
         leaseSeconds: 60,
         claimToken: "token_B",
@@ -425,7 +425,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Before expiry: cannot be reclaimed
       const earlyReclaim = await claimVectorOutboxBatch({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         batchSize: 10,
         leaseSeconds: 60,
         claimToken: "new_worker_token",
@@ -437,7 +437,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // After expiry: successfully reclaimed by new worker
       const lateReclaim = await claimVectorOutboxBatch({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         batchSize: 10,
         leaseSeconds: 60,
         claimToken: "new_worker_token",
@@ -464,7 +464,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       // Lease expires and worker B steals it
       mockDb.advanceTime(15_000);
       await claimVectorOutboxBatch({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         batchSize: 10,
         leaseSeconds: 60,
         claimToken: "new_owner_token",
@@ -472,7 +472,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // 1. Stale token renewal fails
       const renewed = await renewVectorOutboxClaimLease({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_claim_4",
         dispatchClaimToken: "original_stale_token",
       });
@@ -480,12 +480,12 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // 2. Stale token markDispatched fails
       const marked = await markVectorOutboxDispatched({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_claim_4",
         dispatchClaimToken: "original_stale_token",
       });
       expect(marked.ok).toBe(false);
-      expect((marked as any).reason).toBe("CLAIM_LOST_OR_EXPIRED");
+      expect((marked as { reason?: string }).reason).toBe("CLAIM_LOST_OR_EXPIRED");
 
       // Verify ownership remains strictly with new_owner_token
       const saved = mockDb.rows.get("evt_claim_4");
@@ -510,14 +510,14 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       const res = await markVectorOutboxDispatched({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_pub_5",
         dispatchClaimToken: "active_dispatcher_tok",
         leaseSeconds: 600,
       });
 
       expect(res.ok).toBe(true);
-      expect((res as any).status).toBe("DISPATCHED");
+      expect((res as { status?: string }).status).toBe("DISPATCHED");
 
       const saved = mockDb.rows.get("evt_pub_5");
       expect(saved?.status).toBe("DISPATCHED");
@@ -544,7 +544,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Simulate network timeout / ambiguous publish outcome
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: originalEventId,
         dispatchClaimToken: "disp_tok_6",
         error: new Error("Network timeout: publish ACK lost"),
@@ -552,7 +552,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       expect(res.status).toBe("RETRY_SCHEDULED");
-      expect((res as any).attempts).toBe(1);
+      expect((res as { attempts?: number }).attempts).toBe(1);
 
       // Verify the SAME logical event ID was preserved, NO duplicate record created
       expect(mockDb.rows.size).toBe(1);
@@ -576,7 +576,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Downstream worker completes the event first
       await completeVectorOutboxEvent({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_pub_7",
       });
 
@@ -585,7 +585,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Delayed dispatcher publish failure arrives AFTER worker completed
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_pub_7",
         dispatchClaimToken: "disp_tok_7",
         error: new Error("Delayed publish ack failure"),
@@ -612,14 +612,14 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // First failure callback arrives
       const res1 = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_pub_8",
         dispatchClaimToken: "disp_tok_8",
         error: new Error("Publish 500 error"),
         maxAttempts: 5,
       });
       expect(res1.status).toBe("RETRY_SCHEDULED");
-      expect((res1 as any).attempts).toBe(1);
+      expect((res1 as { attempts?: number }).attempts).toBe(1);
 
       // Row status is now PENDING and dispatchClaimToken was cleared
       const rowAfterFirst = mockDb.rows.get("evt_pub_8");
@@ -628,7 +628,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Duplicate / delayed failure callback arrives with the old token
       const res2 = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_pub_8",
         dispatchClaimToken: "disp_tok_8",
         error: new Error("Duplicate publish failure"),
@@ -661,7 +661,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_retry_9",
         dispatchClaimToken: "tok_9",
         error: new Error("Initial failure"),
@@ -669,7 +669,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       expect(res.status).toBe("RETRY_SCHEDULED");
-      expect((res as any).attempts).toBe(1);
+      expect((res as { attempts?: number }).attempts).toBe(1);
 
       const saved = mockDb.rows.get("evt_retry_9");
       expect(saved?.nextRetryAt?.getTime()).toBe(mockDb.currentTime + 5_000); // Exactly 5 seconds
@@ -693,7 +693,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
         });
 
         const res = await handleVectorOutboxPublishFailure({
-          db: mockDb as any,
+          db: mockDb as unknown as PrismaClient,
           outboxEventId: id,
           dispatchClaimToken: tok,
           error: new Error(`Failure on attempt ${priorAttempts + 1}`),
@@ -702,7 +702,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
         const expectedDelaySec = delays[priorAttempts - 1];
         expect(res.status).toBe("RETRY_SCHEDULED");
-        expect((res as any).attempts).toBe(priorAttempts + 1);
+        expect((res as { attempts?: number }).attempts).toBe(priorAttempts + 1);
 
         const saved = mockDb.rows.get(id);
         expect(saved?.nextRetryAt?.getTime()).toBe(mockDb.currentTime + expectedDelaySec * 1000);
@@ -722,7 +722,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_retry_11",
         dispatchClaimToken: "tok_11",
         error: new Error("4th failure"),
@@ -730,7 +730,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       expect(res.status).toBe("RETRY_SCHEDULED");
-      expect((res as any).attempts).toBe(4);
+      expect((res as { attempts?: number }).attempts).toBe(4);
     });
 
     it("12. Maximum-attempt exhaustion produces the correct terminal state", async () => {
@@ -746,7 +746,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_retry_12",
         dispatchClaimToken: "tok_12",
         error: new Error("Final 5th failure — broker persistent outage"),
@@ -754,7 +754,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       expect(res.status).toBe("FAILED_TERMINAL");
-      expect((res as any).attempts).toBe(5);
+      expect((res as { attempts?: number }).attempts).toBe(5);
 
       const saved = mockDb.rows.get("evt_retry_12");
       expect(saved?.status).toBe("FAILED");
@@ -779,7 +779,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       // Lease expires and Dispatcher B claims it
       mockDb.advanceTime(10_000);
       await claimVectorOutboxBatch({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         batchSize: 10,
         leaseSeconds: 60,
         claimToken: "tok_new_dispatcher",
@@ -787,7 +787,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Dispatcher A (stale) now attempts to execute failure callback
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_retry_13",
         dispatchClaimToken: "tok_stale",
         error: new Error("Stale failure callback"),
@@ -833,7 +833,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_older_rev1",
         dispatchClaimToken: "tok_old",
         error: new Error("Old revision publish failed"),
@@ -876,7 +876,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
       });
 
       const res = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_newer_rev2_claimed",
         dispatchClaimToken: "tok_rev2",
         error: new Error("Newer revision publish failed"),
@@ -885,7 +885,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Must NOT be superseded by the older revision! It schedules a normal retry.
       expect(res.status).toBe("RETRY_SCHEDULED");
-      expect((res as any).attempts).toBe(1);
+      expect((res as { attempts?: number }).attempts).toBe(1);
 
       const saved = mockDb.rows.get("evt_newer_rev2_claimed");
       expect(saved?.status).toBe("PENDING");
@@ -905,7 +905,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // 1. First completion succeeds
       const completed1 = await completeVectorOutboxEvent({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_dedup_16",
       });
       expect(completed1).toBe(true);
@@ -915,7 +915,7 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // 2. Second completion of the same event returns false (idempotent no-op)
       const completed2 = await completeVectorOutboxEvent({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_dedup_16",
       });
       expect(completed2).toBe(false);
@@ -937,22 +937,22 @@ describe("Part 3 — Outbox Dispatch State Machine Production Lifecycle (E2)", (
 
       // Worker executes to completion and completes outbox row
       await completeVectorOutboxEvent({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_idemp_17",
       });
 
       // Delayed markVectorOutboxDispatched arrives
       const markRes = await markVectorOutboxDispatched({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_idemp_17",
         dispatchClaimToken: "disp_tok_17",
       });
       expect(markRes.ok).toBe(true);
-      expect((markRes as any).status).toBe("COMPLETED");
+      expect((markRes as { status?: string }).status).toBe("COMPLETED");
 
       // Delayed handleVectorOutboxPublishFailure arrives
       const failRes = await handleVectorOutboxPublishFailure({
-        db: mockDb as any,
+        db: mockDb as unknown as PrismaClient,
         outboxEventId: "evt_idemp_17",
         dispatchClaimToken: "disp_tok_17",
         error: new Error("Delayed error"),

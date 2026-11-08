@@ -110,7 +110,7 @@ describe("Vector V2 Phase B: PR-4 Distributed Embedding Worker Lifecycle (E2 Sui
     (completeVectorOutboxEvent as jest.Mock).mockResolvedValue(true);
 
     // Mock interactive db.$transaction
-    (db as any).$transaction = jest.fn().mockImplementation(async (callback) => {
+    (db as unknown as { $transaction: jest.Mock }).$transaction = jest.fn().mockImplementation(async (callback) => {
       const mockTx = {
         $queryRaw: jest.fn().mockResolvedValue([{ latestRevision: 1, isTombstone: false }]),
       };
@@ -119,7 +119,7 @@ describe("Vector V2 Phase B: PR-4 Distributed Embedding Worker Lifecycle (E2 Sui
   });
 
   it("executes the full V2 pipeline without deleteByTask pre-wipe and activates generation", async () => {
-    (prisma as any).task = {
+    (prisma as unknown as { task: unknown }).task = {
       findFirst: jest.fn().mockResolvedValue({
         id: taskId,
         title: "Durable Outbox Worker Task",
@@ -174,7 +174,7 @@ describe("Vector V2 Phase B: PR-4 Distributed Embedding Worker Lifecycle (E2 Sui
 
   it("rejects cross-tenant references with zero vector mutations", async () => {
     // Scoped query returns null
-    (prisma as any).task = {
+    (prisma as unknown as { task: unknown }).task = {
       findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn().mockResolvedValue({
         id: taskId,
@@ -203,7 +203,7 @@ describe("Vector V2 Phase B: PR-4 Distributed Embedding Worker Lifecycle (E2 Sui
   });
 
   it("handles legacy V1 messages non-destructively without deleteByTask", async () => {
-    (prisma as any).task = {
+    (prisma as unknown as { task: unknown }).task = {
       findFirst: jest.fn().mockResolvedValue({
         id: taskId,
         title: "Legacy V1 Task",
@@ -239,7 +239,7 @@ describe("Vector V2 Phase B: PR-4 Distributed Embedding Worker Lifecycle (E2 Sui
   });
 
   it("fails generation and aborts activation when verifyPhysicalPersistence fails", async () => {
-    (prisma as any).task = {
+    (prisma as unknown as { task: unknown }).task = {
       findFirst: jest.fn().mockResolvedValue({
         id: taskId,
         title: "Failing Readback Task",

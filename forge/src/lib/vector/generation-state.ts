@@ -1118,7 +1118,7 @@ export async function tombstoneEntityHead({
         latestRevision: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
-      } as any;
+      };
     }
 
     // 1. Atomically upsert head into permanent tombstone state

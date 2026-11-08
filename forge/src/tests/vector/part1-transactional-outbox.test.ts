@@ -23,25 +23,25 @@ jest.mock("@/lib/auth/auth", () => ({
 
 // In-memory transactional double that mimics PostgreSQL transaction rollback
 class MockTransactionalClient {
-  public taskCreated: any = null;
-  public taskUpdated: any = null;
-  public attachmentCreated: any = null;
+  public taskCreated: Record<string, unknown> | null = null;
+  public taskUpdated: Record<string, unknown> | null = null;
+  public attachmentCreated: Record<string, unknown> | null = null;
   public rawQueries: string[] = [];
   public shouldFailIntent = false;
 
   public task = {
-    create: jest.fn(async ({ data }: any) => {
+    create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
       this.taskCreated = { id: "task_new_1", ...data };
       return this.taskCreated;
     }),
-    update: jest.fn(async ({ where, data }: any) => {
+    update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
       this.taskUpdated = { id: where.id, projectId: "proj_1", ...data };
       return this.taskUpdated;
     }),
-    findFirst: jest.fn(async ({ where }: any) => {
+    findFirst: jest.fn(async ({ where }: { where?: { id?: string } }) => {
       return { id: where?.id ?? "task_existing_1", projectId: "proj_1", title: "Existing Task" };
     }),
-    findUniqueOrThrow: jest.fn(async ({ where }: any) => {
+    findUniqueOrThrow: jest.fn(async ({ where }: { where: { id: string } }) => {
       return {
         id: where.id,
         title: "Parent Task Title",
@@ -60,18 +60,18 @@ class MockTransactionalClient {
   };
 
   public attachment = {
-    create: jest.fn(async ({ data }: any) => {
+    create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
       this.attachmentCreated = { id: "att_new_1", ...data };
       return this.attachmentCreated;
     }),
-    findMany: jest.fn(async ({ where }: any) => {
+    findMany: jest.fn(async ({ where }: { where?: { taskId?: string } }) => {
       return [
         { id: "att_child_1", name: "Doc.pdf", size: 1024, fileKey: "key_pdf" },
       ];
     }),
   };
 
-  public $queryRaw = jest.fn(async (strings: TemplateStringsArray, ...values: any[]) => {
+  public $queryRaw = jest.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     if (this.shouldFailIntent) {
       throw new Error("DB_OUTBOX_INTENT_PERSISTENCE_FAILED");
     }
@@ -92,7 +92,7 @@ let mockTxClient: MockTransactionalClient;
 
 jest.mock("@/lib/prisma/extended", () => ({
   prisma: {
-    $transaction: jest.fn(async (callback: (tx: any) => Promise<any>) => {
+    $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
       const snapshot = {
         taskCreated: mockTxClient.taskCreated,
         taskUpdated: mockTxClient.taskUpdated,
@@ -122,7 +122,7 @@ jest.mock("@/lib/prisma/extended", () => ({
 
 jest.mock("@/lib/prisma/db", () => ({
   db: {
-    $transaction: jest.fn(async (callback: (tx: any) => Promise<any>) => {
+    $transaction: jest.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
       const snapshot = {
         taskCreated: mockTxClient.taskCreated,
         taskUpdated: mockTxClient.taskUpdated,
@@ -141,7 +141,7 @@ jest.mock("@/lib/prisma/db", () => ({
       findFirst: jest.fn(async () => mockTxClient.task.findFirst({})),
     },
     attachment: {
-      create: jest.fn(async (args: any) => mockTxClient.attachment.create(args)),
+      create: jest.fn(async (args: unknown) => mockTxClient.attachment.create(args as { data: Record<string, unknown> })),
     },
   },
 }));
@@ -150,7 +150,7 @@ import { createTaskInOrg } from "@/lib/tasks/create-task";
 import { updateTaskInOrg } from "@/lib/tasks/update-task";
 import { createAttachment } from "@/app/actions/Tasks/attachments";
 import { recordVectorSyncIntent } from "@/lib/vector/outbox";
-import { VectorEntityType } from "@prisma/client";
+import { VectorEntityType, type Prisma } from "@prisma/client";
 import { dispatchEvent } from "@/lib/events/event-bus";
 import { auth } from "@/lib/auth/auth";
 
@@ -164,7 +164,7 @@ describe("Phase B Remediation Part 1: Mandatory Transactional Outbox Intent Capt
   beforeEach(() => {
     jest.clearAllMocks();
     mockTxClient = new MockTransactionalClient();
-    (mockAuth as any).mockResolvedValue({ user: { id: "user_test_1" } });
+    (mockAuth as unknown as jest.Mock).mockResolvedValue({ user: { id: "user_test_1" } });
   });
 
   // ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ describe("Phase B Remediation Part 1: Mandatory Transactional Outbox Intent Capt
 
     // 1. Task was created in tx
     expect(mockTxClient.taskCreated).not.toBeNull();
-    expect(mockTxClient.taskCreated.title).toBe("Deploy V2 Engine");
+    expect(mockTxClient.taskCreated?.title).toBe("Deploy V2 Engine");
 
     // 2. Vector intent was recorded in tx via raw SQL
     const headUpsert = mockTxClient.rawQueries.some((q) => q.includes("VectorEntityHead"));
@@ -246,7 +246,7 @@ describe("Phase B Remediation Part 1: Mandatory Transactional Outbox Intent Capt
 
     // 1. Task updated in tx
     expect(mockTxClient.taskUpdated).not.toBeNull();
-    expect(mockTxClient.taskUpdated.title).toBe("Updated Title for Task");
+    expect(mockTxClient.taskUpdated?.title).toBe("Updated Title for Task");
 
     // 2. Raw SQL recorded intent for Task AND for child attachment (due to title change)
     const outboxQueries = mockTxClient.rawQueries.filter((q) => q.includes("VectorOutboxEvent"));
@@ -343,7 +343,7 @@ describe("Phase B Remediation Part 1: Mandatory Transactional Outbox Intent Capt
   // 4. No Mock-Detection Fallback
   // ---------------------------------------------------------------------------
   it("recordVectorSyncIntent fails immediately if tx.$queryRaw is missing (no fabricated mock fallback)", async () => {
-    const brokenTx = {} as any; // No $queryRaw function
+    const brokenTx = {} as unknown as Prisma.TransactionClient; // No $queryRaw function
 
     await expect(
       recordVectorSyncIntent({

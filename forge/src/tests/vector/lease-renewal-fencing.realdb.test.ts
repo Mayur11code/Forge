@@ -14,7 +14,7 @@ jest.mock("server-only", () => ({}));
 
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient, VectorEntityType } from "@prisma/client";
+import { PrismaClient, VectorEntityType, type Prisma } from "@prisma/client";
 import { renewEventLogLease } from "@/lib/events/worker";
 import {
   reserveGeneration,
@@ -186,7 +186,7 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
       contractVersion: "v2",
       expectedChunkCount: 1,
       leaseDurationSeconds: 60,
-      tx: testClient1 as any,
+      tx: testClient1 as unknown as Prisma.TransactionClient,
     });
 
     expect(reservation.claimToken).toBeDefined();
@@ -204,7 +204,7 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
       generationId: reservation.generation.id,
       claimToken: reservation.claimToken,
       extensionSeconds: 300,
-      tx: testClient1 as any,
+      tx: testClient1 as unknown as Prisma.TransactionClient,
     });
     expect(genRenewed.id).toBe(reservation.generation.id);
 
@@ -263,7 +263,7 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
       contractVersion: "v2",
       expectedChunkCount: 1,
       leaseDurationSeconds: 60,
-      tx: testClient1 as any,
+      tx: testClient1 as unknown as Prisma.TransactionClient,
     });
 
     // Insert EventLog with expired lease
@@ -322,7 +322,7 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
         generationId: reservation.generation.id,
         claimToken: "wrong_tampered_token",
         extensionSeconds: 300,
-        tx: testClient1 as any,
+        tx: testClient1 as unknown as Prisma.TransactionClient,
       })
     ).rejects.toThrow(OwnershipTokenMismatchError);
 
@@ -333,7 +333,7 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
         claimToken: reservation.claimToken,
         writtenChunkCount: 1,
       },
-      tx: testClient1 as any,
+      tx: testClient1 as unknown as Prisma.TransactionClient,
     });
 
     // 7. Stale worker tries to activate generation using wrong claimToken -> throws OwnershipTokenMismatchError
@@ -343,7 +343,7 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
         generationId: reservation.generation.id,
         claimToken: "wrong_tampered_token",
         expectedSourceVersion: validSourceVersionB,
-        tx: testClient1 as any,
+        tx: testClient1 as unknown as Prisma.TransactionClient,
       })
     ).rejects.toThrow(OwnershipTokenMismatchError);
   });

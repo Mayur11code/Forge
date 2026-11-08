@@ -156,7 +156,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
   // GROUP B: Missing and Malformed Vector Values (16 subcases)
   // ===========================================================================
   describe("Group B: Missing and Malformed Vector Values (Strict Dimension Validation)", () => {
-    const runDimensionTest = async (valuesModifier: (record: any) => any) => {
+    const runDimensionTest = async (valuesModifier: (record: { values?: unknown }) => void) => {
       const badRecord0 = JSON.parse(JSON.stringify(validRecord0));
       valuesModifier(badRecord0);
 
@@ -220,49 +220,52 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
     it("rejects numeric strings in vector values", async () => {
       await runDimensionTest((r) => {
         r.values = makeValidVector();
-        r.values[50] = "0.05" as any;
+        (r.values as unknown[])[50] = "0.05";
       });
     });
 
     it("rejects null entries in vector values", async () => {
       await runDimensionTest((r) => {
         r.values = makeValidVector();
-        r.values[100] = null as any;
+        (r.values as unknown[])[100] = null;
       });
     });
 
     it("rejects boolean entries in vector values", async () => {
       await runDimensionTest((r) => {
         r.values = makeValidVector();
-        r.values[200] = true as any;
+        (r.values as unknown[])[200] = true;
       });
     });
 
     it("rejects object entries in vector values", async () => {
       await runDimensionTest((r) => {
         r.values = makeValidVector();
-        r.values[300] = { nested: 1 } as any;
+        (r.values as unknown[])[300] = { nested: 1 };
       });
     });
 
     it("rejects NaN entries in vector values", async () => {
       await runDimensionTest((r) => {
-        r.values = makeValidVector();
-        r.values[400] = NaN;
+        const v = makeValidVector();
+        v[400] = NaN;
+        r.values = v;
       });
     });
 
     it("rejects positive Infinity entries in vector values", async () => {
       await runDimensionTest((r) => {
-        r.values = makeValidVector();
-        r.values[500] = Infinity;
+        const v = makeValidVector();
+        v[500] = Infinity;
+        r.values = v;
       });
     });
 
     it("rejects negative Infinity entries in vector values", async () => {
       await runDimensionTest((r) => {
-        r.values = makeValidVector();
-        r.values[600] = -Infinity;
+        const v = makeValidVector();
+        v[600] = -Infinity;
+        r.values = v;
       });
     });
 
@@ -279,7 +282,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
   // GROUP C: Metadata and Tenancy (11 subcases)
   // ===========================================================================
   describe("Group C: Metadata and Tenancy Strict Validation", () => {
-    const runMetadataTest = async (metadataModifier: (meta: any) => void) => {
+    const runMetadataTest = async (metadataModifier: (meta: Record<string, unknown>) => void) => {
       const badRecord0 = JSON.parse(JSON.stringify(validRecord0));
       metadataModifier(badRecord0.metadata);
 
@@ -345,7 +348,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
     });
 
     it("rejects when chunkIndex is a string instead of number (no coercion allowed)", async () => {
-      await runMetadataTest((m) => (m.chunkIndex = "0" as any));
+      await runMetadataTest((m) => { m.chunkIndex = "0" as unknown as number; });
     });
 
     it("rejects when text metadata is empty or missing", async () => {
@@ -511,7 +514,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
     it("rejects when record ID is explicitly undefined (Correction A)", async () => {
       const corruptedRecord0 = {
         ...validRecord0,
-        id: undefined as any,
+        id: undefined as unknown as string,
       };
 
       const mockFetcher = jest.fn().mockResolvedValue({
@@ -542,7 +545,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
     it("rejects when record ID is a non-string number (Correction A)", async () => {
       const corruptedRecord0 = {
         ...validRecord0,
-        id: 12345 as any,
+        id: 12345 as unknown as string,
       };
 
       const mockFetcher = jest.fn().mockResolvedValue({
@@ -573,7 +576,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
     it("rejects when record ID is non-string null (Correction A)", async () => {
       const corruptedRecord0 = {
         ...validRecord0,
-        id: null as any,
+        id: null as unknown as string,
       };
 
       const mockFetcher = jest.fn().mockResolvedValue({
@@ -719,7 +722,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
     it("rejects when record object is null or not an object", async () => {
       const mockFetcher = jest.fn().mockResolvedValue({
         records: {
-          [id0]: null as any,
+          [id0]: null as unknown as { id: string },
           [id1]: validRecord1,
         },
       });
@@ -949,7 +952,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
         entityId,
         sourceRevision,
         expectedChunkCount: chunkCount,
-        expectedManifestDigest: undefined as any,
+        expectedManifestDigest: undefined as unknown as string,
         maxBudgetMs: 1000,
         fetcher: mockFetcher,
       });
@@ -977,7 +980,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
         entityId,
         sourceRevision,
         expectedChunkCount: chunkCount,
-        expectedManifestDigest: null as any,
+        expectedManifestDigest: null as unknown as string,
         maxBudgetMs: 1000,
         fetcher: mockFetcher,
       });
@@ -1442,7 +1445,7 @@ describe("Vector V2 Phase B — Part 4: Strict Physical Read-Back Hardening (E2 
         status: "WRITTEN",
       });
 
-      (prisma as any).task = {
+      (prisma as unknown as { task: unknown }).task = {
         findFirst: jest.fn().mockResolvedValue({
           id: workerTaskId,
           title: "Production Worker Part 4 Task",

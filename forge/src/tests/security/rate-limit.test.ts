@@ -4,7 +4,7 @@
 // Tests sliding-window request limiting, token-bucket AI admission control, multi-limiter scoping,
 // fail-closed Redis error/timeout handling, non-mutating status queries, and client IP extraction.
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+import type { Redis } from "@upstash/redis";
 jest.mock("server-only", () => ({}));
 jest.mock("@/lib/redis/client", () => ({
   redis: {
@@ -87,7 +87,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const customRedis = {
         evalsha: jest.fn().mockResolvedValue([9, 10]),
         eval: jest.fn().mockResolvedValue([9, 10]),
-      } as any;
+      } as unknown as Redis;
 
       const result = await checkRateLimit({
         policy: mockPolicy,
@@ -108,7 +108,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const customRedis = {
         evalsha: jest.fn().mockResolvedValue([-1, 10]),
         eval: jest.fn().mockResolvedValue([-1, 10]),
-      } as any;
+      } as unknown as Redis;
 
       const mockPolicy: RateLimitPolicyConfig = {
         name: "TEST_TASK_CREATE",
@@ -161,13 +161,13 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const resultOrgA = await checkRateLimit({
         policy,
         orgId: "org_exhausted",
-        redis: { evalsha: mockEvalOrgA, eval: mockEvalOrgA } as any,
+        redis: { evalsha: mockEvalOrgA, eval: mockEvalOrgA } as unknown as Redis,
       });
 
       const resultOrgB = await checkRateLimit({
         policy,
         orgId: "org_healthy",
-        redis: { evalsha: mockEvalOrgB, eval: mockEvalOrgB } as any,
+        redis: { evalsha: mockEvalOrgB, eval: mockEvalOrgB } as unknown as Redis,
       });
 
       expect(resultOrgA.allowed).toBe(false);
@@ -186,7 +186,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockRedisSuccess = {
         evalsha: jest.fn().mockResolvedValue([4, resetTime, 5]),
         eval: jest.fn().mockResolvedValue([4, resetTime, 5]),
-      } as any;
+      } as unknown as Redis;
 
       const result = await checkRateLimit({
         policy: RATE_LIMIT_POLICIES.AI_ADMISSION_AGENT_INIT,
@@ -206,7 +206,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockRedisExhausted = {
         evalsha: jest.fn().mockResolvedValue([-1, resetTime, 5]),
         eval: jest.fn().mockResolvedValue([-1, resetTime, 5]),
-      } as any;
+      } as unknown as Redis;
 
       const result = await checkRateLimit({
         policy: RATE_LIMIT_POLICIES.AI_ADMISSION_AGENT_INIT,
@@ -241,7 +241,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockRedis = {
         evalsha: mockEval,
         eval: mockEval,
-      } as any;
+      } as unknown as Redis;
 
       const result = await checkRateLimit({
         policy: RATE_LIMIT_POLICIES.AI_ADMISSION_AGENT_INIT,
@@ -262,7 +262,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockRedisError = {
         evalsha: jest.fn().mockRejectedValue(new Error("ECONNREFUSED: Redis cluster unreachable")),
         eval: jest.fn().mockRejectedValue(new Error("ECONNREFUSED: Redis cluster unreachable")),
-      } as any;
+      } as unknown as Redis;
 
       const result = await checkRateLimit({
         policy: RATE_LIMIT_POLICIES.AI_ADMISSION_AGENT_INIT,
@@ -285,7 +285,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockTimeoutRedis = {
         evalsha: jest.fn().mockImplementation(() => new Promise(() => {})), // never resolves
         eval: jest.fn().mockImplementation(() => new Promise(() => {})),
-      } as any;
+      } as unknown as Redis;
 
       const policy: RateLimitPolicyConfig = {
         name: "TEST_AI_TIMEOUT",
@@ -311,7 +311,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
         }),
       };
 
-      jest.spyOn(getOrCreateRatelimit as any, "call").mockReturnValue(testLimiter);
+      jest.spyOn(getOrCreateRatelimit as unknown as { call: (t: unknown, ...a: unknown[]) => unknown }, "call").mockReturnValue(testLimiter);
 
       const result = await checkRateLimit({
         policy,
@@ -329,7 +329,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockRedisError = {
         evalsha: jest.fn().mockRejectedValue(new Error("Redis connection timed out")),
         eval: jest.fn().mockRejectedValue(new Error("Redis connection timed out")),
-      } as any;
+      } as unknown as Redis;
 
       const result = await checkRateLimit({
         policy: RATE_LIMIT_POLICIES.REQUEST_TASK_CREATE,
@@ -351,7 +351,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockRedis = {
         evalsha: mockGetRemaining,
         eval: mockGetRemaining,
-      } as any;
+      } as unknown as Redis;
 
       const status = await getRateLimitStatus({
         policy: RATE_LIMIT_POLICIES.AI_ADMISSION_AGENT_INIT,
@@ -370,7 +370,7 @@ describe("Production Hardening H3 — Distributed Rate Limiting & AI Admission C
       const mockRedis = {
         evalsha: jest.fn().mockRejectedValue(new Error("Redis down")),
         eval: jest.fn().mockRejectedValue(new Error("Redis down")),
-      } as any;
+      } as unknown as Redis;
 
       const status = await getRateLimitStatus({
         policy: RATE_LIMIT_POLICIES.AI_ADMISSION_AGENT_INIT,

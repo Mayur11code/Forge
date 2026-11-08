@@ -42,8 +42,16 @@ jest.mock("@/lib/events/queue", () => ({
 
 // Mock DB with $extends hook so extended.ts can be tested directly
 jest.mock("@/lib/prisma/db", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mockDb: any = {
+  const mockTask = {
+    findUnique: jest.fn(),
+    findFirst: jest.fn(),
+    delete: jest.fn(),
+  };
+  const mockProject = {
+    findUnique: jest.fn(),
+    delete: jest.fn(),
+  };
+  const mockDb: Record<string, unknown> = {
     attachment: {
       findFirst: jest.fn(),
       delete: jest.fn(),
@@ -51,15 +59,8 @@ jest.mock("@/lib/prisma/db", () => {
     organization: {
       update: jest.fn(),
     },
-    project: {
-      findUnique: jest.fn(),
-      delete: jest.fn(),
-    },
-    task: {
-      findUnique: jest.fn(),
-      findFirst: jest.fn(),
-      delete: jest.fn(),
-    },
+    project: mockProject,
+    task: mockTask,
     domainOutboxEvent: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -69,7 +70,7 @@ jest.mock("@/lib/prisma/db", () => {
       findMany: jest.fn(),
     },
     vectorEntityHead: {
-      upsert: jest.fn().mockImplementation((args: any) =>
+      upsert: jest.fn().mockImplementation((args: { create?: { orgId?: string; entityType?: string; entityId?: string } }) =>
         Promise.resolve({
           id: "head_test_1",
           orgId: args.create?.orgId ?? "test_org",
@@ -101,19 +102,16 @@ jest.mock("@/lib/prisma/db", () => {
     $executeRaw: jest.fn().mockResolvedValue(1),
     $queryRaw: jest.fn().mockResolvedValue([{ id: "test_id" }]),
     $transaction: jest.fn(),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    $extends: jest.fn((ext: any) => ({
+    $extends: jest.fn((ext: { query: { task: { delete: (p: unknown) => unknown }; project: { delete: (p: unknown) => unknown } } }) => ({
       ...mockDb,
       _extensions: ext,
       task: {
-        ...mockDb.task,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        delete: (args: any) => ext.query.task.delete({ args, query: mockDb.task.delete }),
+        ...mockTask,
+        delete: (args: unknown) => ext.query.task.delete({ args, query: mockTask.delete }),
       },
       project: {
-        ...mockDb.project,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        delete: (args: any) => ext.query.project.delete({ args, query: mockDb.project.delete }),
+        ...mockProject,
+        delete: (args: unknown) => ext.query.project.delete({ args, query: mockProject.delete }),
       },
     })),
   };

@@ -13,7 +13,7 @@ import {
   markVectorOutboxDispatched,
   completeVectorOutboxEvent,
 } from "@/lib/vector/outbox";
-import { VectorEntityType, VectorOutboxStatus } from "@prisma/client";
+import { VectorEntityType, VectorOutboxStatus, type Prisma } from "@prisma/client";
 
 describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite)", () => {
   describe("Canonical Content Hashing", () => {
@@ -104,7 +104,7 @@ describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite
           .mockResolvedValueOnce([{ id: "head_123", latestRevision: 4 }])
           // 2nd query: VectorOutboxEvent insert or coalesce
           .mockResolvedValueOnce([{ id: "outbox_456" }]),
-      } as any;
+      } as unknown as Prisma.TransactionClient;
 
       const result = await recordVectorSyncIntent({
         tx: mockTx,
@@ -125,7 +125,7 @@ describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite
     it("throws when VectorEntityHead upsert fails to return rows", async () => {
       const mockTx = {
         $queryRaw: jest.fn().mockResolvedValueOnce([]),
-      } as any;
+      } as unknown as Prisma.TransactionClient;
 
       await expect(
         recordVectorSyncIntent({
@@ -144,7 +144,7 @@ describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite
           .fn()
           .mockResolvedValueOnce([{ id: "head_123", latestRevision: 1 }])
           .mockResolvedValueOnce([]),
-      } as any;
+      } as unknown as Prisma.TransactionClient;
 
       await expect(
         recordVectorSyncIntent({
@@ -174,7 +174,7 @@ describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite
             dispatchClaimToken: "token_abc",
           },
         ]),
-      } as any;
+      } as unknown as Prisma.TransactionClient;
 
       const claimed = await claimVectorOutboxBatch({
         db: mockDb,
@@ -192,7 +192,7 @@ describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite
     it("marks outbox event DISPATCHED via compare-and-swap on claimToken", async () => {
       const mockDb = {
         $queryRaw: jest.fn().mockResolvedValueOnce([{ id: "outbox_1", status: VectorOutboxStatus.DISPATCHED }]),
-      } as any;
+      } as unknown as Prisma.TransactionClient;
 
       const result = await markVectorOutboxDispatched({
         db: mockDb,
@@ -210,7 +210,7 @@ describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite
           .fn()
           .mockResolvedValueOnce([]) // CAS returned 0 rows
           .mockResolvedValueOnce([{ status: VectorOutboxStatus.CLAIMED }]), // current row status is still CLAIMED
-      } as any;
+      } as unknown as Prisma.TransactionClient;
 
       const result = await markVectorOutboxDispatched({
         db: mockDb,
@@ -225,7 +225,7 @@ describe("Vector V2 Phase B: PR-1 Outbox Intent & Content Hashing (E2 Unit Suite
     it("completes outbox event by setting status to COMPLETED and clearing claimToken", async () => {
       const mockDb = {
         $queryRaw: jest.fn().mockResolvedValueOnce([{ id: "outbox_1" }]),
-      } as any;
+      } as unknown as Prisma.TransactionClient;
 
       const success = await completeVectorOutboxEvent({
         db: mockDb,

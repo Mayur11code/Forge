@@ -145,12 +145,11 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
         )
         RETURNING "id";
       `;
-    } catch (err: any) {
+    } catch (err: unknown) {
       hitIndexConstraint =
         String(err).includes("unique constraint") ||
         String(err).includes("EventLog_outbox_active_idx") ||
-        err?.code === "23505" ||
-        err?.code === "P2002";
+        (err as { code?: unknown })?.code === "23505" || (err as { code?: unknown })?.code === "P2002";
     }
 
     expect(hitIndexConstraint).toBe(true);
@@ -252,12 +251,11 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
         )
         RETURNING "id";
       `;
-    } catch (err: any) {
+    } catch (err: unknown) {
       hitIndexConstraint =
         String(err).includes("unique constraint") ||
         String(err).includes("EventLog_outbox_active_idx") ||
-        err?.code === "23505" ||
-        err?.code === "P2002";
+        (err as { code?: unknown })?.code === "23505" || (err as { code?: unknown })?.code === "P2002";
     }
 
     expect(hitIndexConstraint).toBe(true);
@@ -293,7 +291,7 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
           RETURNING "id";
         `;
         return { success: res.length > 0, error: null };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return { success: false, error: err };
       }
     };
@@ -314,8 +312,8 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
     expect(
       String(loser.error).includes("unique constraint") ||
       String(loser.error).includes("EventLog_outbox_active_idx") ||
-      loser.error?.code === "23505" ||
-      loser.error?.code === "P2002"
+      (loser.error as { code?: unknown })?.code === "23505" ||
+      (loser.error as { code?: unknown })?.code === "P2002"
     ).toBe(true);
   });
 });

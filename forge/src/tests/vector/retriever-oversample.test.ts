@@ -8,13 +8,13 @@ const mockAttachmentFindMany = jest.fn();
 jest.mock("@/lib/prisma/db", () => ({
   db: {
     vectorEntityHead: {
-      findMany: (...args: any[]) => mockVectorEntityHeadFindMany(...args),
+      findMany: (...args: unknown[]) => mockVectorEntityHeadFindMany(...args),
     },
     task: {
-      findMany: (...args: any[]) => mockTaskFindMany(...args),
+      findMany: (...args: unknown[]) => mockTaskFindMany(...args),
     },
     attachment: {
-      findMany: (...args: any[]) => mockAttachmentFindMany(...args),
+      findMany: (...args: unknown[]) => mockAttachmentFindMany(...args),
     },
   },
 }));

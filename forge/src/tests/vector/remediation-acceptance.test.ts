@@ -13,28 +13,28 @@
 jest.mock("server-only", () => ({}));
 
 jest.mock("@/lib/prisma/db", () => {
-  const localDb: any = {
+  const localDb: Record<string, unknown> = {
     $executeRaw: jest.fn(),
     $queryRaw: jest.fn(),
     task: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
     attachment: { findMany: jest.fn(), create: jest.fn() },
-    $transaction: jest.fn(async (cb: any) => cb(localDb)),
+    $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(localDb)),
   };
   return { db: localDb };
 });
 
 jest.mock("@/lib/prisma/extended", () => {
-  const localDb: any = {
+  const localDb: Record<string, unknown> = {
     $executeRaw: jest.fn(),
     $queryRaw: jest.fn(),
     task: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
     attachment: { findMany: jest.fn(), create: jest.fn() },
-    $transaction: jest.fn(async (cb: any) => cb(localDb)),
+    $transaction: jest.fn(async (cb: (tx: unknown) => unknown) => cb(localDb)),
   };
   return { prisma: localDb };
 });
 
-import { VectorEntityType } from "@prisma/client";
+import { VectorEntityType, type PrismaClient } from "@prisma/client";
 import { verifyPhysicalPersistence } from "@/lib/vector/client";
 import { buildVectorId, computeManifestDigest } from "@/lib/vector/schema";
 import {
@@ -135,7 +135,7 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
       });
 
       expect(res.verified).toBe(false);
-      expect((res as any).reason).toBe("METADATA_MISMATCH");
+      expect((res as { reason?: string }).reason).toBe("METADATA_MISMATCH");
     });
 
     it("fails closed with METADATA_MISMATCH when chunkCount is missing/undefined in vector metadata", async () => {
@@ -172,7 +172,7 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
       });
 
       expect(res.verified).toBe(false);
-      expect((res as any).reason).toBe("METADATA_MISMATCH");
+      expect((res as { reason?: string }).reason).toBe("METADATA_MISMATCH");
     });
 
     it("fails closed with METADATA_MISMATCH when vector dimension != 768 or contains NaN", async () => {
@@ -212,7 +212,7 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
       });
 
       expect(res.verified).toBe(false);
-      expect((res as any).reason).toBe("DIMENSION_MISMATCH");
+      expect((res as { reason?: string }).reason).toBe("DIMENSION_MISMATCH");
     });
 
     it("enforces maxBudgetMs timeout deadline and returns TIMEOUT_BUDGET_EXCEEDED on exhaustion", async () => {
@@ -230,7 +230,7 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
       });
 
       expect(res.verified).toBe(false);
-      expect((res as any).reason).toBe("TIMEOUT_BUDGET_EXCEEDED");
+      expect((res as { reason?: string }).reason).toBe("TIMEOUT_BUDGET_EXCEEDED");
     });
   });
 
@@ -264,7 +264,7 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
           },
         ]);
 
-      const mockDbLocal = { $queryRaw: queryRawMock } as any;
+      const mockDbLocal = { $queryRaw: queryRawMock } as unknown as PrismaClient;
 
       const res = await handleVectorOutboxPublishFailure({
         db: mockDbLocal,
@@ -303,7 +303,7 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
           },
         ]);
 
-      const mockDbLocal = { $queryRaw: queryRawMock } as any;
+      const mockDbLocal = { $queryRaw: queryRawMock } as unknown as PrismaClient;
 
       const res = await handleVectorOutboxPublishFailure({
         db: mockDbLocal,
@@ -338,7 +338,7 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
         // 3. Update queryRaw setting status = FAILED with supersession error
         .mockResolvedValueOnce([{ id: outboxId }]);
 
-      const mockDbLocal = { $queryRaw: queryRawMock } as any;
+      const mockDbLocal = { $queryRaw: queryRawMock } as unknown as PrismaClient;
 
       const res = await handleVectorOutboxPublishFailure({
         db: mockDbLocal,

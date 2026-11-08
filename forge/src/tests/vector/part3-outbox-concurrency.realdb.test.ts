@@ -396,9 +396,9 @@ describeRealDb("Forge Vector V2 — Phase B: Real PostgreSQL Concurrency & Forwa
           ${logId2}, ${'msg_2_' + RUN_ID}, ${outboxId}, 'TASK_CREATED', 'PENDING'::"EventStatus", clock_timestamp(), clock_timestamp()
         );
       `;
-    } catch (err: any) {
+    } catch (err: unknown) {
       duplicatePendingFailed = true;
-      expect(err.message).toMatch(/EventLog_outbox_active_idx|unique constraint|23505/i);
+      expect((err as Error).message).toMatch(/EventLog_outbox_active_idx|unique constraint|23505/i);
     }
     expect(duplicatePendingFailed).toBe(true);
 
@@ -420,9 +420,9 @@ describeRealDb("Forge Vector V2 — Phase B: Real PostgreSQL Concurrency & Forwa
           ${logId3}, ${'msg_3_' + RUN_ID}, ${outboxId}, 'TASK_CREATED', 'PENDING'::"EventStatus", clock_timestamp(), clock_timestamp()
         );
       `;
-    } catch (err: any) {
+    } catch (err: unknown) {
       duplicateAfterSuccessFailed = true;
-      expect(err.message).toMatch(/EventLog_outbox_active_idx|unique constraint|23505/i);
+      expect((err as Error).message).toMatch(/EventLog_outbox_active_idx|unique constraint|23505/i);
     }
     expect(duplicateAfterSuccessFailed).toBe(true);
 

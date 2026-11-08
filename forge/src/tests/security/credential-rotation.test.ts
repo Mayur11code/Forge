@@ -454,16 +454,16 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
       });
 
       const keyAttempts: string[] = [];
-      (receiver as any).verifyWithKey = async (key: string) => {
+      (receiver as unknown as { verifyWithKey: unknown; verifyBodyAndUrl: unknown }).verifyWithKey = async (key: string) => {
         keyAttempts.push(key);
         if (key === "current-valid-sig-key") {
           return { sub: "test-valid" };
         }
         throw new Error("Invalid signature");
       };
-      (receiver as any).verifyBodyAndUrl = () => true;
+      (receiver as unknown as { verifyWithKey: unknown; verifyBodyAndUrl: unknown }).verifyBodyAndUrl = () => true;
 
-      const result = await receiver.verify({ upstashRegion: "us-east-1" } as any);
+      const result = await receiver.verify({ upstashRegion: "us-east-1" } as unknown as Parameters<typeof receiver.verify>[0]);
       expect(result).toBe(true);
       expect(keyAttempts).toEqual(["current-valid-sig-key"]);
     });
@@ -475,16 +475,16 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
       });
 
       const keyAttempts: string[] = [];
-      (receiver as any).verifyWithKey = async (key: string) => {
+      (receiver as unknown as { verifyWithKey: unknown; verifyBodyAndUrl: unknown }).verifyWithKey = async (key: string) => {
         keyAttempts.push(key);
         if (key === "new-promoted-sig-key") {
           return { sub: "test-valid-on-next" };
         }
         throw new Error("Invalid signature on key: " + key);
       };
-      (receiver as any).verifyBodyAndUrl = () => true;
+      (receiver as unknown as { verifyWithKey: unknown; verifyBodyAndUrl: unknown }).verifyBodyAndUrl = () => true;
 
-      const result = await receiver.verify({ upstashRegion: "us-east-1" } as any);
+      const result = await receiver.verify({ upstashRegion: "us-east-1" } as unknown as Parameters<typeof receiver.verify>[0]);
       expect(result).toBe(true);
       expect(keyAttempts).toEqual(["old-rotated-sig-key", "new-promoted-sig-key"]);
     });
@@ -495,12 +495,12 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
         nextSigningKey: "invalid-key-2",
       });
 
-      (receiver as any).verifyWithKey = async () => {
+      (receiver as unknown as { verifyWithKey: unknown; verifyBodyAndUrl: unknown }).verifyWithKey = async () => {
         throw new Error("Signature verification failed");
       };
-      (receiver as any).verifyBodyAndUrl = () => true;
+      (receiver as unknown as { verifyWithKey: unknown; verifyBodyAndUrl: unknown }).verifyBodyAndUrl = () => true;
 
-      await expect(receiver.verify({ upstashRegion: "us-east-1" } as any)).rejects.toThrow(
+      await expect(receiver.verify({ upstashRegion: "us-east-1" } as unknown as Parameters<typeof receiver.verify>[0])).rejects.toThrow(
         "Signature verification failed"
       );
     });
@@ -511,11 +511,11 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
       try {
         // Even when explicitly requested, production refuses unsigned workers
         process.env.ALLOW_UNSIGNED_LOCAL_WORKER = "true";
-        (process.env as any).NODE_ENV = "production";
+        (process.env as Record<string, string | undefined>).NODE_ENV = "production";
         expect(isUnsignedWorkerAllowed()).toBe(false);
 
         // Outside production, explicit opt-in is respected
-        (process.env as any).NODE_ENV = "development";
+        (process.env as Record<string, string | undefined>).NODE_ENV = "development";
         expect(isUnsignedWorkerAllowed()).toBe(true);
 
         // Outside production without explicit flag, unsigned workers are refused
@@ -554,7 +554,7 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
       };
 
       const wrapped = Object.create(primaryModel);
-      wrapped.doGenerate = async function (options: any) {
+      wrapped.doGenerate = async function (options: unknown) {
         try {
           return await primaryModel.doGenerate(options);
         } catch (err) {
@@ -610,7 +610,7 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
         };
 
         const wrapped = Object.create(primaryModel);
-        wrapped.doGenerate = async function (options: any) {
+        wrapped.doGenerate = async function (options: unknown) {
           try {
             return await primaryModel.doGenerate(options);
           } catch (err) {
@@ -653,7 +653,7 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
       const fallbackModel = { doGenerate: fallbackDoGenerate };
 
       const wrapped = Object.create(primaryModel);
-      wrapped.doGenerate = async function (options: any) {
+      wrapped.doGenerate = async function (options: unknown) {
         try {
           return await primaryModel.doGenerate(options);
         } catch (err) {
@@ -685,7 +685,7 @@ describe("Production Hardening H2 — Zero-Downtime Credential Rotation", () => 
       const primaryNs = { query: primaryQuery };
       const fallbackNs = { query: fallbackQuery };
 
-      async function executeWithFailover(operation: string, action: (ns: any) => Promise<any>) {
+      async function executeWithFailover(operation: string, action: (ns: typeof primaryNs) => Promise<unknown>) {
         try {
           return await action(primaryNs);
         } catch (err) {
