@@ -185,7 +185,7 @@ export interface VerifyPersistenceParams {
   entityId: string;
   sourceRevision: number;
   expectedChunkCount: number;
-  expectedManifestDigest?: string;
+  expectedManifestDigest: string;
   maxBudgetMs?: number;
   initialDelayMs?: number;
   maxDelayMs?: number;
@@ -232,12 +232,30 @@ export async function verifyPhysicalPersistence({
   sourceRevision,
   expectedChunkCount,
   expectedManifestDigest,
-  maxBudgetMs = 15000,
+  maxBudgetMs = 5000,
   initialDelayMs = 200,
   maxDelayMs = 2000,
   perRequestTimeoutMs = 5000,
   fetcher,
 }: VerifyPersistenceParams): Promise<VerifyPersistenceResult> {
+  // Correction B: Validate expectedManifestDigest before performing provider read-back
+  const sha256Regex = /^[a-f0-9]{64}$/;
+  if (
+    typeof expectedManifestDigest !== "string" ||
+    expectedManifestDigest.trim() === "" ||
+    !sha256Regex.test(expectedManifestDigest.trim())
+  ) {
+    return {
+      verified: false,
+      reason: "MANIFEST_DIGEST_MISMATCH",
+      expectedManifestDigest: typeof expectedManifestDigest === "string" ? expectedManifestDigest : String(expectedManifestDigest ?? ""),
+      actualManifestDigest: "",
+      attempts: 0,
+      elapsedMs: 0,
+      detail: "Missing, empty, or malformed expected manifest digest; canonical 64-char lowercase hex SHA-256 required",
+    };
+  }
+
   const expectedIds: string[] = [];
   for (let i = 0; i < expectedChunkCount; i++) {
     expectedIds.push(buildVectorId(entityType, entityId, generationId, i));
@@ -286,21 +304,46 @@ export async function verifyPhysicalPersistence({
 
       const recordsMap = response.records || {};
 
-      const missing = expectedIds.filter((id) => !recordsMap[id]);
+      // If fetch settled after deadline expired, fail closed immediately
+      if (performance.now() - startTime >= maxBudgetMs) {
+        return {
+          verified: false,
+          reason: "TIMEOUT_BUDGET_EXCEEDED",
+          missingIds: lastMissingIds,
+          attempts,
+          elapsedMs: Math.round(performance.now() - startTime),
+        };
+      }
+
+      const missing = expectedIds.filter(
+        (id) => !(id in recordsMap) || recordsMap[id] === undefined
+      );
       lastMissingIds = missing;
 
       if (missing.length === 0) {
-        if (Object.keys(recordsMap).length !== expectedChunkCount) {
+        const recordKeys = Object.keys(recordsMap);
+        if (recordKeys.length !== expectedChunkCount) {
           return {
             verified: false,
             reason: "CORRUPTED_ID",
             attempts,
             elapsedMs: Math.round(performance.now() - startTime),
-            detail: `Expected ${expectedChunkCount} records, got ${Object.keys(recordsMap).length}`,
+            detail: `Expected ${expectedChunkCount} records, got ${recordKeys.length}`,
           };
         }
 
-        // All expected records returned. Validate metadata and dimensions.
+        const unexpectedKeys = recordKeys.filter((k) => !expectedIds.includes(k));
+        if (unexpectedKeys.length > 0) {
+          return {
+            verified: false,
+            reason: "CORRUPTED_ID",
+            attempts,
+            elapsedMs: Math.round(performance.now() - startTime),
+            detail: `Unexpected record IDs in response: ${unexpectedKeys.join(", ")}`,
+          };
+        }
+
+        // All expected records returned. Validate identity, metadata, dimensions, and finite numeric values.
         const fetchedChunks: Array<{
           chunkIndex: number;
           id: string;
@@ -314,16 +357,58 @@ export async function verifyPhysicalPersistence({
         for (let i = 0; i < expectedChunkCount; i++) {
           const id = expectedIds[i];
           const rec = recordsMap[id];
-          const meta = rec.metadata ?? {};
 
-          const parsed = parseVectorId(id);
-          if (!parsed) {
+          if (!rec || typeof rec !== "object") {
             failureResult = {
               verified: false,
               reason: "CORRUPTED_ID",
               attempts,
               elapsedMs: Math.round(performance.now() - startTime),
-              detail: `Failed to parse vector ID ${id}`,
+              detail: `Record ${id} is not an object`,
+            };
+            metadataValid = false;
+            break;
+          }
+
+          if (typeof rec.id !== "string" || rec.id !== id) {
+            failureResult = {
+              verified: false,
+              reason: "CORRUPTED_ID",
+              attempts,
+              elapsedMs: Math.round(performance.now() - startTime),
+              detail: `Record ID property mismatch or missing: expected ${id}, got ${rec.id}`,
+            };
+            metadataValid = false;
+            break;
+          }
+
+          const parsed = parseVectorId(id);
+          if (
+            !parsed ||
+            parsed.chunkIndex !== i ||
+            parsed.generationId !== generationId ||
+            parsed.entityId !== entityId ||
+            parsed.entityType !== entityType
+          ) {
+            failureResult = {
+              verified: false,
+              reason: "CORRUPTED_ID",
+              attempts,
+              elapsedMs: Math.round(performance.now() - startTime),
+              detail: `Failed to parse vector ID or mismatch in parsed ID components for ${id}`,
+            };
+            metadataValid = false;
+            break;
+          }
+
+          const meta = rec.metadata;
+          if (!meta || typeof meta !== "object") {
+            failureResult = {
+              verified: false,
+              reason: "METADATA_MISMATCH",
+              attempts,
+              elapsedMs: Math.round(performance.now() - startTime),
+              detail: `Missing metadata on chunk ${id}`,
             };
             metadataValid = false;
             break;
@@ -333,24 +418,51 @@ export async function verifyPhysicalPersistence({
             meta.contractVersion !== "v2" ||
             meta.generationId !== generationId ||
             meta.sourceRevision !== sourceRevision ||
+            typeof meta.chunkIndex !== "number" ||
             meta.chunkIndex !== i ||
             meta.entityId !== entityId ||
             meta.entityType !== entityType ||
-            (meta.orgId !== undefined && meta.orgId !== orgId) ||
-            (meta.chunkCount !== undefined && meta.chunkCount !== expectedChunkCount)
+            meta.orgId !== orgId ||
+            typeof meta.chunkCount !== "number" ||
+            meta.chunkCount !== expectedChunkCount
           ) {
             failureResult = {
               verified: false,
               reason: "METADATA_MISMATCH",
               attempts,
               elapsedMs: Math.round(performance.now() - startTime),
-              detail: `Metadata mismatch on chunk ${id}: gen=${meta.generationId}, rev=${meta.sourceRevision}`,
+              detail: `Metadata mismatch on chunk ${id}: gen=${meta.generationId}, rev=${meta.sourceRevision}, chunkIndex=${meta.chunkIndex}, orgId=${meta.orgId}`,
             };
             metadataValid = false;
             break;
           }
 
-          if (rec.values && rec.values.length > 0 && rec.values.length !== 768) {
+          if (typeof meta.text !== "string" || meta.text.length === 0) {
+            failureResult = {
+              verified: false,
+              reason: "METADATA_MISMATCH",
+              attempts,
+              elapsedMs: Math.round(performance.now() - startTime),
+              detail: `Missing or invalid text metadata required for manifest reconstruction on chunk ${id}`,
+            };
+            metadataValid = false;
+            break;
+          }
+
+          // Strict Physical Vector Validation (DIMENSION & VALUES)
+          if (!Array.isArray(rec.values)) {
+            failureResult = {
+              verified: false,
+              reason: "DIMENSION_MISMATCH",
+              attempts,
+              elapsedMs: Math.round(performance.now() - startTime),
+              detail: `Vector values missing or not an array on chunk ${id}`,
+            };
+            metadataValid = false;
+            break;
+          }
+
+          if (rec.values.length !== 768) {
             failureResult = {
               verified: false,
               reason: "DIMENSION_MISMATCH",
@@ -358,6 +470,38 @@ export async function verifyPhysicalPersistence({
               elapsedMs: Math.round(performance.now() - startTime),
               detail: `Dimension mismatch on chunk ${id}: expected 768, got ${rec.values.length}`,
             };
+            metadataValid = false;
+            break;
+          }
+
+          let valuesValid = true;
+          for (let d = 0; d < 768; d++) {
+            if (!(d in rec.values)) {
+              failureResult = {
+                verified: false,
+                reason: "DIMENSION_MISMATCH",
+                attempts,
+                elapsedMs: Math.round(performance.now() - startTime),
+                detail: `Sparse array hole at dimension ${d} on chunk ${id}`,
+              };
+              valuesValid = false;
+              break;
+            }
+            const val = rec.values[d];
+            if (typeof val !== "number" || !Number.isFinite(val)) {
+              failureResult = {
+                verified: false,
+                reason: "DIMENSION_MISMATCH",
+                attempts,
+                elapsedMs: Math.round(performance.now() - startTime),
+                detail: `Invalid vector value at dimension ${d} on chunk ${id}: ${typeof val} (${val})`,
+              };
+              valuesValid = false;
+              break;
+            }
+          }
+
+          if (!valuesValid) {
             metadataValid = false;
             break;
           }
@@ -375,7 +519,7 @@ export async function verifyPhysicalPersistence({
         }
 
         const computedDigest = computeManifestDigest(fetchedChunks);
-        if (expectedManifestDigest && computedDigest !== expectedManifestDigest) {
+        if (computedDigest !== expectedManifestDigest.trim()) {
           return {
             verified: false,
             reason: "MANIFEST_DIGEST_MISMATCH",
@@ -383,6 +527,19 @@ export async function verifyPhysicalPersistence({
             actualManifestDigest: computedDigest,
             attempts,
             elapsedMs: Math.round(performance.now() - startTime),
+            detail: `Manifest digest mismatch: expected ${expectedManifestDigest}, got ${computedDigest}`,
+          };
+        }
+
+        const totalElapsed = performance.now() - startTime;
+        if (totalElapsed >= maxBudgetMs) {
+          return {
+            verified: false,
+            reason: "TIMEOUT_BUDGET_EXCEEDED",
+            missingIds: [],
+            attempts,
+            elapsedMs: Math.round(totalElapsed),
+            detail: `Verification exceeded maximum budget of ${maxBudgetMs}ms`,
           };
         }
 
@@ -390,7 +547,7 @@ export async function verifyPhysicalPersistence({
           verified: true,
           manifestDigest: computedDigest,
           chunksFound: expectedChunkCount,
-          readBackLatencyMs: Math.round(performance.now() - startTime),
+          readBackLatencyMs: Math.round(totalElapsed),
           attempts,
         };
       }

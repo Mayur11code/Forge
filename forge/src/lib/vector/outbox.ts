@@ -1,6 +1,7 @@
 import "server-only";
 import crypto from "crypto";
 import { Prisma, VectorEntityType, VectorOutboxStatus } from "@prisma/client";
+export { VectorEntityType, VectorOutboxStatus };
 import { PIPELINE_CONTRACT_VERSION } from "./provenance";
 
 export interface RecordVectorSyncIntentParams {
@@ -139,6 +140,36 @@ export async function claimVectorOutboxBatch({
   return { rows: claimed, claimToken };
 }
 
+export interface RenewOutboxClaimParams {
+  db: Prisma.TransactionClient;
+  outboxEventId: string;
+  dispatchClaimToken: string;
+  extensionSeconds?: number;
+}
+
+/**
+ * Extends the dispatch claim lease on the database clock.
+ * Fails closed if the claim was stolen or lease expired.
+ */
+export async function renewVectorOutboxClaimLease({
+  db,
+  outboxEventId,
+  dispatchClaimToken,
+  extensionSeconds = 60,
+}: RenewOutboxClaimParams): Promise<boolean> {
+  const updated = await db.$queryRaw<Array<{ id: string }>>`
+    UPDATE "VectorOutboxEvent"
+    SET "dispatchLeaseExpiresAt" = clock_timestamp() + (${extensionSeconds} || ' seconds')::interval,
+        "updatedAt" = clock_timestamp()
+    WHERE id = ${outboxEventId}
+      AND "status" = 'CLAIMED'::"VectorOutboxStatus"
+      AND "dispatchClaimToken" = ${dispatchClaimToken}
+      AND "dispatchLeaseExpiresAt" > clock_timestamp()
+    RETURNING id;
+  `;
+  return updated.length > 0;
+}
+
 export interface MarkDispatchedParams {
   db: Prisma.TransactionClient;
   outboxEventId: string;
@@ -152,8 +183,9 @@ export type MarkDispatchedResult =
   | { ok: false; reason: "CLAIM_LOST_OR_EXPIRED" };
 
 /**
- * Compare-And-Set (CAS) transition to DISPATCHED guarded by claimToken.
+ * Compare-And-Set (CAS) transition to DISPATCHED guarded by claimToken and DB-clock lease.
  * Prevents publish-before-mark race from regressing a row already COMPLETED by a fast worker.
+ * Successful publication does not increment failure attempts.
  */
 export async function markVectorOutboxDispatched({
   db,
@@ -166,11 +198,11 @@ export async function markVectorOutboxDispatched({
     SET "status" = 'DISPATCHED'::"VectorOutboxStatus",
         "dispatchLeaseExpiresAt" = clock_timestamp() + (${leaseSeconds} || ' seconds')::interval,
         "lastDispatchedAt" = clock_timestamp(),
-        "dispatchAttempts" = "dispatchAttempts" + 1,
         "updatedAt" = clock_timestamp()
     WHERE id = ${outboxEventId}
       AND "status" = 'CLAIMED'::"VectorOutboxStatus"
       AND "dispatchClaimToken" = ${dispatchClaimToken}
+      AND "dispatchLeaseExpiresAt" > clock_timestamp()
     RETURNING id, "status";
   `;
 
@@ -183,7 +215,7 @@ export async function markVectorOutboxDispatched({
     SELECT "status" FROM "VectorOutboxEvent" WHERE id = ${outboxEventId} LIMIT 1;
   `;
 
-  if (current.length > 0 && current[0].status === "COMPLETED") {
+  if (Array.isArray(current) && current.length > 0 && current[0]?.status === "COMPLETED") {
     return { ok: true, status: "COMPLETED", reason: "ALREADY_COMPLETED_BY_FAST_WORKER" };
   }
 
@@ -197,6 +229,7 @@ export interface CompleteOutboxParams {
 
 /**
  * Marks outbox row COMPLETED inside the activation transaction.
+ * Clears claim token and lease expiration.
  */
 export async function completeVectorOutboxEvent({
   db,
@@ -205,8 +238,11 @@ export async function completeVectorOutboxEvent({
   const updated = await db.$queryRaw<Array<{ id: string }>>`
     UPDATE "VectorOutboxEvent"
     SET "status" = 'COMPLETED'::"VectorOutboxStatus",
+        "dispatchClaimToken" = NULL,
+        "dispatchLeaseExpiresAt" = NULL,
         "updatedAt" = clock_timestamp()
     WHERE id = ${outboxEventId}
+      AND "status" != 'COMPLETED'::"VectorOutboxStatus"
     RETURNING id;
   `;
 
@@ -219,11 +255,174 @@ export interface DispatchVectorOutboxResult {
   failed: number;
 }
 
+export interface HandlePublishFailureParams {
+  db: Prisma.TransactionClient;
+  outboxEventId: string;
+  dispatchClaimToken: string;
+  error: unknown;
+  maxAttempts?: number;
+}
+
+export type HandlePublishFailureResult =
+  | { status: "RETRY_SCHEDULED"; attempts?: number; nextRetryAt?: Date }
+  | { status: "FAILED_TERMINAL"; attempts?: number }
+  | { status: "SUPERSEDED" }
+  | { status: "ALREADY_COMPLETED" }
+  | { status: "CLAIM_LOST"; reason: string };
+
 /**
- * Sweeper batch dispatcher for VectorOutboxEvent.
- * Claims pending or expired outbox events with SKIP LOCKED, publishes to QStash,
- * and marks them DISPATCHED with CAS on claimToken.
+ * Persists dispatcher publish failure, records error, enforces exponential backoff (5s, 10s, 20s, 40s),
+ * and handles supersession when a strictly newer PENDING row already exists (Area C & D).
+ * Fully fenced by claimToken, status, and PostgreSQL clock_timestamp().
  */
+export async function handleVectorOutboxPublishFailure({
+  db,
+  outboxEventId,
+  dispatchClaimToken,
+  error,
+  maxAttempts = 5,
+}: HandlePublishFailureParams): Promise<HandlePublishFailureResult> {
+  const errMsg = error instanceof Error ? error.message : String(error);
+
+  // 1. Fetch current row ensuring active claim ownership and valid DB-clock lease (Area C1)
+  const rows = await db.$queryRaw<Array<{
+    id: string;
+    entityType: VectorEntityType;
+    entityId: string;
+    sourceRevision: number;
+    dispatchAttempts: number;
+  }>>`
+    SELECT id, "entityType", "entityId", "sourceRevision", "dispatchAttempts"
+    FROM "VectorOutboxEvent"
+    WHERE id = ${outboxEventId}
+      AND "status" = 'CLAIMED'::"VectorOutboxStatus"
+      AND "dispatchClaimToken" = ${dispatchClaimToken}
+      AND "dispatchLeaseExpiresAt" > clock_timestamp()
+    LIMIT 1;
+  `;
+
+  if (rows.length === 0) {
+    // 0 rows matched active claim predicate. Check if already completed by downstream worker (Area B3)
+    const current = await db.$queryRaw<Array<{ status: VectorOutboxStatus }>>`
+      SELECT "status" FROM "VectorOutboxEvent" WHERE id = ${outboxEventId} LIMIT 1;
+    `;
+    if (Array.isArray(current) && current.length > 0 && current[0]?.status === "COMPLETED") {
+      return { status: "ALREADY_COMPLETED" };
+    }
+    return { status: "CLAIM_LOST", reason: "NOT_CLAIMED_OR_LEASE_EXPIRED" };
+  }
+
+  const row = rows[0];
+  const sourceRev = typeof row.sourceRevision === "number" ? row.sourceRevision : 0;
+
+  // 2. Supersession Check (Area D3): Check if a strictly newer revision exists for this entity
+  const newerPending = await db.$queryRaw<Array<{ id: string; sourceRevision: number }>>`
+    SELECT id, "sourceRevision"
+    FROM "VectorOutboxEvent"
+    WHERE "entityType" = ${row.entityType}::"VectorEntityType"
+      AND "entityId" = ${row.entityId}
+      AND "status" = 'PENDING'::"VectorOutboxStatus"
+      AND id != ${outboxEventId}
+      AND "sourceRevision" > ${sourceRev}
+    ORDER BY "sourceRevision" DESC
+    LIMIT 1;
+  `;
+
+  if (newerPending.length > 0) {
+    const newerId = newerPending[0].id;
+    const newerRev = newerPending[0].sourceRevision;
+    const superseded = await db.$queryRaw<Array<{ id: string }>>`
+      UPDATE "VectorOutboxEvent"
+      SET "status" = 'FAILED'::"VectorOutboxStatus",
+          "dispatchClaimToken" = NULL,
+          "dispatchLeaseExpiresAt" = NULL,
+          "terminalError" = ${'Superseded by newer pending outbox event ' + newerId + (newerRev ? ' (rev ' + newerRev + ')' : '')},
+          "updatedAt" = clock_timestamp()
+      WHERE id = ${outboxEventId}
+        AND "status" = 'CLAIMED'::"VectorOutboxStatus"
+        AND "dispatchClaimToken" = ${dispatchClaimToken}
+        AND "dispatchLeaseExpiresAt" > clock_timestamp()
+      RETURNING id;
+    `;
+    if (superseded.length > 0) {
+      return { status: "SUPERSEDED" };
+    }
+    const current = await db.$queryRaw<Array<{ status: VectorOutboxStatus }>>`
+      SELECT "status" FROM "VectorOutboxEvent" WHERE id = ${outboxEventId} LIMIT 1;
+    `;
+    if (Array.isArray(current) && current.length > 0 && current[0]?.status === "COMPLETED") {
+      return { status: "ALREADY_COMPLETED" };
+    }
+    return { status: "CLAIM_LOST", reason: "CLAIM_LOST_DURING_SUPERSEDING" };
+  }
+
+  const newAttempts = row.dispatchAttempts + 1;
+
+  // 3. Terminal Failure (Area C3): When maxAttempts reached or exceeded
+  if (newAttempts >= maxAttempts) {
+    const failedRows = await db.$queryRaw<Array<{ id: string; dispatchAttempts: number }>>`
+      UPDATE "VectorOutboxEvent"
+      SET "status" = 'FAILED'::"VectorOutboxStatus",
+          "dispatchClaimToken" = NULL,
+          "dispatchLeaseExpiresAt" = NULL,
+          "dispatchAttempts" = ${newAttempts},
+          "terminalError" = ${errMsg},
+          "updatedAt" = clock_timestamp()
+      WHERE id = ${outboxEventId}
+        AND "status" = 'CLAIMED'::"VectorOutboxStatus"
+        AND "dispatchClaimToken" = ${dispatchClaimToken}
+        AND "dispatchLeaseExpiresAt" > clock_timestamp()
+      RETURNING id, "dispatchAttempts";
+    `;
+    if (failedRows.length > 0) {
+      return { status: "FAILED_TERMINAL", attempts: failedRows[0].dispatchAttempts };
+    }
+    const current = await db.$queryRaw<Array<{ status: VectorOutboxStatus }>>`
+      SELECT "status" FROM "VectorOutboxEvent" WHERE id = ${outboxEventId} LIMIT 1;
+    `;
+    if (Array.isArray(current) && current.length > 0 && current[0]?.status === "COMPLETED") {
+      return { status: "ALREADY_COMPLETED" };
+    }
+    return { status: "CLAIM_LOST", reason: "CLAIM_LOST_DURING_TERMINAL_FAIL" };
+  }
+
+  // 4. Retry Scheduling with Exact Canonical Backoff: 5s, 10s, 20s, 40s (Area C2)
+  // Progression: 5 * 2^(dispatchAttempts) seconds clamped to 300s
+  const backoffSeconds = Math.min(300, 5 * Math.pow(2, row.dispatchAttempts));
+
+  const retryRows = await db.$queryRaw<Array<{ id: string; dispatchAttempts: number; nextRetryAt: Date }>>`
+    UPDATE "VectorOutboxEvent"
+    SET "status" = 'PENDING'::"VectorOutboxStatus",
+        "dispatchClaimToken" = NULL,
+        "dispatchLeaseExpiresAt" = NULL,
+        "dispatchAttempts" = ${newAttempts},
+        "nextRetryAt" = clock_timestamp() + (${backoffSeconds} || ' seconds')::interval,
+        "terminalError" = ${errMsg},
+        "updatedAt" = clock_timestamp()
+    WHERE id = ${outboxEventId}
+      AND "status" = 'CLAIMED'::"VectorOutboxStatus"
+      AND "dispatchClaimToken" = ${dispatchClaimToken}
+      AND "dispatchLeaseExpiresAt" > clock_timestamp()
+    RETURNING id, "dispatchAttempts", "nextRetryAt";
+  `;
+
+  if (retryRows.length > 0) {
+    return {
+      status: "RETRY_SCHEDULED",
+      attempts: retryRows[0].dispatchAttempts,
+      nextRetryAt: retryRows[0].nextRetryAt,
+    };
+  }
+
+  const current = await db.$queryRaw<Array<{ status: VectorOutboxStatus }>>`
+    SELECT "status" FROM "VectorOutboxEvent" WHERE id = ${outboxEventId} LIMIT 1;
+  `;
+  if (Array.isArray(current) && current.length > 0 && current[0]?.status === "COMPLETED") {
+    return { status: "ALREADY_COMPLETED" };
+  }
+  return { status: "CLAIM_LOST", reason: "CLAIM_LOST_DURING_RETRY" };
+}
+
 export async function dispatchVectorOutboxBatch(
   limit: number = 50,
   sweeperName: string = "vector-outbox-sweeper"
@@ -274,9 +473,21 @@ export async function dispatchVectorOutboxBatch(
         dispatched++;
       } else {
         failed++;
+        await handleVectorOutboxPublishFailure({
+          db,
+          outboxEventId: row.id,
+          dispatchClaimToken: claimToken,
+          error: new Error(`Mark dispatched failed: ${res.reason}`),
+        });
       }
-    } catch {
+    } catch (publishErr) {
       failed++;
+      await handleVectorOutboxPublishFailure({
+        db,
+        outboxEventId: row.id,
+        dispatchClaimToken: claimToken,
+        error: publishErr,
+      });
     }
   }
 

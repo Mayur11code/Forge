@@ -130,6 +130,7 @@ describe("Vector V2 Phase B: PR-2 Bounded Read-Back Polling & Verification (E2 S
       entityId,
       sourceRevision,
       expectedChunkCount: chunkCount,
+      expectedManifestDigest: expectedDigest,
       initialDelayMs: 20,
       maxBudgetMs: 100, // Short budget for test
       fetcher: mockFetcher,
@@ -194,6 +195,7 @@ describe("Vector V2 Phase B: PR-2 Bounded Read-Back Polling & Verification (E2 S
       entityId,
       sourceRevision,
       expectedChunkCount: chunkCount,
+      expectedManifestDigest: expectedDigest,
       fetcher: mockFetcher,
     });
 
@@ -223,6 +225,7 @@ describe("Vector V2 Phase B: PR-2 Bounded Read-Back Polling & Verification (E2 S
       entityId,
       sourceRevision,
       expectedChunkCount: chunkCount,
+      expectedManifestDigest: expectedDigest,
       fetcher: mockFetcher,
     });
 

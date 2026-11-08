@@ -43,6 +43,9 @@ const config = {
   // the assertions finish. This project is for one-shot acceptance runs, so exit
   // once results are reported.
   forceExit: true,
+  // Real database suites write to shared database fixtures and must execute sequentially
+  // to avoid cross-suite race conditions on shared tables like VectorOutboxEvent.
+  maxWorkers: 1,
 } satisfies Config;
 
 export default createJestConfig(config);
