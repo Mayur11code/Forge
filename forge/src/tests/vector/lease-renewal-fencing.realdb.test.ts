@@ -54,7 +54,14 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
   const MSG_ID_B = `msg_fence_b_${RUN_ID}`;
 
   beforeAll(async () => {
-    if (!targetDbUrl) return;
+    if (!targetDbUrl) {
+      if (isE3Required) {
+        throw new Error(
+          "[P0_SAFETY_ERROR] E3 Real-Database tests are REQUIRED in this environment (REQUIRE_E3_CONCURRENCY=true or CI=true), but no target database URL is configured."
+        );
+      }
+      return;
+    }
 
     pool1 = new Pool({
       connectionString: targetDbUrl,
@@ -134,7 +141,10 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
   });
 
   it("Test A: Legitimate long-running worker extends EventLog and Generation leases preventing stealing", async () => {
-    if (!testClient1 || !testClient2) return;
+    if (!testClient1 || !testClient2) {
+      if (isE3Required) throw new Error("[P0_SAFETY_ERROR] Test clients were not initialized despite mandatory E3 requirement.");
+      return;
+    }
 
     const workerClaimToken = `legit_worker_${RUN_ID}`;
 
@@ -224,7 +234,10 @@ describeRealDb("Forge Vector V2 — Phase B: Real-Database Lease Renewal & Fenci
   });
 
   it("Test B: Stale worker loses lease to thief; subsequent renewal and activation fail closed (Scenario S20)", async () => {
-    if (!testClient1 || !testClient2) return;
+    if (!testClient1 || !testClient2) {
+      if (isE3Required) throw new Error("[P0_SAFETY_ERROR] Test clients were not initialized despite mandatory E3 requirement.");
+      return;
+    }
 
     const staleMsgId = MSG_ID_B;
     const staleWorkerToken = `stale_worker_${RUN_ID}`;

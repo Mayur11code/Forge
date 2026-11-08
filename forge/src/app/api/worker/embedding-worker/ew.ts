@@ -33,7 +33,12 @@ async function getDb() {
   return db;
 }
 
-interface EmbeddingEventParams {
+export interface EmbeddingWorkerOptions {
+  leaseDurationSeconds?: number;
+  heartbeatIntervalMs?: number;
+}
+
+export interface EmbeddingEventParams {
   event: {
     id: string;
     type: "EMBEDDING_REQUESTED";
@@ -50,6 +55,7 @@ interface EmbeddingEventParams {
     };
     time: string;
   };
+  options?: EmbeddingWorkerOptions;
 }
 
 function redactId(id: string): string {
@@ -70,7 +76,7 @@ function redactId(id: string): string {
  * 7. Atomic row-lock activation with revision freshness check (activateGeneration)
  * 8. Outbox event completion (completeVectorOutboxEvent)
  */
-export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): Promise<void> {
+export async function embeddingWorkerHandler({ event, options }: EmbeddingEventParams): Promise<void> {
   const {
     entityId,
     orgId,
@@ -287,6 +293,11 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
     failGeneration,
   } = await import("@/lib/vector/generation-state");
 
+  const leaseSeconds = options?.leaseDurationSeconds ?? 300;
+  const heartbeatIntervalMs =
+    options?.heartbeatIntervalMs ??
+    Math.min(30_000, Math.max(100, Math.floor((leaseSeconds * 1000) / 3)));
+
   const { generation, claimToken, head } = await reserveGeneration({
     orgId,
     entityType: prismaEntityType,
@@ -297,11 +308,60 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
     embeddingDimension: 768,
     contractVersion: "v2",
     expectedChunkCount: chunks.length,
-    leaseDurationSeconds: 300,
+    leaseDurationSeconds: leaseSeconds,
   });
 
+  let genHeartbeatTimer: NodeJS.Timeout | null = null;
+  let genOwnershipLost = false;
+  let genHeartbeatActive = true;
+  let genRenewalInFlight = false;
+  let genRenewalPromise: Promise<void> | null = null;
+
+  const { renewGenerationLease } = await import("@/lib/vector/generation-state");
+
+  const stopGenHeartbeat = () => {
+    genHeartbeatActive = false;
+    if (genHeartbeatTimer) {
+      clearInterval(genHeartbeatTimer);
+      genHeartbeatTimer = null;
+    }
+  };
+
+  const performGenRenewal = async () => {
+    if (!genHeartbeatActive || genOwnershipLost || genRenewalInFlight) return;
+    genRenewalInFlight = true;
+    const currentPromise = (async () => {
+      try {
+        await renewGenerationLease({
+          generationId: generation.id,
+          claimToken,
+          extensionSeconds: leaseSeconds,
+        });
+      } catch {
+        genOwnershipLost = true;
+        stopGenHeartbeat();
+      } finally {
+        genRenewalInFlight = false;
+        genRenewalPromise = null;
+      }
+    })();
+    genRenewalPromise = currentPromise;
+    await currentPromise;
+  };
+
+  // Start continuous recurring renewal (Part 2 Area B1)
+  genHeartbeatTimer = setInterval(() => {
+    performGenRenewal().catch(() => {
+      genOwnershipLost = true;
+      stopGenHeartbeat();
+    });
+  }, heartbeatIntervalMs);
+  if (typeof genHeartbeatTimer?.unref === "function") {
+    genHeartbeatTimer.unref();
+  }
+
   try {
-    // 4. Batch Embeddings via Gemini
+    // 4. Batch Embeddings via Gemini (with multi-batch boundary fencing)
     const resolvedAi = await resolveOrganizationGenerativeAiClient({
       orgId,
       purpose: CredentialPurpose.EMBEDDING,
@@ -311,35 +371,64 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
       ? resolvedAi.fallbackClient.getGenerativeModel({ model: "gemini-embedding-001" })
       : null;
 
-    const embeddingRequests: EmbedContentRequest[] = chunks.map((chunkText) => ({
-      content: {
-        role: "user",
-        parts: [{ text: chunkText }],
-      },
-      taskType: TaskType.RETRIEVAL_DOCUMENT,
-      outputDimensionality: 768,
-    }));
+    const GEMINI_MAX_BATCH_SIZE = 100;
+    const chunkBatches: string[][] = [];
+    for (let i = 0; i < chunks.length; i += GEMINI_MAX_BATCH_SIZE) {
+      chunkBatches.push(chunks.slice(i, i + GEMINI_MAX_BATCH_SIZE));
+    }
 
-    let result;
-    try {
-      result = await activePrimary.batchEmbedContents({ requests: embeddingRequests });
-    } catch (err) {
-      if (fallbackModel && isGeminiAuthenticationError(err)) {
-        logCredentialFailover({
-          provider: "gemini",
-          subsystem: "embedding-worker",
-          slot: "primary",
-          operation: "batchEmbedContents",
-          errorCategory: "AUTH_FAILURE_FAILOVER",
-          message: err instanceof Error ? err.message : String(err),
-        });
-        result = await fallbackModel.batchEmbedContents({ requests: embeddingRequests });
-      } else {
-        throw err;
+    const embeddings: number[][] = [];
+    for (let b = 0; b < chunkBatches.length; b++) {
+      // Boundary check before each subsequent Gemini embedding batch (B2)
+      if (genOwnershipLost) {
+        throw new Error(
+          `Generation lease ownership lost before embedding batch ${b + 1}/${chunkBatches.length} for ${generation.id}`
+        );
+      }
+
+      const batchRequests: EmbedContentRequest[] = chunkBatches[b].map((chunkText) => ({
+        content: {
+          role: "user",
+          parts: [{ text: chunkText }],
+        },
+        taskType: TaskType.RETRIEVAL_DOCUMENT,
+        outputDimensionality: 768,
+      }));
+
+      let batchResult;
+      try {
+        batchResult = await activePrimary.batchEmbedContents({ requests: batchRequests });
+      } catch (err) {
+        if (fallbackModel && isGeminiAuthenticationError(err)) {
+          // Check ownership immediately before dispatching fallback Gemini request (Issue 2)
+          if (genOwnershipLost) {
+            throw new Error(
+              `Generation lease ownership lost before fallback embedding dispatch for ${generation.id}`
+            );
+          }
+          logCredentialFailover({
+            provider: "gemini",
+            subsystem: "embedding-worker",
+            slot: "primary",
+            operation: "batchEmbedContents",
+            errorCategory: "AUTH_FAILURE_FAILOVER",
+            message: err instanceof Error ? err.message : String(err),
+          });
+          batchResult = await fallbackModel.batchEmbedContents({ requests: batchRequests });
+        } else {
+          throw err;
+        }
+      }
+
+      for (const e of batchResult.embeddings) {
+        embeddings.push(e.values);
       }
     }
 
-    const embeddings = result.embeddings.map((e) => e.values);
+    // Boundary check 2: Before Pinecone vector upsert (B2)
+    if (genOwnershipLost) {
+      throw new Error(`Generation lease ownership lost before Pinecone upsert for ${generation.id}`);
+    }
 
     // 5. Generation-Scoped Pinecone Upsert
     const vectorStore = getTenantVectorStore(orgId);
@@ -379,6 +468,11 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
 
     await vectorStore.upsertGenerationVectors(records);
 
+    // Boundary check 3: Before write receipt (B2)
+    if (genOwnershipLost) {
+      throw new Error(`Generation lease ownership lost before write receipt for ${generation.id}`);
+    }
+
     // 6. Write Receipt
     await markGenerationWritten({
       receipt: {
@@ -389,7 +483,12 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
       },
     });
 
-    // 7. Bounded Physical Read-Back Verification
+    // Boundary check 4: Before physical read-back verification (B2)
+    if (genOwnershipLost) {
+      throw new Error(`Generation lease ownership lost before physical verification for ${generation.id}`);
+    }
+
+    // 7. Bounded Physical Read-Back Verification (5,000ms strict monotonic verification deadline)
     const verification = await verifyPhysicalPersistence({
       orgId,
       generationId: generation.id,
@@ -398,18 +497,35 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
       sourceRevision: expectedRevision,
       expectedChunkCount: chunks.length,
       expectedManifestDigest: manifestDigest,
-      maxBudgetMs: 15000,
+      maxBudgetMs: 5000,
+      fetcher: (ids) => vectorStore.fetchGenerationVectors(ids),
     });
 
     if (!verification.verified) {
       const failReason = `Physical persistence verification failed: ${verification.reason}`;
       console.error(`❌ [EMBEDDING] ${failReason}`);
-      await failGeneration({
-        generationId: generation.id,
-        claimToken,
-        errorMessage: failReason,
-      });
+      if (!genOwnershipLost) {
+        await failGeneration({
+          generationId: generation.id,
+          claimToken,
+          errorMessage: failReason,
+        });
+      }
       throw new Error(failReason);
+    }
+
+    // Boundary check 5: Release heartbeat timer before activation boundary (B2 & Part 2.1)
+    stopGenHeartbeat();
+    if (genRenewalPromise) {
+      try {
+        await genRenewalPromise;
+      } catch {
+        // Renewal failure already flagged genOwnershipLost
+      }
+    }
+
+    if (genOwnershipLost) {
+      throw new Error(`Generation lease ownership lost before activation for ${generation.id}`);
     }
 
     // 8. Atomic Activation with Row-Lock & Revision Supersession Check
@@ -428,12 +544,14 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
           }
 
           if (headRows.length > 0 && headRows[0].isTombstone) {
-            await failGeneration({
-              generationId: generation.id,
-              claimToken,
-              errorMessage: "Entity tombstoned before activation",
-              tx,
-            });
+            if (!genOwnershipLost) {
+              await failGeneration({
+                generationId: generation.id,
+                claimToken,
+                errorMessage: "Entity tombstoned before activation",
+                tx,
+              });
+            }
             return;
           }
 
@@ -441,12 +559,14 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
             console.log(
               `[EMBEDDING] Generation superseded by newer mutation (head=${headRows[0].latestRevision}, gen=${incomingRevision}). Skipping activation.`
             );
-            await failGeneration({
-              generationId: generation.id,
-              claimToken,
-              errorMessage: "Superseded by newer revision",
-              tx,
-            });
+            if (!genOwnershipLost) {
+              await failGeneration({
+                generationId: generation.id,
+                claimToken,
+                errorMessage: "Superseded by newer revision",
+                tx,
+              });
+            }
             return;
           }
 
@@ -516,14 +636,19 @@ export async function embeddingWorkerHandler({ event }: EmbeddingEventParams): P
   } catch (workerErr) {
     console.error("❌ [EMBEDDING] Failure during worker pipeline:", workerErr);
     try {
-      await failGeneration({
-        generationId: generation.id,
-        claimToken,
-        errorMessage: workerErr instanceof Error ? workerErr.message : "Pipeline error",
-      });
+      if (!genOwnershipLost) {
+        await failGeneration({
+          generationId: generation.id,
+          claimToken,
+          errorMessage: workerErr instanceof Error ? workerErr.message : "Pipeline error",
+        });
+      }
     } catch {
       // Best-effort cleanup
     }
     throw workerErr;
+  } finally {
+    // Cleanup heartbeat timer on every exit path (B3)
+    stopGenHeartbeat();
   }
 }

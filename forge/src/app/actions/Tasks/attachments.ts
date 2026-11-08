@@ -3,6 +3,7 @@
 import { UTApi } from "uploadthing/server";
 import { db } from "@/lib/prisma/db";
 import { auth } from "@/lib/auth/auth";
+import { VectorEntityType } from "@prisma/client";
 import { recordVectorSyncIntent } from "@/lib/vector/outbox";
 import {
   computeAttachmentContentHash,
@@ -80,14 +81,53 @@ export async function createAttachment({
     throw new Error("Task not found in this organization.");
   }
 
-  return db.attachment.create({
-    data: {
-      taskId,
-      fileKey,
-      url,
-      name,
-      size,
-    },
+  return await db.$transaction(async (tx) => {
+    const attachment = await tx.attachment.create({
+      data: {
+        taskId,
+        fileKey,
+        url,
+        name,
+        size,
+      },
+    });
+
+    const parentTask = await tx.task.findUniqueOrThrow({
+      where: { id: taskId },
+      select: {
+        title: true,
+        projectId: true,
+        project: {
+          select: {
+            orgId: true,
+          },
+        },
+      },
+    });
+
+    const contentHash = computeAttachmentContentHash({
+      id: attachment.id,
+      name: attachment.name,
+      size: attachment.size,
+      fileKey: attachment.fileKey,
+      taskId: attachment.taskId,
+    });
+
+    const parentTaskVersion = computeAttachmentParentTaskVersion({
+      title: parentTask.title,
+      projectId: parentTask.projectId,
+    });
+
+    await recordVectorSyncIntent({
+      tx,
+      orgId: parentTask.project.orgId,
+      entityType: VectorEntityType.ATTACHMENT,
+      entityId: attachment.id,
+      contentHash,
+      parentTaskVersion,
+    });
+
+    return attachment;
   });
 }
 

@@ -66,9 +66,15 @@ export type WorkerHandler<K extends EventType> = (params: {
 }) => Promise<void>;
 
 
+export interface WorkerOptions {
+  heartbeatIntervalMs?: number;
+  leaseSeconds?: number;
+}
+
 export function createWorker<K extends EventType>(
   eventType: K,
-  handler: WorkerHandler<K>
+  handler: WorkerHandler<K>,
+  options?: WorkerOptions
 ) {
 
   const internalHandler = async (req: NextRequest) => {
@@ -134,6 +140,11 @@ export function createWorker<K extends EventType>(
       // State check with Database Clock Lease Ownership (Phase B Rev 3.2)
       let proceedToExecute = false;
       const workerClaimToken = crypto.randomUUID();
+      const leaseSeconds = options?.leaseSeconds ?? 300;
+      const heartbeatIntervalMs =
+        options?.heartbeatIntervalMs ??
+        Math.min(30_000, Math.max(100, Math.floor((leaseSeconds * 1000) / 3)));
+
       const outboxEventId =
         typeof (validatedData as any)?.outboxEventId === "string"
           ? (validatedData as any).outboxEventId
@@ -178,7 +189,7 @@ export function createWorker<K extends EventType>(
               'PENDING'::"EventStatus",
               ${outboxEventId},
               ${workerClaimToken},
-              clock_timestamp() + interval '300 seconds',
+              clock_timestamp() + (${leaseSeconds} || ' seconds')::interval,
               clock_timestamp(),
               clock_timestamp()
             )
@@ -213,7 +224,7 @@ export function createWorker<K extends EventType>(
               const stolen = await db.$queryRaw<Array<{ id: string }>>`
                 UPDATE "EventLog"
                 SET "claimToken" = ${workerClaimToken},
-                    "leaseExpiresAt" = clock_timestamp() + interval '300 seconds',
+                    "leaseExpiresAt" = clock_timestamp() + (${leaseSeconds} || ' seconds')::interval,
                     "updatedAt" = clock_timestamp()
                 WHERE "id" = ${existingLog.id}
                   AND "status" = 'PENDING'::"EventStatus"
@@ -235,7 +246,7 @@ export function createWorker<K extends EventType>(
                 SET "status" = 'PENDING'::"EventStatus",
                     "error" = NULL,
                     "claimToken" = ${workerClaimToken},
-                    "leaseExpiresAt" = clock_timestamp() + interval '300 seconds',
+                    "leaseExpiresAt" = clock_timestamp() + (${leaseSeconds} || ' seconds')::interval,
                     "updatedAt" = clock_timestamp()
                 WHERE "id" = ${existingLog.id}
                   AND "status" = 'FAILED'::"EventStatus"
@@ -290,10 +301,63 @@ export function createWorker<K extends EventType>(
       }
 
       if (proceedToExecute) {
+        let ownershipLost = false;
+        let heartbeatActive = true;
+        let heartbeatTimer: NodeJS.Timeout | null = null;
+        let renewalInFlight = false;
+
+        const stopHeartbeat = () => {
+          heartbeatActive = false;
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
+        };
+
+        const performRenewal = async () => {
+          if (!heartbeatActive || ownershipLost || renewalInFlight) {
+            return;
+          }
+          renewalInFlight = true;
+          try {
+            const res = await renewEventLogLease({
+              messageId: messageId ?? undefined,
+              claimToken: workerClaimToken,
+              extensionSeconds: leaseSeconds,
+              dbClient: db,
+            });
+            if (!res.renewed) {
+              ownershipLost = true;
+              stopHeartbeat();
+            }
+          } catch {
+            ownershipLost = true;
+            stopHeartbeat();
+          } finally {
+            renewalInFlight = false;
+          }
+        };
+
+        // Activate recurring heartbeat only after lease acquisition (Part 2 Area A1)
+        heartbeatTimer = setInterval(() => {
+          performRenewal().catch(() => {
+            ownershipLost = true;
+            stopHeartbeat();
+          });
+        }, heartbeatIntervalMs);
+        if (typeof heartbeatTimer?.unref === "function") {
+          heartbeatTimer.unref();
+        }
+
         try {
           await handler({
             event: { id: eventId, type, data: validatedData, time: eventTime },
           });
+
+          // Check ownership before marking success (A3)
+          if (ownershipLost) {
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+          }
 
           if (typeof db.$executeRaw === "function") {
             const affected = await db.$executeRaw`
@@ -301,37 +365,47 @@ export function createWorker<K extends EventType>(
               SET "status" = 'SUCCESS'::"EventStatus",
                   "leaseExpiresAt" = NULL,
                   "updatedAt" = clock_timestamp()
-              WHERE "claimToken" = ${workerClaimToken};
+              WHERE "claimToken" = ${workerClaimToken}
+                AND "status" = 'PENDING'::"EventStatus"
+                AND "leaseExpiresAt" > clock_timestamp();
             `;
             if (affected === 0) {
               return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
             }
-          } else if (typeof db.eventLog?.update === "function") {
-            await db.eventLog.update({
-              where: { messageId },
-              data: { status: "SUCCESS" },
-            });
+          } else {
+            // Missing authoritative SQL interface fails closed for EventLog success completion
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
           }
 
           return NextResponse.json({ success: true });
         } catch (handlerError) {
+          if (ownershipLost) {
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+          }
+
           const errMsg = handlerError instanceof Error ? handlerError.message : "Unknown error";
           if (typeof db.$executeRaw === "function") {
-            await db.$executeRaw`
+            const affected = await db.$executeRaw`
               UPDATE "EventLog"
               SET "status" = 'FAILED'::"EventStatus",
                   "error" = ${errMsg},
                   "leaseExpiresAt" = NULL,
                   "updatedAt" = clock_timestamp()
-              WHERE "claimToken" = ${workerClaimToken};
+              WHERE "claimToken" = ${workerClaimToken}
+                AND "status" = 'PENDING'::"EventStatus"
+                AND "leaseExpiresAt" > clock_timestamp();
             `;
-          } else if (typeof db.eventLog?.update === "function") {
-            await db.eventLog.update({
-              where: { messageId },
-              data: { status: "FAILED", error: errMsg },
-            });
+            if (affected === 0) {
+              return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
+            }
+          } else {
+            // Missing authoritative SQL interface fails closed for EventLog failure completion
+            return NextResponse.json({ error: "OWNERSHIP_LOST" }, { status: 409 });
           }
           return NextResponse.json({ error: "Worker execution failed" }, { status: 500 });
+        } finally {
+          // Cleanup on all exit paths (A4)
+          stopHeartbeat();
         }
       }
 
@@ -378,7 +452,7 @@ export async function renewEventLogLease({
   extensionSeconds?: number;
   dbClient?: any;
 }): Promise<{ renewed: boolean }> {
-  if (typeof dbClient.$executeRaw === "function") {
+  if (typeof dbClient?.$executeRaw === "function") {
     const affected = await dbClient.$executeRaw`
       UPDATE "EventLog"
       SET "leaseExpiresAt" = clock_timestamp() + (${extensionSeconds} || ' seconds')::interval,
@@ -389,5 +463,6 @@ export async function renewEventLogLease({
     `;
     return { renewed: affected > 0 };
   }
-  return { renewed: true };
+  // Missing authoritative SQL interface fails closed for EventLog renewal
+  return { renewed: false };
 }

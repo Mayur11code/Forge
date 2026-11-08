@@ -33,9 +33,17 @@ jest.mock("@/lib/vector/client", () => ({
 
 jest.mock("@/lib/auth/auth", () => ({ auth: jest.fn() }));
 
-jest.mock("@/lib/prisma/db", () => ({
-  db: {
-    task: { findFirst: jest.fn() },
+jest.mock("@/lib/prisma/db", () => {
+  const localDb: any = {
+    task: {
+      findFirst: jest.fn(),
+      findUniqueOrThrow: jest.fn().mockResolvedValue({
+        id: "task_1",
+        title: "Task Title",
+        projectId: "proj_1",
+        project: { orgId: "org_1" },
+      }),
+    },
     attachment: {
       findMany: jest.fn(),
       create: jest.fn(),
@@ -50,9 +58,13 @@ jest.mock("@/lib/prisma/db", () => ({
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findMany: jest.fn().mockResolvedValue([]),
     },
-    $transaction: jest.fn(),
-  },
-}));
+    $transaction: jest.fn(async (cb: any) =>
+      typeof cb === "function" ? cb(localDb) : Promise.all(cb),
+    ),
+    $queryRaw: jest.fn().mockResolvedValue([{ id: "mock_head_1", latestRevision: 1 }]),
+  };
+  return { db: localDb };
+});
 
 jest.mock("uploadthing/server", () => ({
   UTApi: jest.fn().mockImplementation(() => ({

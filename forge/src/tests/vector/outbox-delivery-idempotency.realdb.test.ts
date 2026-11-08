@@ -51,7 +51,14 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
   const MSG_B3 = `msg_b3_${RUN_ID}`;
 
   beforeAll(async () => {
-    if (!targetDbUrl) return;
+    if (!targetDbUrl) {
+      if (isE3Required) {
+        throw new Error(
+          "[P0_SAFETY_ERROR] E3 Real-Database tests are REQUIRED in this environment (REQUIRE_E3_CONCURRENCY=true or CI=true), but no target database URL is configured."
+        );
+      }
+      return;
+    }
 
     pool1 = new Pool({
       connectionString: targetDbUrl,
@@ -89,7 +96,10 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
   });
 
   it("rejects duplicate delivery under a different messageId while original execution is PENDING", async () => {
-    if (!testClient1 || !testClient2) return;
+    if (!testClient1 || !testClient2) {
+      if (isE3Required) throw new Error("[P0_SAFETY_ERROR] Test clients were not initialized despite mandatory E3 requirement.");
+      return;
+    }
 
     const workerAToken = `workerA_${RUN_ID}`;
     const workerBToken = `workerB_${RUN_ID}`;
@@ -174,7 +184,10 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
   });
 
   it("returns already_processed for a different messageId when the outboxEventId is already SUCCESS", async () => {
-    if (!testClient1 || !testClient2) return;
+    if (!testClient1 || !testClient2) {
+      if (isE3Required) throw new Error("[P0_SAFETY_ERROR] Test clients were not initialized despite mandatory E3 requirement.");
+      return;
+    }
 
     const workerAToken = `workerA_success_${RUN_ID}`;
 
@@ -209,8 +222,52 @@ describeRealDb("Forge Vector V2 — Phase B: Outbox Delivery Idempotency Across 
     // Worker logic returns already_processed immediately without executing
   });
 
+  it("physically prevents inserting PENDING claim when previous delivery already completed to SUCCESS (Area C)", async () => {
+    if (!testClient1 || !testClient2) {
+      if (isE3Required) throw new Error("[P0_SAFETY_ERROR] Test clients were not initialized despite mandatory E3 requirement.");
+      return;
+    }
+
+    const workerBToken = `workerB_race_success_${RUN_ID}`;
+
+    // Delivery B arrives and attempts to insert PENDING for OUTBOX_EVENT_2 (which is already SUCCESS).
+    // The partial unique index covering (PENDING, SUCCESS) must reject it.
+    let hitIndexConstraint = false;
+    try {
+      await testClient2.$queryRaw<Array<{ id: string }>>`
+        INSERT INTO "EventLog" (
+          "id", "messageId", "eventName", "payload", "status",
+          "outboxEventId", "claimToken", "leaseExpiresAt", "createdAt", "updatedAt"
+        ) VALUES (
+          ${crypto.randomUUID()},
+          ${MSG_B2},
+          'EMBEDDING_REQUESTED',
+          ${JSON.stringify({ outboxEventId: OUTBOX_EVENT_2 })}::jsonb,
+          'PENDING'::"EventStatus",
+          ${OUTBOX_EVENT_2},
+          ${workerBToken},
+          clock_timestamp() + interval '300 seconds',
+          clock_timestamp(),
+          clock_timestamp()
+        )
+        RETURNING "id";
+      `;
+    } catch (err: any) {
+      hitIndexConstraint =
+        String(err).includes("unique constraint") ||
+        String(err).includes("EventLog_outbox_active_idx") ||
+        err?.code === "23505" ||
+        err?.code === "P2002";
+    }
+
+    expect(hitIndexConstraint).toBe(true);
+  });
+
   it("handles concurrent race between two deliveries of the same outboxEventId with exactly one winner", async () => {
-    if (!testClient1 || !testClient2) return;
+    if (!testClient1 || !testClient2) {
+      if (isE3Required) throw new Error("[P0_SAFETY_ERROR] Test clients were not initialized despite mandatory E3 requirement.");
+      return;
+    }
 
     const tokenA = `raceTokenA_${RUN_ID}`;
     const tokenB = `raceTokenB_${RUN_ID}`;
