@@ -321,7 +321,7 @@ describe("Part 2.1 Area A: EventLog Worker Lease Lifecycle & Fencing (E2)", () =
   // Case 2: Ownership Maintained Throughout Run
   // ---------------------------------------------------------------------------
   it("A2: Successful renewal maintains ownership while the handler runs", async () => {
-    let expirationTimes: number[] = [];
+    const expirationTimes: number[] = [];
 
     const workerRoute = createWorker(
       "EMBEDDING_REQUESTED",

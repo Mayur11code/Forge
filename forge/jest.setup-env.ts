@@ -52,6 +52,8 @@ process.env.UPSTASH_REDIS_REST_URL ??= "https://jest-placeholder-redis.upstash.i
 process.env.UPSTASH_REDIS_REST_TOKEN ??= "jest-placeholder-redis-token";
 process.env.QSTASH_URL ??= "https://jest-placeholder-qstash.upstash.io";
 process.env.QSTASH_TOKEN ??= "jest-placeholder-qstash-token";
+process.env.QSTASH_CURRENT_SIGNING_KEY ??= "sig_test_placeholder_current_key";
+process.env.QSTASH_NEXT_SIGNING_KEY ??= "sig_test_placeholder_next_key";
 process.env.DATABASE_URL ??= "postgresql://postgres:postgres@localhost:5432/forge_test";
 process.env.AUTH_SECRET ??= "jest-placeholder-auth-secret";
 

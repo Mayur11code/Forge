@@ -356,13 +356,23 @@ describe("UPPR Rev 4 Remediation Acceptance Suite", () => {
   // ---------------------------------------------------------------------------
   describe("I-7: Worker Heartbeat and Completion Fencing", () => {
     it("creates worker instance configured with heartbeat options", () => {
-      const worker = createWorker(
-        "TASK_CREATED",
-        async () => {},
-        { heartbeatIntervalMs: 30000, leaseSeconds: 300 }
-      );
+      const original = process.env.ALLOW_UNSIGNED_LOCAL_WORKER;
+      try {
+        process.env.ALLOW_UNSIGNED_LOCAL_WORKER = "true";
+        const worker = createWorker(
+          "TASK_CREATED",
+          async () => {},
+          { heartbeatIntervalMs: 30000, leaseSeconds: 300 }
+        );
 
-      expect(typeof worker).toBe("function");
+        expect(typeof worker).toBe("function");
+      } finally {
+        if (original === undefined) {
+          delete process.env.ALLOW_UNSIGNED_LOCAL_WORKER;
+        } else {
+          process.env.ALLOW_UNSIGNED_LOCAL_WORKER = original;
+        }
+      }
     });
   });
 
