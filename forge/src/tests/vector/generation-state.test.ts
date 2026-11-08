@@ -102,7 +102,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
             // Apply update fields if specified
             if (Object.keys(update).length > 0) {
               existing = { ...existing, ...update, updatedAt: new Date() };
-              heads.set(key, existing);
+              heads.set(key, existing as Record<string, unknown>);
             }
             return Promise.resolve({ ...existing });
           }
@@ -204,12 +204,12 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
             const t = tasks.get(where.id);
             if (!t) return Promise.resolve(null);
             if (where.project?.orgId) {
-              const p = projects.get(t.projectId);
+              const p = projects.get(t.projectId as string);
               if (!p || p.orgId !== where.project.orgId) return Promise.resolve(null);
             }
             return Promise.resolve({
               ...t,
-              project: projects.get(t.projectId),
+              project: projects.get(t.projectId as string),
             });
           }
           return Promise.resolve(null);
@@ -220,7 +220,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
             list = list.filter((t) => t.projectId === where.projectId);
           }
           if (orderBy?.id === "asc") {
-            list.sort((a, b) => a.id.localeCompare(b.id));
+            list.sort((a, b) => (a.id as string).localeCompare(b.id as string));
           }
           return Promise.resolve(list.map((t) => ({ ...t })));
         }),
@@ -229,7 +229,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           if (!t) return Promise.resolve(null);
           return Promise.resolve({
             ...t,
-            project: projects.get(t.projectId),
+            project: projects.get(t.projectId as string),
             attachments: Array.from(attachments.values()).filter((a) => a.taskId === t.id),
           });
         }),
@@ -248,8 +248,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
         findFirst: jest.fn().mockImplementation(({ where }) => {
           const att = attachments.get(where.id);
           if (!att) return Promise.resolve(null);
-          const task = tasks.get(att.taskId);
-          const project = task ? projects.get(task.projectId) : null;
+          const task = tasks.get(att.taskId as string);
+          const project = task ? projects.get(task.projectId as string) : null;
           if (where.task?.project?.orgId && project?.orgId !== where.task.project.orgId) {
             return Promise.resolve(null);
           }
@@ -268,15 +268,15 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
             }
           }
           if (orderBy?.id === "asc") {
-            list.sort((a, b) => a.id.localeCompare(b.id));
+            list.sort((a, b) => (a.id as string).localeCompare(b.id as string));
           }
           return Promise.resolve(list.map((a) => ({ ...a })));
         }),
         findUnique: jest.fn().mockImplementation(({ where }) => {
           const att = attachments.get(where.id);
           if (!att) return Promise.resolve(null);
-          const task = tasks.get(att.taskId);
-          const project = task ? projects.get(task.projectId) : null;
+          const task = tasks.get(att.taskId as string);
+          const project = task ? projects.get(task.projectId as string) : null;
           return Promise.resolve({
             ...att,
             task: task ? { ...task, project } : null,
@@ -340,7 +340,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           const taskId = String(params[0]);
           const task = tasks.get(taskId);
           if (!task) return [];
-          const project = projects.get(task.projectId);
+          const project = projects.get(task.projectId as string);
           return [{
             id: task.id,
             projectId: task.projectId,
@@ -354,8 +354,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           const attId = String(params[0]);
           const att = attachments.get(attId);
           if (!att) return [];
-          const task = tasks.get(att.taskId);
-          const project = task ? projects.get(task.projectId) : null;
+          const task = tasks.get(att.taskId as string);
+          const project = task ? projects.get(task.projectId as string) : null;
           return [{
             id: att.id,
             taskId: att.taskId,
@@ -416,7 +416,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           if (queryText.includes("status = 'WRITING'")) {
             const headId = String(params[0]);
             const liveWriters = Array.from(generations.values()).filter(
-              (g) => g.headId === headId && g.status === "WRITING" && g.leaseExpiresAt > new Date()
+              (g) => g.headId === headId && g.status === "WRITING" && g.leaseExpiresAt && (g.leaseExpiresAt as Date) > new Date()
             );
             return liveWriters.map((w) => ({ id: w.id, claimToken: w.claimToken }));
           }
@@ -425,7 +425,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
           if (queryText.includes("ORDER BY id ASC")) {
             const headId = String(params[0]);
             const list = Array.from(generations.values()).filter((g) => g.headId === headId);
-            list.sort((a, b) => a.id.localeCompare(b.id));
+            list.sort((a, b) => (a.id as string).localeCompare(b.id as string));
             return list.map((g) => ({ id: g.id, status: g.status }));
           }
 
@@ -794,14 +794,14 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
   // ---------------------------------------------------------------------------
   it("Invariant 5: project deletion transactionally tombstones all child tasks and attachments", async () => {
     // Execute project cascade deletion simulation
-    const project = projects.get(PROJECT_1);
-    const projectTasks = [tasks.get(TASK_1), tasks.get(TASK_2)];
+    const project = projects.get(PROJECT_1)!;
+    const projectTasks = [tasks.get(TASK_1)!, tasks.get(TASK_2)!];
 
     for (const t of projectTasks) {
-      await tombstoneEntityHead({ orgId: project.orgId, entityType: "TASK", entityId: t.id, tx: mockTx });
+      await tombstoneEntityHead({ orgId: project.orgId as string, entityType: "TASK", entityId: t.id as string, tx: mockTx });
       const childAtts = Array.from(attachments.values()).filter((a) => a.taskId === t.id);
       for (const a of childAtts) {
-        await tombstoneEntityHead({ orgId: project.orgId, entityType: "ATTACHMENT", entityId: a.id, tx: mockTx });
+        await tombstoneEntityHead({ orgId: project.orgId as string, entityType: "ATTACHMENT", entityId: a.id as string, tx: mockTx });
       }
     }
 
@@ -882,7 +882,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
     // Artificially expire lease in store
     const genInStore = generations.get(generation.id);
-    genInStore.leaseExpiresAt = new Date(Date.now() - 1000);
+    genInStore!.leaseExpiresAt = new Date(Date.now() - 1000);
 
     await expect(
       markGenerationWritten({
@@ -955,8 +955,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
   it("Invariant 9: rejects activation when sourceVersion is stale", async () => {
     const task = tasks.get(TASK_1);
     const initialVersion = taskSourceVersion({
-      updatedAt: task.updatedAt,
-      projectId: task.projectId,
+      updatedAt: task!.updatedAt as Date,
+      projectId: task!.projectId as string,
     });
 
     const { generation, claimToken, head } = await reserveGeneration({
@@ -981,7 +981,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
     });
 
     // Simulate concurrent task update
-    task.updatedAt = new Date("2026-11-01T10:05:00Z");
+    task!.updatedAt = new Date("2026-11-01T10:05:00Z");
 
     await expect(
       activateGeneration({
@@ -1000,8 +1000,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
   it("Invariant 10: rejects activation when head is tombstoned", async () => {
     const task = tasks.get(TASK_1);
     const version = taskSourceVersion({
-      updatedAt: task.updatedAt,
-      projectId: task.projectId,
+      updatedAt: task!.updatedAt as Date,
+      projectId: task!.projectId as string,
     });
 
     const { generation, claimToken, head } = await reserveGeneration({
@@ -1050,8 +1050,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
   it("Invariant 11: activating new generation atomically sets previous active to OBSOLETE", async () => {
     const task = tasks.get(TASK_1);
     const version = taskSourceVersion({
-      updatedAt: task.updatedAt,
-      projectId: task.projectId,
+      updatedAt: task!.updatedAt as Date,
+      projectId: task!.projectId as string,
     });
 
     // 1. Activate Generation 1
@@ -1085,7 +1085,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
     });
 
     const gen1After = generations.get(res1.generation.id);
-    expect(gen1After.status).toBe("ACTIVE");
+    expect(gen1After?.status).toBe("ACTIVE");
 
     // 2. Reserve and Activate Generation 2
     const res2 = await reserveGeneration({
@@ -1118,9 +1118,9 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
     });
 
     expect(actResult.obsoletedGenerationId).toBe(res1.generation.id);
-    expect(generations.get(res1.generation.id).status).toBe("OBSOLETE");
-    expect(generations.get(res2.generation.id).status).toBe("ACTIVE");
-    expect(heads.get(headKey(ORG_A, "TASK", TASK_1)).activeGenId).toBe(res2.generation.id);
+    expect(generations.get(res1.generation.id)?.status).toBe("OBSOLETE");
+    expect(generations.get(res2.generation.id)?.status).toBe("ACTIVE");
+    expect(heads.get(headKey(ORG_A, "TASK", TASK_1))?.activeGenId).toBe(res2.generation.id);
   });
 
   // ---------------------------------------------------------------------------
@@ -1129,8 +1129,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
   it("Invariant 12: prevents duplicate active generations or pointer mismatch", async () => {
     const task = tasks.get(TASK_1);
     const version = taskSourceVersion({
-      updatedAt: task.updatedAt,
-      projectId: task.projectId,
+      updatedAt: task!.updatedAt as Date,
+      projectId: task!.projectId as string,
     });
 
     const res = await reserveGeneration({
@@ -1181,8 +1181,8 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
   it("Invariant 13: rejects zombie activation after deletion transaction commits", async () => {
     const task = tasks.get(TASK_1);
     const version = taskSourceVersion({
-      updatedAt: task.updatedAt,
-      projectId: task.projectId,
+      updatedAt: task!.updatedAt as Date,
+      projectId: task!.projectId as string,
     });
 
     const res = await reserveGeneration({
@@ -1453,7 +1453,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
       });
 
       // Simulate lease expiration
-      generations.get(generation.id).leaseExpiresAt = new Date(Date.now() - 10000);
+      generations.get(generation.id)!.leaseExpiresAt = new Date(Date.now() - 10000);
 
       await expect(
         renewGenerationLease({
@@ -1626,7 +1626,7 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
     });
 
     // Simulate writer lease expiration
-    generations.get(expiredGen.id).leaseExpiresAt = new Date(Date.now() - 5000);
+    generations.get(expiredGen.id)!.leaseExpiresAt = new Date(Date.now() - 5000);
 
     // Subsequent reservation succeeds and marks expired generation FAILED
     const { generation: newGen, claimToken: newClaimToken } = await reserveGeneration({
@@ -1647,9 +1647,9 @@ describe("Forge Vector V2 — Phase A: Generation State Service", () => {
 
     // Check that expired generation was superseded and marked FAILED
     const genInStore = generations.get(expiredGen.id);
-    expect(genInStore.status).toBe("FAILED");
-    expect(genInStore.claimToken).toBeNull();
-    expect(genInStore.leaseExpiresAt).toBeNull();
-    expect(genInStore.lastError).toBe("Writer lease expired; superseded by subsequent reservation");
+    expect(genInStore?.status).toBe("FAILED");
+    expect(genInStore?.claimToken).toBeNull();
+    expect(genInStore?.leaseExpiresAt).toBeNull();
+    expect(genInStore?.lastError).toBe("Writer lease expired; superseded by subsequent reservation");
   });
 });
