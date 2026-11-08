@@ -8,6 +8,10 @@
 
 jest.mock("server-only", () => ({}));
 
+jest.mock("@/lib/events/event-bus", () => ({
+  dispatchEvent: jest.fn().mockResolvedValue(undefined),
+}));
+
 jest.mock("@/lib/prisma/extended", () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { prismaDouble } = require("./helpers/prisma-double");
