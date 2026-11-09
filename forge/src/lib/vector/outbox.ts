@@ -4,8 +4,12 @@ import { Prisma, VectorEntityType, VectorOutboxStatus } from "@prisma/client";
 export { VectorEntityType, VectorOutboxStatus };
 import { PIPELINE_CONTRACT_VERSION } from "./provenance";
 
+export type VectorSyncTransactionClient = {
+  $queryRaw: <T = unknown>(query: TemplateStringsArray, ...values: unknown[]) => Promise<T>;
+};
+
 export interface RecordVectorSyncIntentParams {
-  tx: Prisma.TransactionClient;
+  tx: VectorSyncTransactionClient;
   orgId: string;
   entityType: VectorEntityType;
   entityId: string;
@@ -223,7 +227,7 @@ export async function markVectorOutboxDispatched({
 }
 
 export interface CompleteOutboxParams {
-  db: Prisma.TransactionClient;
+  db: VectorSyncTransactionClient;
   outboxEventId: string;
 }
 

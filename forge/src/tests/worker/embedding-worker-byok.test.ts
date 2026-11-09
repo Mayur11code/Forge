@@ -1,6 +1,13 @@
 // src/tests/worker/embedding-worker-byok.test.ts
 jest.mock("server-only", () => ({}));
-jest.mock("@/lib/prisma/db", () => ({ db: {} }));
+jest.mock("@/lib/prisma/db", () => ({
+  db: {
+    vectorEntityHead: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    $queryRaw: jest.fn().mockResolvedValue([]),
+  },
+}));
 
 import { embeddingWorkerHandler } from "@/app/api/worker/embedding-worker/ew";
 import { resolveOrganizationGenerativeAiClient, AiResolverError } from "@/lib/ai/resolver";
@@ -25,6 +32,7 @@ jest.mock("@/lib/prisma/extended", () => ({
     attachment: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
     },
   },
 }));

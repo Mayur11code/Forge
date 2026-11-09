@@ -11,8 +11,47 @@ import { waitUntil } from "@vercel/functions";
 
 
 /**
+ * Validates and converts an arbitrary object into a genuine Prisma.InputJsonObject.
+ * Rejects unsupported types (functions, symbols, bigints, NaN, Infinity) explicitly.
+ */
+export function toPrismaJsonObject(value: unknown): Prisma.InputJsonObject {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Event payload must be a non-null object");
+  }
+  const result: Record<string, Prisma.InputJsonValue | null> = {};
+  for (const [key, val] of Object.entries(value)) {
+    if (typeof val === "undefined" || typeof val === "function" || typeof val === "symbol") {
+      continue;
+    }
+    result[key] = toPrismaJsonValue(val);
+  }
+  return result as Prisma.InputJsonObject;
+}
+
+export function toPrismaJsonValue(value: unknown): Prisma.InputJsonValue | null {
+  if (value === null || typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || Number.isNaN(value)) {
+      throw new Error("Invalid JSON number: NaN or Infinity");
+    }
+    return value;
+  }
+  if (typeof value === "undefined" || typeof value === "function" || typeof value === "symbol" || typeof value === "bigint") {
+    throw new Error(`Unsupported JSON value of type ${typeof value}`);
+  }
+  if (Array.isArray(value)) {
+    return value.map(toPrismaJsonValue) as Prisma.InputJsonArray;
+  }
+  if (typeof value === "object") {
+    return toPrismaJsonObject(value);
+  }
+  throw new Error("Unsupported JSON value");
+}
+
+/**
  * The single, explicit opt-out for local queue-message testing.
- *
  * `ALLOW_UNSIGNED_LOCAL_WORKER=true` is the ONLY way to run a worker without
  * verifying QStash signatures, and it is checked by exact value rather than
  * by truthiness - `ALLOW_UNSIGNED_LOCAL_WORKER=false`, `=0` and an unset
@@ -145,14 +184,14 @@ export function createWorker<K extends EventType>(
         options?.heartbeatIntervalMs ??
         Math.min(30_000, Math.max(100, Math.floor((leaseSeconds * 1000) / 3)));
 
-      const validatedRecord = (validatedData && typeof validatedData === "object") ? (validatedData as Record<string, unknown>) : null;
-      const bodyRecord = (body && typeof body === "object") ? (body as Record<string, unknown>) : null;
-      const outboxEventId =
-        typeof validatedRecord?.outboxEventId === "string"
-          ? validatedRecord.outboxEventId
-          : typeof bodyRecord?.outboxEventId === "string"
-          ? (bodyRecord.outboxEventId as string)
-          : null;
+      function extractOutboxEventId(target: unknown): string | null {
+        if (typeof target === "object" && target !== null && "outboxEventId" in target) {
+          const val = (target as { outboxEventId: unknown }).outboxEventId;
+          return typeof val === "string" && val.length > 0 ? val : null;
+        }
+        return null;
+      }
+      const outboxEventId = extractOutboxEventId(validatedData) ?? extractOutboxEventId(body);
 
       // Logical Work Deduplication: if outboxEventId is provided, check if already completed
       if (outboxEventId) {
@@ -270,7 +309,7 @@ export function createWorker<K extends EventType>(
             data: {
               messageId,
               eventName: type,
-              payload: validatedData as Prisma.InputJsonValue,
+              payload: toPrismaJsonObject(validatedData),
               status: "PENDING",
               ...(outboxEventId ? { outboxEventId } : {}),
             },
@@ -439,6 +478,10 @@ export function createWorker<K extends EventType>(
   return verifySignatureAppRouter(internalHandler);
 }
 
+export type EventLogLeaseClient = {
+  $executeRaw?: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<number>;
+};
+
 /**
  * Monotonically extends the execution lease on an active EventLog row.
  * Fails closed if the worker has already lost ownership (e.g. lease expired and stolen).
@@ -452,13 +495,10 @@ export async function renewEventLogLease({
   messageId?: string;
   claimToken: string;
   extensionSeconds?: number;
-  dbClient?: typeof db | { $executeRaw?: unknown };
+  dbClient?: EventLogLeaseClient;
 }): Promise<{ renewed: boolean }> {
-  if (dbClient && typeof (dbClient as { $executeRaw?: unknown }).$executeRaw === "function") {
-    const rawClient = dbClient as {
-      $executeRaw: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<number>;
-    };
-    const affected = await rawClient.$executeRaw`
+  if (dbClient && typeof dbClient.$executeRaw === "function") {
+    const affected = await dbClient.$executeRaw`
       UPDATE "EventLog"
       SET "leaseExpiresAt" = clock_timestamp() + (${extensionSeconds} || ' seconds')::interval,
           "updatedAt" = clock_timestamp()

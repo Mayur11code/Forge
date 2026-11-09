@@ -264,16 +264,8 @@ export async function embeddingWorkerHandler({ event, options }: EmbeddingEventP
   if (!outboxEventId) {
     try {
       const db = await getDb();
-      const entityHeadDelegate = (db as unknown as {
-        vectorEntityHead?: {
-          findFirst: (args: {
-            where: { orgId: string; entityType: VectorEntityType; entityId: string };
-            select: { activeGenId: boolean };
-          }) => Promise<{ activeGenId: string | null } | null>;
-        };
-      }).vectorEntityHead;
-      if (typeof entityHeadDelegate?.findFirst === "function") {
-        const existingHead = await entityHeadDelegate.findFirst({
+      if (typeof db.vectorEntityHead?.findFirst === "function") {
+        const existingHead = await db.vectorEntityHead.findFirst({
           where: {
             orgId,
             entityType: prismaEntityType,
@@ -607,7 +599,7 @@ export async function embeddingWorkerHandler({ event, options }: EmbeddingEventP
       });
       if (outboxEventId) {
         await completeVectorOutboxEvent({
-          db: db as unknown as Parameters<typeof completeVectorOutboxEvent>[0]["db"],
+          db,
           outboxEventId,
         });
       }
@@ -615,17 +607,9 @@ export async function embeddingWorkerHandler({ event, options }: EmbeddingEventP
 
     console.log(`✅ [EMBEDDING] Successfully activated generation ${generation.id} for ${schemaEntityType}:${entityId}`);
 
-    const extendedPrisma = prisma as unknown as {
-      attachment?: {
-        findMany: (args: {
-          where: { taskId: string; task: { project: { orgId: string } } };
-          select: { id: boolean };
-        }) => Promise<Array<{ id: string }>>;
-      };
-    };
-    if (type === "TASK" && typeof extendedPrisma.attachment?.findMany === "function") {
+    if (type === "TASK" && typeof prisma.attachment?.findMany === "function") {
       try {
-        const childAttachments = await extendedPrisma.attachment.findMany({
+        const childAttachments = await prisma.attachment.findMany({
           where: {
             taskId: entityId,
             task: { project: { orgId } },
@@ -636,7 +620,7 @@ export async function embeddingWorkerHandler({ event, options }: EmbeddingEventP
         if (childAttachments && childAttachments.length > 0) {
           const { publishEvent } = await import("@/lib/events/queue");
           await Promise.allSettled(
-            childAttachments.map((att: { id: string }) =>
+            childAttachments.map((att) =>
               publishEvent("EMBEDDING_REQUESTED", {
                 orgId,
                 entityId: att.id,

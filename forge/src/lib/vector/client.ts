@@ -51,6 +51,38 @@ export const getRawPineconeIndex = <T extends RecordMetadata = RecordMetadata>()
 
 
 
+/**
+ * Safely converts a validated Vector V2 record into a typed PineconeRecord<RecordMetadata>.
+ * Preserves exact vector ID, 768-dimensional values, and metadata key-values.
+ */
+export function toPineconeRecord(record: PineconeRecordV2): PineconeRecord<RecordMetadata> {
+  const meta: RecordMetadata = {
+    contractVersion: record.metadata.contractVersion,
+    entityType: record.metadata.entityType,
+    entityId: record.metadata.entityId,
+    generationId: record.metadata.generationId,
+    sourceRevision: record.metadata.sourceRevision,
+    chunkIndex: record.metadata.chunkIndex,
+    chunkCount: record.metadata.chunkCount,
+    orgId: record.metadata.orgId,
+    projectId: record.metadata.projectId,
+    text: record.metadata.text,
+  };
+  if (record.metadata.title) meta.title = record.metadata.title;
+  if (record.metadata.taskId) meta.taskId = record.metadata.taskId;
+  if (record.metadata.status) meta.status = record.metadata.status;
+  if (record.metadata.priority) meta.priority = record.metadata.priority;
+  if (record.metadata.manifestDigest) meta.manifestDigest = record.metadata.manifestDigest;
+  if (record.metadata.parentTaskVersion) meta.parentTaskVersion = record.metadata.parentTaskVersion;
+  if (record.metadata.sourceVersion) meta.sourceVersion = record.metadata.sourceVersion;
+
+  return {
+    id: record.id,
+    values: record.values,
+    metadata: meta,
+  };
+}
+
 export function getTenantVectorStore(orgId: string) {
   if (!orgId) {
     throw new Error("CRITICAL: orgId is required to instantiate the tenant vector store.");
@@ -158,8 +190,9 @@ export function getTenantVectorStore(orgId: string) {
      */
     async upsertGenerationVectors(records: PineconeRecordV2[]) {
       const sanitized = records.map((r) => PineconeRecordV2Schema.parse(r));
+      const pineconeRecords = sanitized.map(toPineconeRecord);
       return executeWithFailover("upsertGenerationVectors", (ns) =>
-        ns.upsert({ records: sanitized as PineconeRecord<RecordMetadata>[] })
+        ns.upsert({ records: pineconeRecords })
       );
     },
 
@@ -196,6 +229,17 @@ export interface VerifiedVectorRecord {
   id: string;
   values?: number[];
   metadata?: VerifiedVectorMetadata;
+}
+
+interface HttpErrorLike {
+  status?: number;
+  statusCode?: number;
+  response?: { status?: number };
+  message?: string;
+}
+
+function isHttpErrorLike(error: unknown): error is HttpErrorLike {
+  return typeof error === "object" && error !== null;
 }
 
 export interface VerifyPersistenceParams {
@@ -572,9 +616,9 @@ export async function verifyPhysicalPersistence({
         };
       }
     } catch (fetchErr: unknown) {
-      const err = fetchErr as { status?: number; statusCode?: number; response?: { status?: number }; message?: string } | null | undefined;
+      const err = isHttpErrorLike(fetchErr) ? fetchErr : undefined;
       const status = err?.status ?? err?.statusCode ?? err?.response?.status;
-      const errMsg = String(err?.message || fetchErr);
+      const errMsg = err?.message || String(fetchErr);
       if (
         status === 401 ||
         status === 403 ||

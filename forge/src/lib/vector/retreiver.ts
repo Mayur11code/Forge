@@ -3,7 +3,7 @@ import { embed } from 'ai';
 import { resolveOrganizationEmbeddingModel } from '@/lib/ai/resolver';
 import { getTenantVectorStore } from './client';
 import { db } from '@/lib/prisma/db';
-import { VectorEntityType } from '@prisma/client';
+import { Prisma, VectorEntityType } from '@prisma/client';
 import { parseVectorId } from './schema';
 import {
     taskSourceVersion,
@@ -15,7 +15,7 @@ export const MAX_SUPPORTED_TOP_K = 25;
 
 export type ActiveRagCandidatePrismaClient = {
     vectorEntityHead?: {
-        findMany: (args?: unknown) => Promise<Array<{
+        findMany: (args: Prisma.VectorEntityHeadFindManyArgs) => Promise<Array<{
             entityType: VectorEntityType;
             entityId: string;
             activeGenId: string | null;
@@ -24,10 +24,10 @@ export type ActiveRagCandidatePrismaClient = {
         }>>;
     };
     task?: {
-        findMany: (args?: unknown) => Promise<Array<{ id: string }>>;
+        findMany: (args: Prisma.TaskFindManyArgs) => Promise<Array<{ id: string }>>;
     };
     attachment?: {
-        findMany: (args?: unknown) => Promise<Array<{ id: string; taskId?: string }>>;
+        findMany: (args: Prisma.AttachmentFindManyArgs) => Promise<Array<{ id: string; taskId?: string }>>;
     };
 } | typeof db;
 

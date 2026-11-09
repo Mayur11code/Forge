@@ -26,7 +26,7 @@ import {
   computeAttachmentParentTaskVersion,
 } from "@/lib/vector/provenance";
 import { updateTaskSchema } from "@/core/domain";
-import { VectorEntityType, type Prisma, type Task } from "@prisma/client";
+import { Prisma, VectorEntityType, type Task } from "@prisma/client";
 
 export type UpdateTaskActor = {
   orgId: string;
@@ -156,7 +156,7 @@ export async function updateTaskInOrg(
       });
 
       await recordVectorSyncIntent({
-        tx: tx as unknown as Prisma.TransactionClient,
+        tx,
         orgId: actor.orgId,
         entityType: VectorEntityType.TASK,
         entityId: updated.id,
@@ -184,7 +184,7 @@ export async function updateTaskInOrg(
           });
 
           await recordVectorSyncIntent({
-            tx: tx as unknown as Prisma.TransactionClient,
+            tx,
             orgId: actor.orgId,
             entityType: VectorEntityType.ATTACHMENT,
             entityId: att.id,
