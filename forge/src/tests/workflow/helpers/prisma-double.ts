@@ -78,6 +78,10 @@ export const store = {
   runs: [] as Row[],
   stepRuns: [] as Row[],
   auditLogs: [] as Row[],
+  tasks: [] as Row[],
+  projects: [] as Row[],
+  comments: [] as Row[],
+  attachments: [] as Row[],
 };
 
 export function resetStore() {
@@ -85,16 +89,32 @@ export function resetStore() {
   store.runs = [];
   store.stepRuns = [];
   store.auditLogs = [];
+  store.tasks = [];
+  store.projects = [];
+  store.comments = [];
+  store.attachments = [];
   stepRunSeq = 0;
   auditSeq = 0;
   workflowSeq = 0;
   runSeq = 0;
+  taskSeq = 0;
+  projectSeq = 0;
+  commentSeq = 0;
+  attachmentSeq = 0;
+  voeSeq = 0;
+  vehSeq = 0;
 }
 
 let stepRunSeq = 0;
 let auditSeq = 0;
 let workflowSeq = 0;
 let runSeq = 0;
+let taskSeq = 0;
+let projectSeq = 0;
+let commentSeq = 0;
+let attachmentSeq = 0;
+let voeSeq = 0;
+let vehSeq = 0;
 
 function uniqueStepRunViolation(): never {
   const error = new Error(
@@ -523,6 +543,8 @@ const createStepRun = async ({ data }: { data: Row }) => {
     status: "PENDING",
     attempts: 0,
     compensationAttempts: 0,
+    compensationClaimToken: null,
+    compensationLeaseExpiresAt: null,
     inputs: null,
     outputs: null,
     error: null,
@@ -562,6 +584,8 @@ const createManyStepRuns = async ({ data }: { data: Row[] }) => {
       status: "PENDING",
       attempts: 0,
       compensationAttempts: 0,
+      compensationClaimToken: null,
+      compensationLeaseExpiresAt: null,
       inputs: null,
       outputs: null,
       error: null,
@@ -643,14 +667,101 @@ const updateManyStepRuns = async ({
 }) => {
   const hits = store.stepRuns.filter((row) => {
     if (where.id !== undefined && row.id !== where.id) return false;
-    if (where.status !== undefined && !matchesStatus(row, where.status)) return false;
     if (where.runId !== undefined && row.runId !== where.runId) return false;
+    if (
+      where.compensationClaimToken !== undefined &&
+      row.compensationClaimToken !== where.compensationClaimToken
+    ) {
+      return false;
+    }
     if (!matchesStepId(row, where.stepId)) return false;
+
+    if (where.run && typeof where.run === "object") {
+      const parentRun = store.runs.find((r) => r.id === row.runId);
+      const runWhere = where.run as Row;
+      if (
+        runWhere.status !== undefined &&
+        (!parentRun || !matchesStatus(parentRun, runWhere.status))
+      ) {
+        return false;
+      }
+    }
+
+    if (where.OR !== undefined && Array.isArray(where.OR)) {
+      const orMatched = (where.OR as Row[]).some((clause) => {
+        if (clause.status !== undefined && !matchesStatus(row, clause.status)) {
+          return false;
+        }
+        if (clause.compensationLeaseExpiresAt !== undefined) {
+          const expiresAt = row.compensationLeaseExpiresAt;
+          const condition = clause.compensationLeaseExpiresAt as { lt?: Date };
+          if (condition?.lt) {
+            if (
+              !expiresAt ||
+              !(expiresAt instanceof Date) ||
+              expiresAt.getTime() >= condition.lt.getTime()
+            ) {
+              return false;
+            }
+          }
+        }
+        if (clause.OR !== undefined && Array.isArray(clause.OR)) {
+          const innerMatched = (clause.OR as Row[]).some((inner) => {
+            if (
+              inner.compensationClaimToken === null &&
+              (!row.compensationClaimToken || row.compensationClaimToken === null)
+            ) {
+              return true;
+            }
+            if (
+              inner.compensationLeaseExpiresAt === null &&
+              (!row.compensationLeaseExpiresAt || row.compensationLeaseExpiresAt === null)
+            ) {
+              return true;
+            }
+            const leaseCond = inner.compensationLeaseExpiresAt as
+              | { lt?: Date }
+              | null
+              | undefined;
+            if (
+              leaseCond &&
+              typeof leaseCond === "object" &&
+              "lt" in leaseCond &&
+              leaseCond.lt instanceof Date
+            ) {
+              const expiresAt = row.compensationLeaseExpiresAt;
+              if (
+                expiresAt instanceof Date &&
+                expiresAt.getTime() < leaseCond.lt.getTime()
+              ) {
+                return true;
+              }
+            }
+            return false;
+          });
+          if (!innerMatched) return false;
+        }
+        return true;
+      });
+      if (!orMatched) return false;
+    } else if (where.status !== undefined && !matchesStatus(row, where.status)) {
+      return false;
+    }
+
     return true;
   });
 
   for (const row of hits) {
-    Object.assign(row, data);
+    for (const [key, value] of Object.entries(data)) {
+      const increment = value as { increment?: number } | undefined;
+
+      if (increment && typeof increment === "object" && typeof increment.increment === "number") {
+        row[key] = ((row[key] as number) ?? 0) + increment.increment;
+        continue;
+      }
+
+      row[key] = value;
+    }
   }
 
   return { count: hits.length };
@@ -672,6 +783,282 @@ const createAuditLog = async ({ data }: { data: Row }) => {
   return { ...row };
 };
 
+const findFirstAuditLog = async ({ where }: { where: Row }) => {
+  const row = store.auditLogs.find((cand) => {
+    if (where.runId !== undefined && cand.runId !== where.runId) return false;
+    if (where.stepId !== undefined && cand.stepId !== where.stepId) return false;
+    if (where.eventType !== undefined && cand.eventType !== where.eventType) return false;
+    return true;
+  });
+  if (!row) return null;
+  return { ...row };
+};
+
+const findManyAuditLogs = async ({ where }: { where?: Row } = {}) => {
+  return store.auditLogs
+    .filter((cand) => {
+      if (where?.runId !== undefined && cand.runId !== where.runId) return false;
+      if (where?.stepId !== undefined && cand.stepId !== where.stepId) return false;
+      if (where?.eventType !== undefined && cand.eventType !== where.eventType) return false;
+      return true;
+    })
+    .map((row) => ({ ...row }));
+};
+
+const createTask = async ({ data }: { data: Row }) => {
+  taskSeq += 1;
+  const row: Row = {
+    id: data.id ?? `task_${taskSeq}`,
+    status: "TODO",
+    priority: "MEDIUM",
+    description: null,
+    assigneeId: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...data,
+  };
+  store.tasks.push(row);
+  return { ...row };
+};
+
+const findUniqueTask = async ({ where, include }: { where: Row; include?: Row }) => {
+  const row = store.tasks.find((t) => t.id === where.id);
+  if (!row) return null;
+  const result: Row = { ...row };
+  if (include?.project) {
+    result.project = store.projects.find((p) => p.id === row.projectId) ?? null;
+  }
+  return result;
+};
+
+const findFirstTask = async ({ where }: { where: Row }) => {
+  const row = store.tasks.find((t) => {
+    if (where.id !== undefined && t.id !== where.id) return false;
+    if (where.projectId !== undefined && t.projectId !== where.projectId) return false;
+    return true;
+  });
+  if (!row) return null;
+  return { ...row };
+};
+
+const updateTask = async ({ where, data }: { where: Row; data: Row }) => {
+  const row = store.tasks.find((t) => t.id === where.id);
+  if (!row) throw new Error(`Task ${String(where.id)} not found`);
+  Object.assign(row, data);
+  row.updatedAt = new Date();
+  return { ...row };
+};
+
+const deleteTask = async ({ where }: { where: Row }) => {
+  const idx = store.tasks.findIndex((t) => t.id === where.id);
+  if (idx === -1) throw new Error(`Task ${String(where.id)} not found`);
+  const [removed] = store.tasks.splice(idx, 1);
+  return { ...removed };
+};
+
+const countTasks = async ({ where }: { where?: Row } = {}) => {
+  if (!where) return store.tasks.length;
+  return store.tasks.filter((t) => {
+    if (where.id !== undefined && t.id !== where.id) return false;
+    if (where.projectId !== undefined && t.projectId !== where.projectId) return false;
+    return true;
+  }).length;
+};
+
+const createProject = async ({ data }: { data: Row }) => {
+  projectSeq += 1;
+  const row: Row = {
+    id: data.id ?? `proj_${projectSeq}`,
+    name: "Test Project",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...data,
+  };
+  store.projects.push(row);
+  return { ...row };
+};
+
+const findFirstProject = async ({ where, select }: { where: Row; select?: Row }) => {
+  const row = store.projects.find((p) => {
+    if (where.id !== undefined && p.id !== where.id) return false;
+    if (where.orgId !== undefined && p.orgId !== where.orgId) return false;
+    return true;
+  });
+  if (!row) return null;
+  if (!select) return { ...row };
+  const picked: Row = {};
+  for (const k of Object.keys(select)) {
+    if (select[k]) picked[k] = row[k];
+  }
+  return picked;
+};
+
+const findUniqueProject = async ({ where, select }: { where: Row; select?: Row }) => {
+  const row = store.projects.find((p) => p.id === where.id);
+  if (!row) return null;
+  if (!select) return { ...row };
+  const picked: Row = {};
+  for (const k of Object.keys(select)) {
+    if (select[k]) picked[k] = row[k];
+  }
+  return picked;
+};
+
+const createComment = async ({ data }: { data: Row }) => {
+  commentSeq += 1;
+  const row: Row = {
+    id: data.id ?? `comm_${commentSeq}`,
+    createdAt: new Date(),
+    ...data,
+  };
+  store.comments.push(row);
+  return { ...row };
+};
+
+const countComments = async ({ where }: { where?: Row } = {}) => {
+  if (!where) return store.comments.length;
+  return store.comments.filter((c) => {
+    if (where.taskId !== undefined && c.taskId !== where.taskId) return false;
+    return true;
+  }).length;
+};
+
+const findManyComments = async ({ where }: { where?: Row } = {}) => {
+  if (!where) return store.comments.map((c) => ({ ...c }));
+  return store.comments
+    .filter((c) => {
+      if (where.taskId !== undefined && c.taskId !== where.taskId) return false;
+      return true;
+    })
+    .map((c) => ({ ...c }));
+};
+
+const createAttachment = async ({ data }: { data: Row }) => {
+  attachmentSeq += 1;
+  const row: Row = {
+    id: data.id ?? `att_${attachmentSeq}`,
+    createdAt: new Date(),
+    ...data,
+  };
+  store.attachments.push(row);
+  return { ...row };
+};
+
+const countAttachments = async ({ where }: { where?: Row } = {}) => {
+  if (!where) return store.attachments.length;
+  return store.attachments.filter((a) => {
+    if (where.taskId !== undefined && a.taskId !== where.taskId) return false;
+    return true;
+  }).length;
+};
+
+const findManyAttachments = async ({ where }: { where?: Row } = {}) => {
+  if (!where) return store.attachments.map((a) => ({ ...a }));
+  return store.attachments
+    .filter((a) => {
+      if (where.taskId !== undefined && a.taskId !== where.taskId) return false;
+      return true;
+    })
+    .map((a) => ({ ...a }));
+};
+
+const findFirstMembership = async ({ where }: { where: Row }) => {
+  return { userId: where.userId, orgId: where.orgId };
+};
+
+const createVectorOutboxEvent = async ({ data }: { data: Row }) => {
+  voeSeq += 1;
+  const row: Row = {
+    id: `voe_${voeSeq}`,
+    status: "PENDING",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...data,
+  };
+  return { ...row };
+};
+
+const updateManyVectorOutboxEvents = async ({ }: { where?: Row; data?: Row } = {}) => {
+  return { count: 0 };
+};
+
+const upsertVectorEntityHead = async ({ create }: { where?: Row; create?: Row; update?: Row }) => {
+  vehSeq += 1;
+  return {
+    id: `veh_${vehSeq}`,
+    orgId: create?.orgId ?? "test-org",
+    entityType: create?.entityType ?? "TASK",
+    entityId: create?.entityId ?? "test-entity",
+    isTombstone: create?.isTombstone ?? false,
+    tombstonedAt: null,
+    activeGenId: null,
+    latestRevision: 0,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+};
+
+const findUniqueVectorEntityHead = async ({ where }: { where: Row }) => {
+  return {
+    id: where.id ?? `head_default`,
+    orgId: "test-org",
+    entityType: "TASK",
+    entityId: "test-entity",
+    isTombstone: true,
+    tombstonedAt: new Date(),
+    activeGenId: null,
+    latestRevision: 0,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+};
+
+const queryRawImpl = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+  const text = strings.join("?");
+  if (text.includes('FROM "Task" t') && values.length > 0) {
+    const taskId = values[0] as string;
+    const task = store.tasks.find((t) => t.id === taskId);
+    if (!task) return [];
+    const project = store.projects.find((p) => p.id === task.projectId);
+    return [
+      {
+        id: task.id,
+        title: task.title,
+        description: task.description ?? null,
+        status: task.status,
+        priority: task.priority,
+        projectId: task.projectId,
+        assigneeId: task.assigneeId ?? null,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        orgId: project?.orgId ?? "system",
+      },
+    ];
+  }
+  if (text.includes('FROM "VectorEntityHead"') && values.length >= 3) {
+    const orgId = values[0] as string;
+    const entityType = values[1] as string;
+    const entityId = values[2] as string;
+    return [
+      {
+        id: `head_${entityId}`,
+        orgId,
+        entityType,
+        entityId,
+        isTombstone: true,
+      },
+    ];
+  }
+  if (text.includes('FROM "VectorGeneration"')) {
+    return [];
+  }
+  return [];
+};
+
+const executeRawImpl = async (_strings: TemplateStringsArray, ..._values: unknown[]) => {
+  return 0;
+};
+
 /**
  * Transactional wrapper, in both of Prisma's shapes.
  *
@@ -684,11 +1071,7 @@ const createAuditLog = async ({ data }: { data: Row }) => {
  * not that a mid-transaction failure would undo the first. That guarantee belongs
  * to Postgres and is covered by the migration and live verification, not here.
  */
-type TransactionCapableDouble = {
-  stepRun: { update: unknown; create: unknown; updateMany: unknown };
-  workflowRun: { update: unknown; updateMany: unknown; findUnique: unknown };
-  executionAuditLog: { create: unknown };
-};
+type TransactionCapableDouble = PrismaDouble;
 
 const runTransaction = <T>(
   fn: (tx: TransactionCapableDouble) => Promise<T>,
@@ -749,6 +1132,8 @@ type PrismaDouble = {
   $connect: () => Promise<void>;
   $disconnect: () => Promise<void>;
   $extends: jest.Mock;
+  $queryRaw: jest.Mock;
+  $executeRaw: jest.Mock;
   workflow: {
     findFirst: jest.Mock;
     findUnique: jest.Mock;
@@ -771,7 +1156,46 @@ type PrismaDouble = {
     update: jest.Mock;
     updateMany: jest.Mock;
   };
-  executionAuditLog: { create: jest.Mock };
+  executionAuditLog: {
+    create: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+  };
+  task: {
+    create: jest.Mock;
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    update: jest.Mock;
+    delete: jest.Mock;
+    count: jest.Mock;
+  };
+  project: {
+    create: jest.Mock;
+    findFirst: jest.Mock;
+    findUnique: jest.Mock;
+  };
+  comment: {
+    create: jest.Mock;
+    count: jest.Mock;
+    findMany: jest.Mock;
+  };
+  attachment: {
+    create: jest.Mock;
+    count: jest.Mock;
+    findMany: jest.Mock;
+  };
+  membership: {
+    findFirst: jest.Mock;
+  };
+  vectorOutboxEvent: {
+    create: jest.Mock;
+    updateMany: jest.Mock;
+  };
+  vectorEntityHead: {
+    upsert: jest.Mock;
+    findUnique: jest.Mock;
+    findUniqueOrThrow: jest.Mock;
+  };
 };
 
 /**
@@ -796,6 +1220,8 @@ export const prismaDouble: PrismaDouble = {
   $connect: lifecycleNoop,
   $disconnect: lifecycleNoop,
   $extends: extend,
+  $queryRaw: jest.fn(queryRawImpl),
+  $executeRaw: jest.fn(executeRawImpl),
 
   workflow: {
     findFirst: jest.fn(findFirstWorkflow),
@@ -824,6 +1250,50 @@ export const prismaDouble: PrismaDouble = {
 
   executionAuditLog: {
     create: jest.fn(createAuditLog),
+    findFirst: jest.fn(findFirstAuditLog),
+    findMany: jest.fn(findManyAuditLogs),
+  },
+
+  task: {
+    create: jest.fn(createTask),
+    findUnique: jest.fn(findUniqueTask),
+    findFirst: jest.fn(findFirstTask),
+    update: jest.fn(updateTask),
+    delete: jest.fn(deleteTask),
+    count: jest.fn(countTasks),
+  },
+
+  project: {
+    create: jest.fn(createProject),
+    findFirst: jest.fn(findFirstProject),
+    findUnique: jest.fn(findUniqueProject),
+  },
+
+  comment: {
+    create: jest.fn(createComment),
+    count: jest.fn(countComments),
+    findMany: jest.fn(findManyComments),
+  },
+
+  attachment: {
+    create: jest.fn(createAttachment),
+    count: jest.fn(countAttachments),
+    findMany: jest.fn(findManyAttachments),
+  },
+
+  membership: {
+    findFirst: jest.fn(findFirstMembership),
+  },
+
+  vectorOutboxEvent: {
+    create: jest.fn(createVectorOutboxEvent),
+    updateMany: jest.fn(updateManyVectorOutboxEvents),
+  },
+
+  vectorEntityHead: {
+    upsert: jest.fn(upsertVectorEntityHead),
+    findUnique: jest.fn(findUniqueVectorEntityHead),
+    findUniqueOrThrow: jest.fn(findUniqueVectorEntityHead),
   },
 };
 
@@ -845,6 +1315,30 @@ const realImplementations = {
   updateStepRun,
   updateManyStepRuns,
   createAuditLog,
+  findFirstAuditLog,
+  findManyAuditLogs,
+  createTask,
+  findUniqueTask,
+  findFirstTask,
+  updateTask,
+  deleteTask,
+  countTasks,
+  createProject,
+  findFirstProject,
+  findUniqueProject,
+  createComment,
+  countComments,
+  findManyComments,
+  createAttachment,
+  countAttachments,
+  findManyAttachments,
+  findFirstMembership,
+  createVectorOutboxEvent,
+  updateManyVectorOutboxEvents,
+  upsertVectorEntityHead,
+  findUniqueVectorEntityHead,
+  queryRawImpl,
+  executeRawImpl,
   runTransaction,
   runTransactionArray,
   transaction: transactionImpl,
@@ -883,6 +1377,35 @@ export function restoreWorkflowDouble(): void {
   prismaDouble.executionAuditLog.create.mockImplementation(
     realImplementations.createAuditLog,
   );
+  prismaDouble.executionAuditLog.findFirst.mockImplementation(
+    realImplementations.findFirstAuditLog,
+  );
+  prismaDouble.executionAuditLog.findMany.mockImplementation(
+    realImplementations.findManyAuditLogs,
+  );
+  prismaDouble.task.create.mockImplementation(realImplementations.createTask);
+  prismaDouble.task.findUnique.mockImplementation(realImplementations.findUniqueTask);
+  prismaDouble.task.findFirst.mockImplementation(realImplementations.findFirstTask);
+  prismaDouble.task.update.mockImplementation(realImplementations.updateTask);
+  prismaDouble.task.delete.mockImplementation(realImplementations.deleteTask);
+  prismaDouble.task.count.mockImplementation(realImplementations.countTasks);
+  prismaDouble.project.create.mockImplementation(realImplementations.createProject);
+  prismaDouble.project.findFirst.mockImplementation(realImplementations.findFirstProject);
+  prismaDouble.project.findUnique.mockImplementation(realImplementations.findUniqueProject);
+  prismaDouble.comment.create.mockImplementation(realImplementations.createComment);
+  prismaDouble.comment.count.mockImplementation(realImplementations.countComments);
+  prismaDouble.comment.findMany.mockImplementation(realImplementations.findManyComments);
+  prismaDouble.attachment.create.mockImplementation(realImplementations.createAttachment);
+  prismaDouble.attachment.count.mockImplementation(realImplementations.countAttachments);
+  prismaDouble.attachment.findMany.mockImplementation(realImplementations.findManyAttachments);
+  prismaDouble.membership.findFirst.mockImplementation(realImplementations.findFirstMembership);
+  prismaDouble.vectorOutboxEvent.create.mockImplementation(realImplementations.createVectorOutboxEvent);
+  prismaDouble.vectorOutboxEvent.updateMany.mockImplementation(realImplementations.updateManyVectorOutboxEvents);
+  prismaDouble.vectorEntityHead.upsert.mockImplementation(realImplementations.upsertVectorEntityHead);
+  prismaDouble.vectorEntityHead.findUnique.mockImplementation(realImplementations.findUniqueVectorEntityHead);
+  prismaDouble.vectorEntityHead.findUniqueOrThrow.mockImplementation(realImplementations.findUniqueVectorEntityHead);
+  prismaDouble.$queryRaw.mockImplementation(realImplementations.queryRawImpl);
+  prismaDouble.$executeRaw.mockImplementation(realImplementations.executeRawImpl);
   prismaDouble.$transaction.mockImplementation(realImplementations.transaction);
   prismaDouble.$extends.mockImplementation(realImplementations.$extends);
 }

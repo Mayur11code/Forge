@@ -57,6 +57,7 @@ enum StepExecutionStatus {
   COMPENSATING
   COMPENSATED
   COMPENSATION_FAILED
+  COMPENSATION_RETRYING
 }
 
 enum LogLevel {
@@ -634,6 +635,10 @@ model StepRun {
   status      StepExecutionStatus @default(PENDING)
   attempts    Int                 @default(0) // Tracks retries for exponential backoff
   compensationAttempts  Int @default(0) 
+
+  // Compensation ownership & lease fencing (F-05A)
+  compensationClaimToken     String?
+  compensationLeaseExpiresAt DateTime?
 
   // Execution Payloads
   inputs      Json?             
