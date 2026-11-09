@@ -40,34 +40,6 @@ import type { WorkflowDefinition } from "@/lib/workflow-types/workflow";
 import type { JsonValue } from "@/lib/workflow-types/type";
 import type { StepExecutionStatus } from "@prisma/client";
 
-/**
- * Which operation a delivery should perform, derived from the step's persisted
- * status.
- *
- * This is a lookup rather than a ternary on purpose. The previous form was
- * `status === "PENDING" ? "EXECUTE" : "COMPENSATE"`, which routes every status
- * that is not PENDING into compensation - including `RETRYING` and `RUNNING`.
- *
- * That is not a cosmetic mix-up. A retriable failure puts a step in `RETRYING`
- * and the worker answers 500, so QStash redelivers it. The old ternary read
- * `RETRYING` as "compensate this", and compensation claims by `status: SUCCESS`,
- * which a `RETRYING` row is not - so the claim matched nothing, the wrapper
- * reported success, the step stayed `RETRYING` forever, and the evaluator
- * skipped it on every subsequent pass. The retry path did not work at all, and
- * it did so silently.
- */
-const OPERATION_FOR_STATUS: Partial<
-  Record<StepExecutionStatus, "EXECUTE" | "COMPENSATE">
-> = {
-  // Forward: a fresh dispatch, or a redelivery of one that failed retriably.
-  PENDING: "EXECUTE",
-  RETRYING: "EXECUTE",
-  // Reverse: only a step that actually succeeded has anything to compensate, and
-  // a retriable compensation failure comes back here too.
-  SUCCESS: "COMPENSATE",
-  COMPENSATING: "COMPENSATE",
-};
-
 type CloudEventWrapper = {
   type: string;
   data:
@@ -123,54 +95,106 @@ async function handleExecuteWorkflowNode(
     return new NextResponse("Not Found", { status: 404 });
   }
 
-  // --- Idempotency guard ---
-  // QStash is at-least-once. A redelivery of a step that already reached a
-  // terminal state must not run the action again.
-  const TERMINAL_STATUSES: StepExecutionStatus[] = [
-    "SUCCESS",
-    "FAILED",
-    "CANCELLED",
-    "SKIPPED",
-    "COMPENSATED",
-    "COMPENSATION_FAILED",
-  ];
+  // --- Phase-specific idempotency and operation derivation (F-01) ---
+  let operation: "EXECUTE" | "COMPENSATE";
 
-  if (TERMINAL_STATUSES.includes(stepRun.status)) {
+  if (stepRun.run.status === "ROLLING_BACK") {
+    // 1. Ghost buster: A run rolling back while a forward step was queued
+    // means the step must never run forward.
+    if (stepRun.status === "PENDING" || stepRun.status === "RETRYING") {
+      console.log(`[WORKER] Ghost busted. Cancelling step ${stepRunId}.`);
+      await db.stepRun.update({
+        where: { id: stepRunId },
+        data: { status: "CANCELLED" },
+      });
+      await handleAdvanceWorkflow(runId);
+      return new NextResponse("Ghost Cancelled", { status: 200 });
+    }
+
+    // 2. Rollback terminal statuses: already completed or never ran forward
+    const ROLLBACK_TERMINAL_STATUSES: StepExecutionStatus[] = [
+      "COMPENSATED",
+      "COMPENSATION_FAILED",
+      "CANCELLED",
+      "SKIPPED",
+      "FAILED",
+    ];
+
+    if (ROLLBACK_TERMINAL_STATUSES.includes(stepRun.status)) {
+      console.log(
+        `[WORKER] StepRun ${stepRunId} is already ${stepRun.status} during rollback. Skipping.`,
+      );
+      return new NextResponse("Already processed", { status: 200 });
+    }
+
+    // 3. In-flight compensation: owned by another delivery
+    if (stepRun.status === "COMPENSATING") {
+      console.log(
+        `[WORKER] StepRun ${stepRunId} is COMPENSATING, owned by another delivery. Skipping.`,
+      );
+      return new NextResponse("In progress", { status: 200 });
+    }
+
+    // 4. In-flight forward execution: wait for forward execution to settle
+    if (stepRun.status === "RUNNING") {
+      console.log(
+        `[WORKER] StepRun ${stepRunId} is still RUNNING from forward execution during rollback. Skipping.`,
+      );
+      return new NextResponse("In progress", { status: 200 });
+    }
+
+    // 5. Eligible for compensation
+    if (stepRun.status === "SUCCESS" || stepRun.status === "COMPENSATION_RETRYING") {
+      operation = "COMPENSATE";
+    } else {
+      console.log(
+        `[WORKER] StepRun ${stepRunId} status ${stepRun.status} unhandled during rollback. Skipping.`,
+      );
+      return new NextResponse("Already processed", { status: 200 });
+    }
+  } else if (stepRun.run.status === "RUNNING" || stepRun.run.status === "PENDING") {
+    // --- Forward execution phase ---
+    const FORWARD_TERMINAL_STATUSES: StepExecutionStatus[] = [
+      "SUCCESS",
+      "FAILED",
+      "CANCELLED",
+      "SKIPPED",
+      "COMPENSATED",
+      "COMPENSATION_FAILED",
+    ];
+
+    if (FORWARD_TERMINAL_STATUSES.includes(stepRun.status)) {
+      console.log(
+        `[WORKER] StepRun ${stepRunId} is already ${stepRun.status}. Skipping.`,
+      );
+      return new NextResponse("Already processed", { status: 200 });
+    }
+
+    if (stepRun.status === "RUNNING") {
+      console.log(
+        `[WORKER] StepRun ${stepRunId} is RUNNING, owned by another delivery. Skipping.`,
+      );
+      return new NextResponse("In progress", { status: 200 });
+    }
+
+    if (stepRun.status === "COMPENSATING" || stepRun.status === "COMPENSATION_RETRYING") {
+      console.log(
+        `[WORKER] StepRun ${stepRunId} is in rollback status ${stepRun.status} during forward execution. Skipping.`,
+      );
+      return new NextResponse("Already processed", { status: 200 });
+    }
+
+    if (stepRun.status === "PENDING" || stepRun.status === "RETRYING") {
+      operation = "EXECUTE";
+    } else {
+      return new NextResponse("Already processed", { status: 200 });
+    }
+  } else {
+    // Run is in a terminal state: COMPLETED, ROLLED_BACK, REQUIRES_INTERVENTION, FAILED
     console.log(
-      `[WORKER] StepRun ${stepRunId} is already ${stepRun.status}. Skipping.`,
+      `[WORKER] WorkflowRun ${runId} is terminal (${stepRun.run.status}). StepRun ${stepRunId} (${stepRun.status}) skipped.`,
     );
     return new NextResponse("Already processed", { status: 200 });
-  }
-
-  const operation = OPERATION_FOR_STATUS[stepRun.status];
-
-  if (!operation) {
-    // RUNNING or COMPENSATING: another delivery of this same step owns it. The
-    // wrapper's compare-and-set would refuse the claim anyway; returning early
-    // says so honestly instead of letting it look like a successful no-op, and
-    // crucially does not hand a RUNNING step to the compensation path.
-    console.log(
-      `[WORKER] StepRun ${stepRunId} is ${stepRun.status}, owned by another delivery. Skipping.`,
-    );
-    return new NextResponse("In progress", { status: 200 });
-  }
-
-  // --- Ghost buster ---
-  // A run that started rolling back while this step was still queued means the
-  // step must never run. `RETRYING` belongs here for the same reason it belongs
-  // in the forward path above: it is a forward step that has not succeeded, and
-  // a rollback must not leave it live.
-  if (
-    stepRun.run.status === "ROLLING_BACK" &&
-    (stepRun.status === "PENDING" || stepRun.status === "RETRYING")
-  ) {
-    console.log(`[WORKER] Ghost busted. Cancelling step ${stepRunId}.`);
-    await db.stepRun.update({
-      where: { id: stepRunId },
-      data: { status: "CANCELLED" },
-    });
-    await handleAdvanceWorkflow(runId);
-    return new NextResponse("Ghost Cancelled", { status: 200 });
   }
 
   // The definition is validated on write, so it is already a `WorkflowDefinition`
@@ -209,7 +233,7 @@ async function handleExecuteWorkflowNode(
 
   // --- Dead letter / retry signalling ---
   if (!result.success && "status" in result) {
-    if (result.status === "RETRYING" || result.status === "COMPENSATING") {
+    if (result.status === "RETRYING" || result.status === "COMPENSATION_RETRYING") {
       console.warn(
         `[WORKER] Step ${stepRun.stepId} failed ${operation}. Triggering QStash retry.`,
       );

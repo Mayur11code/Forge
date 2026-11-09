@@ -106,6 +106,7 @@ async function findStaleRuns(now: Date, limit: number) {
           stepId: true,
           status: true,
           attempts: true,
+          compensationAttempts: true,
           startedAt: true,
         },
       },
@@ -128,14 +129,23 @@ export async function sweepStaleWorkflowRuns({
   for (const run of staleRuns) {
     for (const step of run.stepRuns) {
       // --- Already settled; the run is lagging, not stuck. ---
-      if (
-        step.status === "SUCCESS" ||
+      // Note: SUCCESS is ONLY settled if the run is NOT ROLLING_BACK.
+      // During ROLLING_BACK, a SUCCESS step must be compensated!
+      const isSettled =
         step.status === "FAILED" ||
         step.status === "CANCELLED" ||
         step.status === "SKIPPED" ||
         step.status === "COMPENSATED" ||
-        step.status === "COMPENSATION_FAILED"
-      ) {
+        step.status === "COMPENSATION_FAILED" ||
+        (step.status === "SUCCESS" && run.status !== "ROLLING_BACK");
+
+      if (isSettled) {
+        continue;
+      }
+
+      // During ROLLING_BACK, a SUCCESS step is waiting to be reversed according to DAG reverse order.
+      // We leave it intact so advanceWorkflow(run.id) below evaluates and dispatches it in order.
+      if (run.status === "ROLLING_BACK" && step.status === "SUCCESS") {
         continue;
       }
 
@@ -179,10 +189,33 @@ export async function sweepStaleWorkflowRuns({
         continue;
       }
 
+      // --- Safe to re-drive compensation: retriable compensation failure under cap ---
+      if (
+        step.status === "COMPENSATION_RETRYING" &&
+        step.compensationAttempts < MAX_RETRIES
+      ) {
+        await publishEvent("EXECUTE_WORKFLOW_NODE", {
+          runId: run.id,
+          stepRunId: step.id,
+          kind: "ACTION",
+        });
+
+        outcomes.push({
+          runId: run.id,
+          stepId: step.stepId,
+          stepStatus: step.status,
+          action: "REDRIVEN",
+          reason: `Retriable compensation failure at attempt ${step.compensationAttempts}; broker retries were exhausted.`,
+        });
+        continue;
+      }
+
       // --- Ambiguous: claimed, then abandoned. Never re-run. ---
       // `COMPENSATION_FAILED` is absent because the terminal check above already
       // excluded it; the only in-flight compensation status left is this one.
-      const isCompensation = step.status === "COMPENSATING";
+      const isCompensation =
+        step.status === "COMPENSATING" ||
+        (step.status === "COMPENSATION_RETRYING" && step.compensationAttempts >= MAX_RETRIES);
 
       const reason =
         `Step was abandoned in ${step.status}. Its action may or may not have ` +

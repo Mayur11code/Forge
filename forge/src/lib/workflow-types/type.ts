@@ -46,7 +46,7 @@ export type ExecuteFunction = (ctx: ActionContext) => Promise<ActionResult>;
 
 
 export type CompensateFunction = (
-  ctx: ActionContext & { outputs: JsonValue }
+  ctx: ActionContext & { outputs: JsonValue; stepRunId?: string }
 ) => Promise<ActionResult>;
 
 export interface WorkflowAction {

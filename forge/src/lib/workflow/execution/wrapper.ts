@@ -3,10 +3,15 @@ import { getAction } from "@/lib/workflow-types/action-registry";
 import { appendStepOutputToContext } from "./state";
 import { ActionContext } from "@/lib/workflow-types/type";
 import type { JsonValue } from "@/lib/workflow-types/type";
-import type { StepExecutionStatus } from "@prisma/client";
+import type { Prisma, StepExecutionStatus } from "@prisma/client";
 import { Redis } from '@upstash/redis';
 import { pusherServer } from "@/lib/pusher/pusher-server";
 import { workflowChannelName } from "@/lib/pusher/workflow-channel";
+import {
+  claimCompensationAttempt,
+  completeCompensationAttempt,
+  failCompensationAttempt,
+} from "./compensation-claim";
 
 
 export const redis = Redis.fromEnv();
@@ -47,6 +52,59 @@ function describeError(error: unknown): string {
   }
 
   return String(error);
+}
+
+/**
+ * Safely extract business object identifiers (e.g. taskId, id, fileId) from step outputs.
+ */
+function extractBusinessObjectIdentifiers(outputs: unknown): Record<string, JsonValue> {
+  if (!outputs || typeof outputs !== "object" || Array.isArray(outputs)) {
+    return {};
+  }
+  const obj = outputs as Record<string, unknown>;
+  const identifiers: Record<string, JsonValue> = {};
+
+  const knownKeys = ["taskId", "id", "reportId", "fileId", "entityId", "userId", "orgId"];
+  for (const key of knownKeys) {
+    const val = obj[key];
+    if (val !== undefined && val !== null) {
+      if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+        identifiers[key] = val;
+      }
+    }
+  }
+
+  return identifiers;
+}
+
+const SENSITIVE_KEY_PATTERN = /password|secret|token|apikey|authorization|auth|privatekey/i;
+
+/**
+ * Deeply redact sensitive fields from inputs and outputs before writing to audit logs.
+ */
+function redactSensitiveData(data: unknown, depth = 0): JsonValue {
+  if (depth > 5 || data === undefined || data === null) return null;
+  if (typeof data === "string" || typeof data === "number" || typeof data === "boolean") {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    return data.map((item) => redactSensitiveData(item, depth + 1));
+  }
+
+  if (typeof data === "object") {
+    const result: Record<string, JsonValue> = {};
+    for (const [key, val] of Object.entries(data as Record<string, unknown>)) {
+      if (SENSITIVE_KEY_PATTERN.test(key)) {
+        result[key] = "[REDACTED]";
+      } else {
+        result[key] = redactSensitiveData(val, depth + 1);
+      }
+    }
+    return result;
+  }
+
+  return String(data);
 }
 
 /**
@@ -91,10 +149,18 @@ export async function wrapStepOperation(
     throw new Error(`CRITICAL: StepRun ${stepId} not found for Run ${runId}`);
   }
 
-  if (
-    kind ===
-    "TRIGGER"
-  ) {
+  if (kind === "TRIGGER") {
+    if (operation === "COMPENSATE") {
+      await db.stepRun.update({
+        where: { id: stepRun.id },
+        data: {
+          status: "COMPENSATED",
+          completedAt: new Date(),
+        },
+      });
+      await broadcastStatus(runId, stepRun.stepId, "COMPENSATED");
+      return { success: true };
+    }
 
     await db.stepRun.update({
       where: {
@@ -102,53 +168,52 @@ export async function wrapStepOperation(
       },
       data: {
         status: "SUCCESS",
-        completedAt:
-          new Date(),
+        completedAt: new Date(),
       },
     });
 
     await broadcastStatus(runId, stepRun.stepId, "SUCCESS");
     return { success: true };
   }
+
   // 2. PRE-FLIGHT: Atomic Claim
-  //
-  // The claim is a compare-and-set over a SET of statuses rather than one
-  // status, because a redelivery does not arrive in the state the first
-  // delivery left it in. QStash retries when this route answers 500, and a
-  // retriable action failure parks the step in RETRYING - so a forward claim has
-  // to accept PENDING (never attempted) and RETRYING (attempted, will be tried
-  // again). Claiming only PENDING made every retry fail its own claim and report
-  // success, stranding the step in RETRYING forever.
-  //
-  // The compensation side has the identical shape for the identical reason:
-  // COMPENSATING is a retriable compensation failure, and SUCCESS is a forward
-  // success that has not been reversed yet.
-  const claimableFrom: StepExecutionStatus[] =
-    operation === "EXECUTE" ? ["PENDING", "RETRYING"] : ["SUCCESS", "COMPENSATING"];
+  let claimToken: string | undefined;
+  let compensationAttempts = stepRun.compensationAttempts;
+
+  if (operation === "COMPENSATE") {
+    const claim = await claimCompensationAttempt({
+      stepRunId: stepRun.id,
+      runId,
+    });
+    if (!claim.acquired) {
+      console.warn(
+        `[WRAPPER] Step ${stepId} compensation claim refused (${claim.reason}). Aborting ghost/duplicate execution.`
+      );
+      return { success: true };
+    }
+    claimToken = claim.claimToken;
+    compensationAttempts = claim.compensationAttempts;
+  } else {
+    const claimableFrom: StepExecutionStatus[] = ["PENDING", "RETRYING"];
+    const claimResult = await db.stepRun.updateMany({
+      where: { id: stepRun.id, status: { in: claimableFrom } },
+      data: {
+        status: "RUNNING",
+        startedAt: stepRun.startedAt || new Date(),
+        ...(resolvedInputs ? { inputs: resolvedInputs } : {}),
+      },
+    });
+
+    if (claimResult.count === 0) {
+      console.warn(`[WRAPPER] Step ${stepId} is already claimed. Aborting ghost execution.`);
+      return { success: true };
+    }
+  }
 
   const runningStatus = operation === "EXECUTE" ? "RUNNING" : "COMPENSATING";
 
-  const claimResult = await db.stepRun.updateMany({
-    where: { id: stepRun.id, status: { in: claimableFrom } },
-    data: {
-      status: runningStatus,
-      startedAt: stepRun.startedAt || new Date(),
-      // Only overwrite inputs if we are executing forward
-      ...(operation === "EXECUTE" && resolvedInputs ? { inputs: resolvedInputs } : {})
-    },
-  });
-
-  if (claimResult.count === 0) {
-    console.warn(`[WRAPPER] Step ${stepId} is already claimed. Aborting ghost execution.`);
-    return { success: true };
-  }
-
-
-
   // 🔊 BROADCAST: Step has started
   await broadcastStatus(runId, stepRun.stepId, runningStatus);
-
-
 
   // Audit Log
   await db.executionAuditLog.create({
@@ -157,16 +222,42 @@ export async function wrapStepOperation(
       stepId: stepRun.id,
       logLevel: "INFO",
       eventType: operation === "EXECUTE" ? "STEP_STARTED" : "COMPENSATION_STARTED",
-      message: `Began ${operation} of action: ${actionId} (Attempt ${stepRun.attempts + 1})`,
-      payload: operation === "EXECUTE" ? resolvedInputs || {} : { inputs: stepRun.inputs, outputs: stepRun.outputs },
-    }
+      message: `Began ${operation} of action: ${actionId} (Attempt ${
+        operation === "EXECUTE" ? stepRun.attempts + 1 : compensationAttempts
+      })`,
+      payload:
+        operation === "EXECUTE"
+          ? resolvedInputs || {}
+          : { inputs: stepRun.inputs, outputs: stepRun.outputs },
+    },
   });
-
-
 
   // 3. ACTION LOOKUP
   const action = getAction(actionId);
   if (!action) {
+    if (operation === "COMPENSATE") {
+      const failRes = await failCompensationAttempt({
+        stepRunId: stepRun.id,
+        runId,
+        stepId,
+        claimToken: claimToken!,
+        errorMessage: "Action not found in registry",
+        isRetriable: false,
+        currentAttempts: compensationAttempts,
+        payload: {
+          actionId,
+          stepRunId: stepRun.id,
+          stepId: stepRun.stepId,
+          runId,
+          reason: "ACTION_NOT_IN_REGISTRY",
+          inputs: redactSensitiveData(stepRun.inputs),
+          outputs: redactSensitiveData(stepRun.outputs),
+          businessObject: extractBusinessObjectIdentifiers(stepRun.outputs),
+        } as unknown as Prisma.InputJsonValue,
+      });
+      await broadcastStatus(runId, stepRun.stepId, failRes.status);
+      return { success: false, status: failRes.status, error: "Action not found in registry" };
+    }
     return await handleFailure(stepRun, operation, "Action not found in registry", false);
   }
 
@@ -187,28 +278,95 @@ export async function wrapStepOperation(
     else {
       // THE SAGA PATH
       if (!action.compensate) {
-        // If an action doesn't define a compensate function, it trivially succeeds.
-        result = { success: true, data: { status: "no_compensation_required" } };
-      } else {
-        const context = {
-          workflowId: stepRun.run.workflowId,
+        // Missing compensator on an action with side effects.
+        // Truthful failure: cannot reverse persistent business side effects automatically.
+        const latencyMs = Date.now() - startTime;
+        const errorMessage = `Action ${actionId} has no compensator; side effect cannot be reversed automatically`;
+
+        const failRes = await failCompensationAttempt({
+          stepRunId: stepRun.id,
           runId,
-          stepId,
-          // JSONB read boundary. These blobs are whatever the resolver wrote and
-          // whatever the forward step returned, so they are re-typed at the
-          // point of deserialisation rather than trusted as a shape.
-          inputs: stepRun.inputs as Record<string, JsonValue>,
-          outputs: stepRun.outputs as JsonValue, // Historical outputs!
+          stepId: stepRun.stepId,
+          claimToken: claimToken!,
+          errorMessage,
+          isRetriable: false,
+          currentAttempts: compensationAttempts,
+          latencyMs,
+          payload: {
+            actionId,
+            stepRunId: stepRun.id,
+            stepId: stepRun.stepId,
+            runId,
+            reason: "UNCOMPENSATED_ACTION",
+            inputs: redactSensitiveData(stepRun.inputs),
+            outputs: redactSensitiveData(stepRun.outputs),
+            businessObject: extractBusinessObjectIdentifiers(stepRun.outputs),
+          } as unknown as Prisma.InputJsonValue,
+        });
+
+        await broadcastStatus(runId, stepRun.stepId, failRes.status);
+        return {
+          success: false,
+          status: failRes.status,
+          error: errorMessage,
         };
-        result = await action.compensate(context);
       }
+
+      // Real compensator exists
+      const context = {
+        workflowId: stepRun.run.workflowId,
+        runId,
+        stepId,
+        stepRunId: stepRun.id,
+        // JSONB read boundary. These blobs are whatever the resolver wrote and
+        // whatever the forward step returned, so they are re-typed at the
+        // point of deserialisation rather than trusted as a shape.
+        inputs: stepRun.inputs as Record<string, JsonValue>,
+        outputs: stepRun.outputs as JsonValue, // Historical outputs!
+      };
+      result = await action.compensate(context);
     }
 
     const latencyMs = Date.now() - startTime;
 
     // 5A. POST-FLIGHT: ACTION RETURNED CONTROLLED FAILURE
     if (!result.success) {
-      return await handleFailure(stepRun, operation, result.error || "Unknown Action Error", result.isRetriable, latencyMs);
+      if (operation === "COMPENSATE") {
+        const failRes = await failCompensationAttempt({
+          stepRunId: stepRun.id,
+          runId,
+          stepId,
+          claimToken: claimToken!,
+          errorMessage: result.error || "Unknown Action Error",
+          isRetriable: Boolean(result.isRetriable),
+          currentAttempts: compensationAttempts,
+          latencyMs,
+          payload: {
+            actionId,
+            stepRunId: stepRun.id,
+            stepId: stepRun.stepId,
+            runId,
+            reason: "COMPENSATION_EXECUTION_FAILED",
+            inputs: redactSensitiveData(stepRun.inputs),
+            outputs: redactSensitiveData(stepRun.outputs),
+            businessObject: extractBusinessObjectIdentifiers(stepRun.outputs),
+            error: result.error,
+          } as unknown as Prisma.InputJsonValue,
+        });
+        await broadcastStatus(runId, stepRun.stepId, failRes.status);
+        return {
+          success: false,
+          status: failRes.status,
+          error: result.error || "Unknown Action Error",
+        };
+      }
+      return await handleFailure(
+        stepRun,
+        operation,
+        result.error || "Unknown Action Error",
+        result.isRetriable,
+        latencyMs
+      );
     }
 
     // 5B. POST-FLIGHT: SUCCESS
@@ -225,10 +383,18 @@ export async function wrapStepOperation(
       await broadcastStatus(runId, stepRun.stepId, "SUCCESS");
     } else {
       // Reverse path does NOT write to global context, it just marks as COMPENSATED
-      await db.stepRun.update({
-        where: { id: stepRun.id },
-        data: { status: "COMPENSATED" },
+      const completion = await completeCompensationAttempt({
+        stepRunId: stepRun.id,
+        runId,
+        claimToken: claimToken!,
       });
+
+      if (!completion.completed) {
+        console.warn(
+          `[WRAPPER] Compensation for step ${stepId} completed, but worker was fenced out by newer claim or expired lease.`
+        );
+        return { success: false, error: "Compensation fenced out" };
+      }
 
       // 🔊 BROADCAST: Rollback execution succeeded
       await broadcastStatus(runId, stepRun.stepId, "COMPENSATED");
@@ -251,7 +417,33 @@ export async function wrapStepOperation(
   } catch (uncaughtError: unknown) {
     // 5C. POST-FLIGHT: UNCAUGHT CRASH
     const latencyMs = Date.now() - startTime;
-    return await handleFailure(stepRun, operation, describeError(uncaughtError), true, latencyMs);
+    const errorMsg = describeError(uncaughtError);
+    if (operation === "COMPENSATE") {
+      const failRes = await failCompensationAttempt({
+        stepRunId: stepRun.id,
+        runId,
+        stepId,
+        claimToken: claimToken!,
+        errorMessage: errorMsg,
+        isRetriable: true,
+        currentAttempts: compensationAttempts,
+        latencyMs,
+        payload: {
+          actionId,
+          stepRunId: stepRun.id,
+          stepId: stepRun.stepId,
+          runId,
+          reason: "COMPENSATION_CRASH",
+          inputs: redactSensitiveData(stepRun.inputs),
+          outputs: redactSensitiveData(stepRun.outputs),
+          businessObject: extractBusinessObjectIdentifiers(stepRun.outputs),
+          error: errorMsg,
+        } as unknown as Prisma.InputJsonValue,
+      });
+      await broadcastStatus(runId, stepRun.stepId, failRes.status);
+      return { success: false, status: failRes.status, error: errorMsg };
+    }
+    return await handleFailure(stepRun, operation, errorMsg, true, latencyMs);
   }
 }
 
@@ -287,12 +479,12 @@ async function handleFailure(
   const shouldRetry = isRetriable && newAttempts < MAX_RETRIES;
 
   // Fix 1: Proper TypeScript let + union type
-  let finalStatus: "RETRYING" | "FAILED" | "COMPENSATING" | "COMPENSATION_FAILED";
+  let finalStatus: "RETRYING" | "FAILED" | "COMPENSATION_RETRYING" | "COMPENSATION_FAILED";
 
   if (operation === "EXECUTE") {
     finalStatus = shouldRetry ? "RETRYING" : "FAILED";
   } else {
-    finalStatus = shouldRetry ? "COMPENSATING" : "COMPENSATION_FAILED";
+    finalStatus = shouldRetry ? "COMPENSATION_RETRYING" : "COMPENSATION_FAILED";
   }
 
   await db.$transaction([
@@ -303,7 +495,7 @@ async function handleFailure(
         error: errorMessage,
         // Update the correct counter column
         ...(operation === "EXECUTE" ? { attempts: newAttempts } : { compensationAttempts: newAttempts }),
-        ...(finalStatus === "FAILED" ? { completedAt: new Date() } : {})
+        ...(finalStatus === "FAILED" || finalStatus === "COMPENSATION_FAILED" ? { completedAt: new Date() } : {})
       },
     }),
     db.executionAuditLog.create({
