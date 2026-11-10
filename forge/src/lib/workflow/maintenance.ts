@@ -33,9 +33,13 @@
 // silently duplicates payments and emails.
 
 import { db } from "@/lib/prisma/db";
-import { publishEvent } from "@/lib/events/queue";
 import { advanceWorkflow } from "@/lib/workflow/execution/evaluator";
 import { MAX_RETRIES } from "@/lib/workflow/execution/wrapper";
+import {
+  buildWorkflowOutboxDedupeKey,
+  drainWorkflowOutbox,
+  reconcileLegacyPendingStepRuns,
+} from "@/lib/workflow/execution/outbox";
 
 /**
  * How long a run may go without making progress before it is swept.
@@ -100,6 +104,11 @@ async function findStaleRuns(now: Date, limit: number) {
     select: {
       id: true,
       status: true,
+      workflow: {
+        select: {
+          orgId: true,
+        },
+      },
       stepRuns: {
         select: {
           id: true,
@@ -151,11 +160,40 @@ export async function sweepStaleWorkflowRuns({
 
       // --- Safe to re-drive: never claimed, so no action ever ran. ---
       if (step.status === "PENDING" && step.startedAt === null) {
-        await publishEvent("EXECUTE_WORKFLOW_NODE", {
+        const generation = (step.attempts || 0) + 1;
+        const dedupeKey = buildWorkflowOutboxDedupeKey({
           runId: run.id,
           stepRunId: step.id,
-          kind: "ACTION",
+          actionType: "EXECUTE",
+          generation,
         });
+
+        await db.workflowOutbox.upsert({
+          where: { dedupeKey },
+          create: {
+            orgId: run.workflow?.orgId ?? "system",
+            runId: run.id,
+            stepRunId: step.id,
+            stepId: step.stepId,
+            eventType: "EXECUTE_WORKFLOW_NODE",
+            payload: {
+              runId: run.id,
+              stepRunId: step.id,
+              kind: "ACTION",
+            },
+            dedupeKey,
+            status: "PENDING",
+            dispatchGeneration: generation,
+            nextAttemptAt: now,
+          },
+          update: {
+            status: "PENDING",
+            nextAttemptAt: now,
+            leaseToken: null,
+          },
+        });
+
+        await drainWorkflowOutbox({ limit: 1, throwOnError: true, now });
 
         outcomes.push({
           runId: run.id,
@@ -173,11 +211,40 @@ export async function sweepStaleWorkflowRuns({
       // advancing. A step that has already used its attempts falls through to the
       // ambiguous branch below and is surfaced instead of retried.
       if (step.status === "RETRYING" && step.attempts < MAX_RETRIES) {
-        await publishEvent("EXECUTE_WORKFLOW_NODE", {
+        const generation = (step.attempts || 0) + 1;
+        const dedupeKey = buildWorkflowOutboxDedupeKey({
           runId: run.id,
           stepRunId: step.id,
-          kind: "ACTION",
+          actionType: "EXECUTE",
+          generation,
         });
+
+        await db.workflowOutbox.upsert({
+          where: { dedupeKey },
+          create: {
+            orgId: run.workflow?.orgId ?? "system",
+            runId: run.id,
+            stepRunId: step.id,
+            stepId: step.stepId,
+            eventType: "EXECUTE_WORKFLOW_NODE",
+            payload: {
+              runId: run.id,
+              stepRunId: step.id,
+              kind: "ACTION",
+            },
+            dedupeKey,
+            status: "PENDING",
+            dispatchGeneration: generation,
+            nextAttemptAt: now,
+          },
+          update: {
+            status: "PENDING",
+            nextAttemptAt: now,
+            leaseToken: null,
+          },
+        });
+
+        await drainWorkflowOutbox({ limit: 1, throwOnError: true, now });
 
         outcomes.push({
           runId: run.id,
@@ -194,11 +261,40 @@ export async function sweepStaleWorkflowRuns({
         step.status === "COMPENSATION_RETRYING" &&
         step.compensationAttempts < MAX_RETRIES
       ) {
-        await publishEvent("EXECUTE_WORKFLOW_NODE", {
+        const generation = (step.compensationAttempts || 0) + 1;
+        const dedupeKey = buildWorkflowOutboxDedupeKey({
           runId: run.id,
           stepRunId: step.id,
-          kind: "ACTION",
+          actionType: "COMPENSATE",
+          generation,
         });
+
+        await db.workflowOutbox.upsert({
+          where: { dedupeKey },
+          create: {
+            orgId: run.workflow?.orgId ?? "system",
+            runId: run.id,
+            stepRunId: step.id,
+            stepId: step.stepId,
+            eventType: "EXECUTE_WORKFLOW_NODE",
+            payload: {
+              runId: run.id,
+              stepRunId: step.id,
+              kind: "ACTION",
+            },
+            dedupeKey,
+            status: "PENDING",
+            dispatchGeneration: generation,
+            nextAttemptAt: now,
+          },
+          update: {
+            status: "PENDING",
+            nextAttemptAt: now,
+            leaseToken: null,
+          },
+        });
+
+        await drainWorkflowOutbox({ limit: 1, throwOnError: true, now });
 
         outcomes.push({
           runId: run.id,
@@ -257,6 +353,12 @@ export async function sweepStaleWorkflowRuns({
     // into a rollback, and an otherwise-finished run converges.
     await advanceWorkflow(run.id);
   }
+
+  // Also reconcile any legacy pending step runs that might not have outbox entries
+  await reconcileLegacyPendingStepRuns({ limit });
+
+  // Drain the outbox for any re-driven or newly enqueued events
+  await drainWorkflowOutbox({ limit });
 
   return outcomes;
 }
