@@ -114,6 +114,7 @@ const compensate: CompensateFunction = async (ctx) => {
 // Export the fully formed action object
 export const generateReportAction: WorkflowAction = {
   id: "utils.generate_report",
+  version: "1.0.0",
   execute,
   compensate,
 };

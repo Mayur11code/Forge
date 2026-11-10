@@ -14,6 +14,8 @@ import {
   completeCompensationAttempt,
   failCompensationAttempt,
 } from "@/lib/workflow/execution/compensation-claim";
+import { computeWorkflowDefinitionHash } from "@/lib/workflow/validation/canonical-hash";
+import type { Prisma } from "@prisma/client";
 
 jest.setTimeout(120_000);
 
@@ -42,20 +44,53 @@ describe("Level E3 Real PostgreSQL Compensation Concurrency & Token Fencing (F-0
       },
     });
 
+    const wfDefinition = {
+      id: "d1",
+      name: "d1",
+      steps: {
+        step_task: {
+          id: "step_task",
+          kind: "ACTION" as const,
+          action: "task.create",
+          dependsOn: [],
+          isCritical: false,
+          config: {},
+        },
+      },
+    };
+
     await db.workflow.create({
       data: {
         id: WORKFLOW_ID,
         orgId: ORG_ID,
         name: "Test Concurrency WF",
-        definition: {},
+        definition: wfDefinition as unknown as Prisma.InputJsonValue,
       },
     });
+
+    const testSnapshot = {
+      snapshotSchemaVersion: 1,
+      workflowId: WORKFLOW_ID,
+      workflowName: "Test Concurrency WF",
+      definition: wfDefinition,
+      actionManifest: [
+        {
+          stepId: "step_task",
+          actionId: "task.create",
+          actionVersion: "1.0.0",
+        },
+      ],
+      createdAt: new Date().toISOString(),
+    };
+    const testHash = computeWorkflowDefinitionHash(testSnapshot);
 
     await db.workflowRun.create({
       data: {
         id: RUN_ID,
         workflowId: WORKFLOW_ID,
         status: "ROLLING_BACK",
+        definitionSnapshot: testSnapshot as unknown as Prisma.InputJsonValue,
+        definitionHash: testHash,
       },
     });
   });

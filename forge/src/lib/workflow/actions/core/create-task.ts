@@ -66,10 +66,26 @@ const execute: ExecuteFunction = async (ctx) => {
       };
     }
 
-    // 4. Return the exact standardized payload
+    // 4. Return the exact standardized payload with immutable task snapshot
     return {
       success: true,
-      data: { taskId: result.task.id, title: result.task.title }, // Piped into Global Context
+      data: {
+        taskId: result.task.id,
+        title: result.task.title,
+        taskSnapshot: {
+          id: result.task.id,
+          title: result.task.title,
+          description: result.task.description,
+          status: result.task.status,
+          priority: result.task.priority,
+          projectId: result.task.projectId,
+          assigneeId: result.task.assigneeId,
+          createdAt:
+            result.task.createdAt instanceof Date
+              ? result.task.createdAt.toISOString()
+              : String(result.task.createdAt),
+        },
+      },
     };
   } catch (error: unknown) {
     return {
@@ -387,6 +403,7 @@ const compensate: CompensateFunction = async (ctx) => {
 // Export the fully formed action object
 export const createTaskAction: WorkflowAction = {
   id: "task.create",
+  version: "1.0.0",
   execute,
   compensate,
 };

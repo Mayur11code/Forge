@@ -60,8 +60,16 @@ beforeEach(() => {
 });
 
 describe("startWorkflow tenant scope", () => {
+  const VALID_DEFINITION = {
+    id: "wf_def",
+    name: "W",
+    steps: {
+      s1: { id: "s1", action: "task.create", kind: "ACTION", dependsOn: [] },
+    },
+  };
+
   it("looks the workflow up under the caller's orgId, not id alone", async () => {
-    workflowFindFirst.mockResolvedValue({ id: WORKFLOW_ID, orgId: ORG_A, name: "W" });
+    workflowFindFirst.mockResolvedValue({ id: WORKFLOW_ID, orgId: ORG_A, name: "W", definition: VALID_DEFINITION });
 
     await startWorkflow(ORG_A, WORKFLOW_ID);
 
@@ -92,18 +100,21 @@ describe("startWorkflow tenant scope", () => {
   });
 
   it("starts the run and pushes the first domino for the owning organization", async () => {
-    workflowFindFirst.mockResolvedValue({ id: WORKFLOW_ID, orgId: ORG_A, name: "W" });
+    workflowFindFirst.mockResolvedValue({ id: WORKFLOW_ID, orgId: ORG_A, name: "W", definition: VALID_DEFINITION });
 
     const run = await startWorkflow(ORG_A, WORKFLOW_ID, { projectId: "p_1" });
 
     expect(run).toEqual({ id: "run_1" });
-    expect(workflowRunCreate).toHaveBeenCalledWith({
-      data: {
-        workflowId: WORKFLOW_ID,
-        status: "RUNNING",
-        context: { trigger: { outputs: { projectId: "p_1" } } },
-      },
-    });
+    expect(workflowRunCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          workflowId: WORKFLOW_ID,
+          status: "RUNNING",
+          context: { trigger: { outputs: { projectId: "p_1" } } },
+          definitionHash: expect.stringMatching(/^sha256:/),
+        }),
+      }),
+    );
     expect(advanceWorkflowMock).toHaveBeenCalledWith("run_1");
   });
 });

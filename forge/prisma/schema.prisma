@@ -612,13 +612,17 @@ model WorkflowRun {
   // `src/lib/workflow/maintenance.ts`.
   lastAdvancedAt DateTime?
 
+  // F-03: Immutable Execution Snapshot & Canonical Hash
+  definitionSnapshot Json?
+  definitionHash     String?
+
   startedAt   DateTime                @default(now())
   completedAt DateTime?
 
  
   workflow    Workflow                @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   stepRuns    StepRun[]
-  auditLogs ExecutionAuditLog[]
+  auditLogs   ExecutionAuditLog[]
 
   @@index([workflowId])
   @@index([status])
@@ -650,7 +654,7 @@ model StepRun {
 
   // Relations
   run         WorkflowRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
-  auditLogs  ExecutionAuditLog[]
+  auditLogs   ExecutionAuditLog[]
 
   // Critical Indexes: The Engine Evaluator will constantly query these to calculate DAG readiness
   @@index([runId])

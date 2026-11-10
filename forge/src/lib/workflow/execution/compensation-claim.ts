@@ -149,7 +149,6 @@ export async function completeCompensationAttempt({
 export async function failCompensationAttempt({
   stepRunId,
   runId,
-  stepId,
   claimToken,
   errorMessage,
   isRetriable,

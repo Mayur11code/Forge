@@ -62,6 +62,7 @@ describe("Workflow Saga Rollback & Compensation Execution (F-01 & F-05A)", () =>
 
   const testAction: WorkflowAction = {
     id: "test.saga_compensate",
+    version: "1.0.0",
     execute: executeMock,
     compensate: compensateMock,
   };

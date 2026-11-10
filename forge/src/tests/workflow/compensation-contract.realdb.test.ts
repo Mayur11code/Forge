@@ -37,7 +37,8 @@ jest.mock("@/lib/workflow/execution/mutex", () => ({
 import { db } from "@/lib/prisma/db";
 import { wrapStepOperation } from "@/lib/workflow/execution/wrapper";
 import { advanceWorkflow } from "@/lib/workflow/execution/evaluator";
-import { VectorEntityType } from "@prisma/client";
+import { computeWorkflowDefinitionHash } from "@/lib/workflow/validation/canonical-hash";
+import { VectorEntityType, type WorkflowExecutionStatus, type Prisma } from "@prisma/client";
 
 jest.setTimeout(120_000);
 
@@ -46,6 +47,73 @@ const ORG_ID = `${TAG}_org`;
 const PROJECT_ID = `${TAG}_proj`;
 const USER_ID = `${TAG}_user`;
 const WORKFLOW_ID = `${TAG}_wf`;
+
+const realDbSnapshot = {
+  snapshotSchemaVersion: 1,
+  workflowId: WORKFLOW_ID,
+  workflowName: "RealDB Task Compensation WF",
+  definition: {
+    id: "d1",
+    name: "d1",
+    steps: {
+      step_task: {
+        id: "step_task",
+        kind: "ACTION" as const,
+        action: "task.create",
+        dependsOn: [],
+        isCritical: false,
+        config: {},
+      },
+      step_task_1: {
+        id: "step_task_1",
+        kind: "ACTION" as const,
+        action: "task.create",
+        dependsOn: [],
+        isCritical: false,
+        config: {},
+      },
+      step_task_2: {
+        id: "step_task_2",
+        kind: "ACTION" as const,
+        action: "task.create",
+        dependsOn: ["step_task_1"],
+        isCritical: false,
+        config: {},
+      },
+    },
+  },
+  actionManifest: [
+    {
+      stepId: "step_task",
+      actionId: "task.create",
+      actionVersion: "1.0.0",
+    },
+    {
+      stepId: "step_task_1",
+      actionId: "task.create",
+      actionVersion: "1.0.0",
+    },
+    {
+      stepId: "step_task_2",
+      actionId: "task.create",
+      actionVersion: "1.0.0",
+    },
+  ],
+  createdAt: new Date().toISOString(),
+};
+const realDbHash = computeWorkflowDefinitionHash(realDbSnapshot);
+
+async function createTestRun(id: string, status: WorkflowExecutionStatus = "ROLLING_BACK") {
+  return db.workflowRun.create({
+    data: {
+      id,
+      workflowId: WORKFLOW_ID,
+      status,
+      definitionSnapshot: realDbSnapshot as unknown as Prisma.InputJsonValue,
+      definitionHash: realDbHash,
+    },
+  });
+}
 
 describe("Real PostgreSQL Task Compensation & Safe Saga Reversal (F-02.2)", () => {
   beforeAll(async () => {
@@ -131,13 +199,7 @@ describe("Real PostgreSQL Task Compensation & Safe Saga Reversal (F-02.2)", () =
     const STEP_RUN_ID = `${TAG}_sr_task_1`;
     const TASK_ID = `${TAG}_task_clean_1`;
 
-    await db.workflowRun.create({
-      data: {
-        id: RUN_ID,
-        workflowId: WORKFLOW_ID,
-        status: "ROLLING_BACK",
-      },
-    });
+    await createTestRun(RUN_ID, "ROLLING_BACK");
 
     const createdTask = await db.task.create({
       data: {
@@ -247,13 +309,7 @@ describe("Real PostgreSQL Task Compensation & Safe Saga Reversal (F-02.2)", () =
     const TASK_ID = `${TAG}_task_with_comm_2`;
     const COMMENT_ID = `${TAG}_comm_2`;
 
-    await db.workflowRun.create({
-      data: {
-        id: RUN_ID,
-        workflowId: WORKFLOW_ID,
-        status: "ROLLING_BACK",
-      },
-    });
+    await createTestRun(RUN_ID, "ROLLING_BACK");
 
     const createdTask = await db.task.create({
       data: {
@@ -351,13 +407,7 @@ describe("Real PostgreSQL Task Compensation & Safe Saga Reversal (F-02.2)", () =
     const STEP_RUN_ID = `${TAG}_sr_task_7`;
     const TASK_ID = `${TAG}_task_mutated_7`;
 
-    await db.workflowRun.create({
-      data: {
-        id: RUN_ID,
-        workflowId: WORKFLOW_ID,
-        status: "ROLLING_BACK",
-      },
-    });
+    await createTestRun(RUN_ID, "ROLLING_BACK");
 
     const createdTask = await db.task.create({
       data: {
@@ -444,13 +494,7 @@ describe("Real PostgreSQL Task Compensation & Safe Saga Reversal (F-02.2)", () =
     const STEP_RUN_ID = `${TAG}_sr_task_9`;
     const TASK_ID = `${TAG}_task_crash_9`;
 
-    await db.workflowRun.create({
-      data: {
-        id: RUN_ID,
-        workflowId: WORKFLOW_ID,
-        status: "ROLLING_BACK",
-      },
-    });
+    await createTestRun(RUN_ID, "ROLLING_BACK");
 
     // Task does NOT exist in db (already deleted)
 
@@ -514,5 +558,326 @@ describe("Real PostgreSQL Task Compensation & Safe Saga Reversal (F-02.2)", () =
       where: { id: RUN_ID },
     });
     expect(runInDb?.status).toBe("ROLLED_BACK");
+  });
+
+  // =========================================================================
+  // F-02.4 Priority Snapshot Defaulting & Mutation Regression Tests
+  // =========================================================================
+
+  // Test A — Default priority preserved:
+  it("F-02.4 Test A: Default priority preserved (no input priority -> DB default MEDIUM), clean rollback deletes task and converges to ROLLED_BACK", async () => {
+    const RUN_ID = `${TAG}_run_f024_a`;
+    const STEP_RUN_ID = `${TAG}_sr_f024_a`;
+    const TASK_ID = `${TAG}_task_f024_a`;
+
+    await createTestRun(RUN_ID, "ROLLING_BACK");
+
+    // Create task without supplying priority; PostgreSQL default is MEDIUM
+    const createdTask = await db.task.create({
+      data: {
+        id: TASK_ID,
+        projectId: PROJECT_ID,
+        title: "Task With Default Priority Preserved",
+        status: "TODO",
+        // priority omitted -> default MEDIUM applied by Prisma/PostgreSQL
+      },
+    });
+
+    // Verify DB default
+    expect(createdTask.priority).toBe("MEDIUM");
+
+    // Persist StepRun with outputs produced by forward execution (including taskSnapshot)
+    await db.stepRun.create({
+      data: {
+        id: STEP_RUN_ID,
+        runId: RUN_ID,
+        stepId: "step_task",
+        status: "SUCCESS",
+        attempts: 1,
+        compensationAttempts: 0,
+        inputs: { title: "Task With Default Priority Preserved", projectId: PROJECT_ID }, // no priority in input!
+        outputs: {
+          taskId: TASK_ID,
+          title: "Task With Default Priority Preserved",
+          projectId: PROJECT_ID,
+          taskSnapshot: {
+            id: TASK_ID,
+            title: createdTask.title,
+            description: createdTask.description,
+            status: createdTask.status,
+            priority: createdTask.priority, // "MEDIUM" from DB
+            projectId: createdTask.projectId,
+            assigneeId: createdTask.assigneeId,
+            createdAt: createdTask.createdAt.toISOString(),
+          },
+        },
+      },
+    });
+
+    const result = await wrapStepOperation(
+      RUN_ID,
+      "step_task",
+      "task.create",
+      "ACTION",
+      undefined,
+      "COMPENSATE"
+    );
+
+    expect(result.success).toBe(true);
+
+    // 1. Task physically deleted
+    const taskInDb = await db.task.findUnique({ where: { id: TASK_ID } });
+    expect(taskInDb).toBeNull();
+
+    // 2. Vector tombstone exists
+    const head = await db.vectorEntityHead.findUnique({
+      where: {
+        orgId_entityType_entityId: {
+          orgId: ORG_ID,
+          entityType: VectorEntityType.TASK,
+          entityId: TASK_ID,
+        },
+      },
+    });
+    expect(head?.isTombstone).toBe(true);
+
+    // 3. Durable receipt in ExecutionAuditLog
+    const receipt = await db.executionAuditLog.findFirst({
+      where: {
+        runId: RUN_ID,
+        eventType: "COMPENSATION_TASK_DELETED",
+      },
+    });
+    expect(receipt).not.toBeNull();
+
+    // 4. Converges to ROLLED_BACK
+    await advanceWorkflow(RUN_ID);
+    const runInDb = await db.workflowRun.findUnique({ where: { id: RUN_ID } });
+    expect(runInDb?.status).toBe("ROLLED_BACK");
+  });
+
+  // Test B — Default priority subsequently modified:
+  it("F-02.4 Test B: Default priority modified to HIGH refuses deletion, preserves task, settles to COMPENSATION_FAILED and REQUIRES_INTERVENTION", async () => {
+    const RUN_ID = `${TAG}_run_f024_b`;
+    const STEP_RUN_ID = `${TAG}_sr_f024_b`;
+    const TASK_ID = `${TAG}_task_f024_b`;
+
+    await createTestRun(RUN_ID, "ROLLING_BACK");
+
+    // Create task with DB default MEDIUM
+    const createdTask = await db.task.create({
+      data: {
+        id: TASK_ID,
+        projectId: PROJECT_ID,
+        title: "Task With Default Priority Later Mutated",
+        status: "TODO",
+      },
+    });
+    expect(createdTask.priority).toBe("MEDIUM");
+
+    await db.stepRun.create({
+      data: {
+        id: STEP_RUN_ID,
+        runId: RUN_ID,
+        stepId: "step_task",
+        status: "SUCCESS",
+        attempts: 1,
+        compensationAttempts: 0,
+        inputs: { title: "Task With Default Priority Later Mutated", projectId: PROJECT_ID }, // no priority in input!
+        outputs: {
+          taskId: TASK_ID,
+          title: "Task With Default Priority Later Mutated",
+          projectId: PROJECT_ID,
+          taskSnapshot: {
+            id: TASK_ID,
+            title: createdTask.title,
+            description: createdTask.description,
+            status: createdTask.status,
+            priority: createdTask.priority, // "MEDIUM"
+            projectId: createdTask.projectId,
+            assigneeId: createdTask.assigneeId,
+            createdAt: createdTask.createdAt.toISOString(),
+          },
+        },
+      },
+    });
+
+    // Intervening user mutation: changes priority from MEDIUM to HIGH in PostgreSQL
+    await db.task.update({
+      where: { id: TASK_ID },
+      data: { priority: "HIGH" },
+    });
+
+    const result = await wrapStepOperation(
+      RUN_ID,
+      "step_task",
+      "task.create",
+      "ACTION",
+      undefined,
+      "COMPENSATE"
+    );
+
+    expect(result.success).toBe(false);
+
+    // 1. INVARIANT: Task must still exist in PostgreSQL
+    const taskInDb = await db.task.findUnique({ where: { id: TASK_ID } });
+    expect(taskInDb).not.toBeNull();
+    expect(taskInDb?.priority).toBe("HIGH");
+
+    // 2. INVARIANT: StepRun is COMPENSATION_FAILED
+    const stepInDb = await db.stepRun.findUnique({ where: { id: STEP_RUN_ID } });
+    expect(stepInDb?.status).toBe("COMPENSATION_FAILED");
+    expect(stepInDb?.error).toContain("priority has been modified");
+
+    // 3. INVARIANT: Workflow converges to REQUIRES_INTERVENTION
+    await advanceWorkflow(RUN_ID);
+    const runInDb = await db.workflowRun.findUnique({ where: { id: RUN_ID } });
+    expect(runInDb?.status).toBe("REQUIRES_INTERVENTION");
+  });
+
+  // Test C — Explicit priority modified:
+  it("F-02.4 Test C: Explicitly supplied priority modified after creation refuses deletion and preserves task", async () => {
+    const RUN_ID = `${TAG}_run_f024_c`;
+    const STEP_RUN_ID = `${TAG}_sr_f024_c`;
+    const TASK_ID = `${TAG}_task_f024_c`;
+
+    await createTestRun(RUN_ID, "ROLLING_BACK");
+
+    // Create task with explicit LOW priority
+    const createdTask = await db.task.create({
+      data: {
+        id: TASK_ID,
+        projectId: PROJECT_ID,
+        title: "Task With Explicit Priority",
+        status: "TODO",
+        priority: "LOW",
+      },
+    });
+    expect(createdTask.priority).toBe("LOW");
+
+    await db.stepRun.create({
+      data: {
+        id: STEP_RUN_ID,
+        runId: RUN_ID,
+        stepId: "step_task",
+        status: "SUCCESS",
+        attempts: 1,
+        compensationAttempts: 0,
+        inputs: { title: "Task With Explicit Priority", projectId: PROJECT_ID, priority: "LOW" },
+        outputs: {
+          taskId: TASK_ID,
+          title: "Task With Explicit Priority",
+          projectId: PROJECT_ID,
+          taskSnapshot: {
+            id: TASK_ID,
+            title: createdTask.title,
+            description: createdTask.description,
+            status: createdTask.status,
+            priority: "LOW",
+            projectId: createdTask.projectId,
+            assigneeId: createdTask.assigneeId,
+            createdAt: createdTask.createdAt.toISOString(),
+          },
+        },
+      },
+    });
+
+    // Mutate to URGENT/HIGH
+    await db.task.update({
+      where: { id: TASK_ID },
+      data: { priority: "HIGH" },
+    });
+
+    const result = await wrapStepOperation(
+      RUN_ID,
+      "step_task",
+      "task.create",
+      "ACTION",
+      undefined,
+      "COMPENSATE"
+    );
+
+    expect(result.success).toBe(false);
+
+    const taskInDb = await db.task.findUnique({ where: { id: TASK_ID } });
+    expect(taskInDb).not.toBeNull();
+    expect(taskInDb?.priority).toBe("HIGH");
+
+    const stepInDb = await db.stepRun.findUnique({ where: { id: STEP_RUN_ID } });
+    expect(stepInDb?.status).toBe("COMPENSATION_FAILED");
+    expect(stepInDb?.error).toContain("priority has been modified");
+  });
+
+  // Test D — Snapshot consistency across steps:
+  it("F-02.4 Test D: Snapshot consistency: reflects actual persisted values and cannot be overwritten by subsequent steps", async () => {
+    const RUN_ID = `${TAG}_run_f024_d`;
+    const STEP_1_ID = `${TAG}_sr_f024_d1`;
+    const STEP_2_ID = `${TAG}_sr_f024_d2`;
+    const TASK_ID = `${TAG}_task_f024_d`;
+
+    await createTestRun(RUN_ID, "RUNNING");
+
+    // Step 1: creates task without optional description or priority
+    const createdTask = await db.task.create({
+      data: {
+        id: TASK_ID,
+        projectId: PROJECT_ID,
+        title: "Step 1 Task",
+        status: "TODO",
+      },
+    });
+
+    // Step 1 records its immutable outputs
+    const step1Outputs = {
+      taskId: TASK_ID,
+      title: "Step 1 Task",
+      taskSnapshot: {
+        id: TASK_ID,
+        title: createdTask.title,
+        description: createdTask.description,
+        status: createdTask.status,
+        priority: createdTask.priority, // Database default MEDIUM
+        projectId: createdTask.projectId,
+        assigneeId: createdTask.assigneeId,
+        createdAt: createdTask.createdAt.toISOString(),
+      },
+    };
+
+    await db.stepRun.create({
+      data: {
+        id: STEP_1_ID,
+        runId: RUN_ID,
+        stepId: "step_task_1",
+        status: "SUCCESS",
+        inputs: { title: "Step 1 Task", projectId: PROJECT_ID },
+        outputs: step1Outputs,
+      },
+    });
+
+    // Step 2: subsequent step executes and produces completely different outputs
+    await db.stepRun.create({
+      data: {
+        id: STEP_2_ID,
+        runId: RUN_ID,
+        stepId: "step_task_2",
+        status: "SUCCESS",
+        inputs: { message: "Downstream step" },
+        outputs: {
+          taskId: "unrelated_id",
+          taskSnapshot: { priority: "HIGH", title: "Malicious Overwrite Attempt" },
+        },
+      },
+    });
+
+    // Assert Step 1's StepRun outputs were untouched and immutable in PostgreSQL
+    const verifiedStep1 = await db.stepRun.findUnique({
+      where: { id: STEP_1_ID },
+    });
+    expect(verifiedStep1?.outputs).toEqual(step1Outputs);
+
+    const snapshot = (verifiedStep1?.outputs as Record<string, unknown>).taskSnapshot as Record<string, unknown>;
+    expect(snapshot.priority).toBe("MEDIUM");
+    expect(snapshot.description).toBeNull();
+    expect(snapshot.title).toBe("Step 1 Task");
   });
 });

@@ -137,7 +137,8 @@ export async function wrapStepOperation(
   kind: "TRIGGER" | "ACTION",
   // Optional: Only provided during EXECUTE. Compensate pulls from the DB.
   resolvedInputs?: Record<string, JsonValue>,
-  operation: "EXECUTE" | "COMPENSATE" = "EXECUTE"
+  operation: "EXECUTE" | "COMPENSATE" = "EXECUTE",
+  actionVersion?: string,
 ) {
   // 1. FETCH THE STEP STATE
   const stepRun = await db.stepRun.findFirst({
@@ -232,20 +233,36 @@ export async function wrapStepOperation(
     },
   });
 
-  // 3. ACTION LOOKUP
-  const action = getAction(actionId);
+  // 3. ACTION LOOKUP (F-03: Exact version pinning)
+  let effectiveVersion = actionVersion;
+  if (!effectiveVersion && stepRun.run?.definitionSnapshot) {
+    const rawSnapshot = stepRun.run.definitionSnapshot as Record<string, unknown>;
+    const manifest = Array.isArray(rawSnapshot?.actionManifest)
+      ? (rawSnapshot.actionManifest as Array<{ stepId: string; actionVersion: string }>)
+      : [];
+    const entry = manifest.find((m) => m.stepId === stepId);
+    if (entry?.actionVersion) {
+      effectiveVersion = entry.actionVersion;
+    }
+  }
+
+  const action = effectiveVersion ? getAction(actionId, effectiveVersion) : undefined;
   if (!action) {
+    const errorMsg = effectiveVersion
+      ? `Action ${actionId}@${effectiveVersion} not found in registry`
+      : `Action ${actionId} has no pinned version`;
     if (operation === "COMPENSATE") {
       const failRes = await failCompensationAttempt({
         stepRunId: stepRun.id,
         runId,
         stepId,
         claimToken: claimToken!,
-        errorMessage: "Action not found in registry",
+        errorMessage: errorMsg,
         isRetriable: false,
         currentAttempts: compensationAttempts,
         payload: {
           actionId,
+          actionVersion: effectiveVersion ?? null,
           stepRunId: stepRun.id,
           stepId: stepRun.stepId,
           runId,
@@ -256,9 +273,9 @@ export async function wrapStepOperation(
         } as unknown as Prisma.InputJsonValue,
       });
       await broadcastStatus(runId, stepRun.stepId, failRes.status);
-      return { success: false, status: failRes.status, error: "Action not found in registry" };
+      return { success: false, status: failRes.status, error: errorMsg };
     }
-    return await handleFailure(stepRun, operation, "Action not found in registry", false);
+    return await handleFailure(stepRun, operation, errorMsg, false);
   }
 
   // 4. EXECUTION SANDBOX
@@ -371,8 +388,13 @@ export async function wrapStepOperation(
 
     // 5B. POST-FLIGHT: SUCCESS
     if (operation === "EXECUTE") {
-      // Forward path writes to global context
-      await appendStepOutputToContext(runId, stepId, result.data || {});
+      // Forward path writes to global context. Internal execution snapshots
+      // (like taskSnapshot) are preserved on StepRun.outputs for compensation,
+      // but omitted from the global DAG data bus to keep interpolations clean.
+      const contextData = { ...((result.data as Record<string, JsonValue>) || {}) };
+      delete contextData.taskSnapshot;
+
+      await appendStepOutputToContext(runId, stepId, contextData);
 
       await db.stepRun.update({
         where: { id: stepRun.id },

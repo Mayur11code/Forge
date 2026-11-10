@@ -36,7 +36,7 @@ import { db } from "@/lib/prisma/db";
 import { resolveInputs } from "@/lib/workflow/execution/resolver";
 import { wrapStepOperation } from "@/lib/workflow/execution/wrapper";
 import { advanceWorkflow } from "@/lib/workflow/execution/evaluator";
-import type { WorkflowDefinition } from "@/lib/workflow-types/workflow";
+import { verifyWorkflowSnapshotIntegrity } from "@/lib/workflow/validation/canonical-hash";
 import type { JsonValue } from "@/lib/workflow-types/type";
 import type { StepExecutionStatus } from "@prisma/client";
 
@@ -197,18 +197,49 @@ async function handleExecuteWorkflowNode(
     return new NextResponse("Already processed", { status: 200 });
   }
 
-  // The definition is validated on write, so it is already a `WorkflowDefinition`
-  // as far as the engine is concerned. The cast to `any` that used to be here
-  // was hiding the one mistake this code could make - reading a step that is not
-  // in the graph - behind a type error at the first property access instead.
-  const workflowDefinition = stepRun.run.workflow.definition as WorkflowDefinition;
+  // F-03: Resolve node definition and action version exclusively from immutable snapshot
+  const verification = verifyWorkflowSnapshotIntegrity(
+    stepRun.run.definitionSnapshot,
+    stepRun.run.definitionHash,
+  );
+
+  if (!verification.valid) {
+    console.error(
+      `[WORKER] Snapshot integrity failure for StepRun ${stepRunId} (run: ${stepRun.runId}): ${verification.error}`,
+    );
+    await db.stepRun.update({
+      where: { id: stepRunId },
+      data: {
+        status: "FAILED",
+        error: `Snapshot integrity check failed: ${verification.error}`,
+        completedAt: new Date(),
+      },
+    }).catch((err) => console.warn("[WORKER] Could not update stepRun on integrity failure:", err));
+    return new NextResponse(`Snapshot invalid: ${verification.error}`, { status: 400 });
+  }
+
+  const snapshot = verification.snapshot;
+  const workflowDefinition = snapshot.definition;
   const nodeDefinition = workflowDefinition.steps[stepRun.stepId];
 
   if (!nodeDefinition) {
-    return new NextResponse("Node definition missing", { status: 400 });
+    console.error(
+      `[WORKER] Node definition missing for StepRun ${stepRunId} (step: ${stepRun.stepId}) in snapshot`,
+    );
+    await db.stepRun.update({
+      where: { id: stepRunId },
+      data: {
+        status: "FAILED",
+        error: "Node definition missing from execution snapshot",
+        completedAt: new Date(),
+      },
+    }).catch((err) => console.warn("[WORKER] Could not update stepRun on missing node:", err));
+    return new NextResponse("Node definition missing from execution snapshot", { status: 400 });
   }
 
   const actionId = nodeDefinition.action;
+  const manifestEntry = snapshot.actionManifest.find((m) => m.stepId === stepRun.stepId);
+  const actionVersion = manifestEntry?.actionVersion;
 
   // --- Resolve the `{{...}}` pointers ---
   let resolvedInputs: Record<string, JsonValue> | undefined;
@@ -229,6 +260,7 @@ async function handleExecuteWorkflowNode(
     kind as "TRIGGER" | "ACTION",
     resolvedInputs,
     operation,
+    actionVersion,
   );
 
   // --- Dead letter / retry signalling ---
