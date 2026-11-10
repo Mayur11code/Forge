@@ -23,7 +23,7 @@ import { dispatchEvent } from '@/lib/events/event-bus';
  * The delete query extensions below serve as CDC interceptors for direct/legacy Prisma
  * callers, capturing relations and notifying the event bus (analytics, notifications).
  */
-export const prisma = db.$extends({
+export const prisma = (typeof (db as unknown as { $extends?: (...args: unknown[]) => unknown }).$extends === "function" ? db.$extends({
   query: {
     task: {
       // ---------------------------------------------
@@ -171,6 +171,6 @@ export const prisma = db.$extends({
       }
     }
   }
-});
+}) : db) as unknown as typeof db;
 
 export default prisma;

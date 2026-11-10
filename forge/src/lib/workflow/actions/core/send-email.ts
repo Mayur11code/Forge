@@ -69,5 +69,6 @@ const execute: ExecuteFunction = async (ctx) => {
 
 export const sendEmailAction: WorkflowAction = {
   id: "communication.send_email",
+  version: "1.0.0",
   execute,
 };

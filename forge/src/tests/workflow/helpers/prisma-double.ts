@@ -24,6 +24,9 @@
 //      loudly - which is the correct outcome. A double that ignored the predicate
 //      while the test forced `count: 0` would prove nothing at all.
 
+import { computeWorkflowDefinitionHash } from "@/lib/workflow/validation/canonical-hash";
+import type { WorkflowExecutionSnapshot } from "@/lib/workflow-types/snapshot";
+
 type Row = Record<string, unknown>;
 
 /**
@@ -43,8 +46,48 @@ type Row = Record<string, unknown>;
  */
 type RunInclude =
   | boolean
-  | { workflow?: boolean; include?: { workflow?: boolean } }
+  | { workflow?: boolean; include?: { workflow?: boolean }; select?: { workflow?: boolean } }
   | undefined;
+
+function ensureTestRunSnapshot(run: Row | null | undefined) {
+  if (!run) return;
+  if (run.definitionSnapshot === undefined && run.isLegacyRunWithoutSnapshot !== true) {
+    const wf = store.workflows.find((w) => w.id === run.workflowId);
+    if (wf && wf.definition) {
+      const def = wf.definition as Record<string, unknown>;
+      const manifest: Array<{ stepId: string; actionId: string; actionVersion: string }> = [];
+      const steps = def?.steps as Record<string, { action?: string }> | undefined;
+      if (steps && Object.keys(steps).length > 0) {
+        for (const [stepId, step] of Object.entries(steps)) {
+          manifest.push({
+            stepId,
+            actionId: step.action || "task.create",
+            actionVersion: "1.0.0",
+          });
+        }
+      } else {
+        const runSteps = store.stepRuns.filter((s) => s.runId === run.id);
+        for (const s of runSteps) {
+          manifest.push({
+            stepId: (s.stepId as string) || "step_1",
+            actionId: "task.create",
+            actionVersion: "1.0.0",
+          });
+        }
+      }
+      const snapshot: WorkflowExecutionSnapshot = {
+        snapshotSchemaVersion: 1,
+        workflowId: (wf.id as string) || "test_wf",
+        workflowName: (wf.name as string) || "Test Workflow",
+        definition: def as unknown as WorkflowExecutionSnapshot["definition"],
+        actionManifest: manifest,
+        createdAt: new Date().toISOString(),
+      };
+      run.definitionSnapshot = snapshot;
+      run.definitionHash = computeWorkflowDefinitionHash(snapshot);
+    }
+  }
+}
 
 function attachRun(result: Row, include: Row | undefined) {
   if (!include?.run) return;
@@ -55,14 +98,17 @@ function attachRun(result: Row, include: Row | undefined) {
     ? (store.runs.find((r) => r.id === row.runId) ?? null)
     : null;
 
+  ensureTestRunSnapshot(run);
+
   const nested: Row = run ? { ...run } : {};
 
   const wantsWorkflow =
     runInclude === true ||
     (typeof runInclude === "object" &&
       runInclude !== null &&
-      (runInclude.workflow === true ||
-        runInclude.include?.workflow === true));
+      (Boolean(runInclude.workflow) ||
+        Boolean(runInclude.include?.workflow) ||
+        Boolean(runInclude.select?.workflow)));
 
   if (wantsWorkflow) {
     nested.workflow = run
@@ -82,6 +128,8 @@ export const store = {
   projects: [] as Row[],
   comments: [] as Row[],
   attachments: [] as Row[],
+  workflowOutbox: [] as Row[],
+  memberships: [] as Row[],
 };
 
 export function resetStore() {
@@ -93,6 +141,8 @@ export function resetStore() {
   store.projects = [];
   store.comments = [];
   store.attachments = [];
+  store.workflowOutbox = [];
+  store.memberships = [];
   stepRunSeq = 0;
   auditSeq = 0;
   workflowSeq = 0;
@@ -103,6 +153,7 @@ export function resetStore() {
   attachmentSeq = 0;
   voeSeq = 0;
   vehSeq = 0;
+  workflowOutboxSeq = 0;
 }
 
 let stepRunSeq = 0;
@@ -115,6 +166,7 @@ let commentSeq = 0;
 let attachmentSeq = 0;
 let voeSeq = 0;
 let vehSeq = 0;
+let workflowOutboxSeq = 0;
 
 function uniqueStepRunViolation(): never {
   const error = new Error(
@@ -203,6 +255,8 @@ const findUniqueRun = async ({
 }) => {
   const run = store.runs.find((row) => row.id === where.id);
   if (!run) return null;
+
+  ensureTestRunSnapshot(run);
 
   if (select) {
     const picked: Row = {};
@@ -368,7 +422,7 @@ const findManyRuns = async ({
   if (typeof take === "number") rows = rows.slice(0, take);
 
   return rows.map((row) => {
-    if (!select?.stepRuns) return { ...row };
+    if (!select) return { ...row };
 
     const picked: Row = {};
     for (const field of Object.keys(select)) {
@@ -377,6 +431,18 @@ const findManyRuns = async ({
         picked.stepRuns = store.stepRuns
           .filter((s) => s.runId === row.id)
           .map((s) => ({ ...s }));
+      } else if (field === "workflow") {
+        const wf = store.workflows.find((w) => w.id === row.workflowId) ?? null;
+        if (wf && typeof select.workflow === "object" && (select.workflow as Row).select) {
+          const wfSelect = (select.workflow as Row).select as Row;
+          const wfPicked: Row = {};
+          for (const k of Object.keys(wfSelect)) {
+            if (wfSelect[k]) wfPicked[k] = wf[k];
+          }
+          picked.workflow = wfPicked;
+        } else {
+          picked.workflow = wf ? { ...wf } : null;
+        }
       } else {
         picked[field] = row[field];
       }
@@ -518,6 +584,8 @@ const createRun = async ({ data }: { data: Row }) => {
     context: {},
     contextVersion: 0,
     lastAdvancedAt: null,
+    definitionSnapshot: null,
+    definitionHash: null,
     startedAt: new Date(),
     completedAt: null,
     ...data,
@@ -598,10 +666,36 @@ const createManyStepRuns = async ({ data }: { data: Row[] }) => {
   return { count: data.length };
 };
 
-const findManyStepRuns = async ({ where }: { where?: Row } = {}) => {
-  return store.stepRuns
-    .filter((row) => (where?.runId === undefined ? true : row.runId === where.runId))
-    .map((row) => ({ ...row }));
+const findManyStepRuns = async ({
+  where,
+  include,
+  take,
+}: {
+  where?: Row;
+  include?: Row;
+  take?: number;
+} = {}) => {
+  let hits = store.stepRuns.filter((row) => {
+    if (where?.runId !== undefined && row.runId !== where.runId) return false;
+    if (where?.status !== undefined && !matchesStatus(row, where.status)) return false;
+    if (where?.outboxEvents !== undefined) {
+      if ((where.outboxEvents as { none?: Row })?.none) {
+        const hasOutbox = store.workflowOutbox.some((o) => o.stepRunId === row.id);
+        if (hasOutbox) return false;
+      }
+    }
+    return true;
+  });
+
+  if (typeof take === "number") hits = hits.slice(0, take);
+
+  return hits.map((row) => {
+    const res: Row = { ...row };
+    if (include?.run) {
+      attachRun(res, include);
+    }
+    return res;
+  });
 };
 
 const findFirstStepRun = async ({
@@ -963,7 +1057,11 @@ const findManyAttachments = async ({ where }: { where?: Row } = {}) => {
 };
 
 const findFirstMembership = async ({ where }: { where: Row }) => {
-  return { userId: where.userId, orgId: where.orgId };
+  const custom = store.memberships?.find(
+    (m) => m.userId === where.userId && m.orgId === where.orgId,
+  );
+  if (custom) return { ...custom };
+  return { userId: where.userId, orgId: where.orgId, role: (where.role as string) ?? "ADMIN" };
 };
 
 const createVectorOutboxEvent = async ({ data }: { data: Row }) => {
@@ -1013,6 +1111,210 @@ const findUniqueVectorEntityHead = async ({ where }: { where: Row }) => {
   };
 };
 
+function uniqueWorkflowOutboxViolation(): never {
+  const error = new Error(
+    "Unique constraint failed on the fields: (`dedupeKey`)",
+  ) as Error & { code: string };
+  error.code = "P2002";
+  throw error;
+}
+
+const createWorkflowOutbox = async ({ data }: { data: Row }) => {
+  if (data.dedupeKey && store.workflowOutbox.some((e) => e.dedupeKey === data.dedupeKey)) {
+    uniqueWorkflowOutboxViolation();
+  }
+  workflowOutboxSeq += 1;
+  const row: Row = {
+    id: data.id ?? `wfo_${workflowOutboxSeq}`,
+    orgId: data.orgId ?? "test-org",
+    runId: data.runId,
+    stepRunId: data.stepRunId,
+    stepId: data.stepId,
+    eventType: data.eventType ?? "EXECUTE_WORKFLOW_NODE",
+    payload: data.payload ?? {},
+    dedupeKey: data.dedupeKey,
+    status: data.status ?? "PENDING",
+    attempts: data.attempts ?? 0,
+    maxAttempts: data.maxAttempts ?? 5,
+    nextAttemptAt: data.nextAttemptAt ?? new Date(),
+    leaseToken: data.leaseToken ?? null,
+    leaseExpiresAt: data.leaseExpiresAt ?? null,
+    lastAttemptAt: data.lastAttemptAt ?? null,
+    lastError: data.lastError ?? null,
+    publishedAt: data.publishedAt ?? null,
+    deadLetteredAt: data.deadLetteredAt ?? null,
+    dispatchGeneration: data.dispatchGeneration ?? 1,
+    createdAt: data.createdAt ?? new Date(),
+    updatedAt: data.updatedAt ?? new Date(),
+  };
+  store.workflowOutbox.push(row);
+  return { ...row };
+};
+
+const upsertWorkflowOutbox = async ({
+  where,
+  create,
+  update,
+}: {
+  where: { id?: string; dedupeKey?: string };
+  create: Row;
+  update: Row;
+}) => {
+  const existing = store.workflowOutbox.find(
+    (e) => (where.id && e.id === where.id) || (where.dedupeKey && e.dedupeKey === where.dedupeKey),
+  );
+  if (existing) {
+    for (const [key, value] of Object.entries(update)) {
+      existing[key] = value;
+    }
+    existing.updatedAt = new Date();
+    return { ...existing };
+  }
+  return createWorkflowOutbox({ data: create });
+};
+
+const findUniqueWorkflowOutbox = async ({
+  where,
+  include,
+}: {
+  where: { id?: string; dedupeKey?: string };
+  include?: { run?: boolean | { select?: { id?: boolean; workflow?: { select?: { orgId?: boolean } } } } };
+}) => {
+  const row = store.workflowOutbox.find(
+    (e) => (where.id && e.id === where.id) || (where.dedupeKey && e.dedupeKey === where.dedupeKey),
+  );
+  if (!row) return null;
+  const res: Row = { ...row };
+  if (include?.run) {
+    const run = store.runs.find((r) => r.id === row.runId);
+    const wf = run ? store.workflows.find((w) => w.id === run.workflowId) : null;
+    res.run = run ? { ...run, workflow: wf ? { ...wf } : null } : null;
+  }
+  return res;
+};
+
+function matchesOutboxWhere(row: Row, where?: Row): boolean {
+  if (!where) return true;
+  if (where.id !== undefined && row.id !== where.id) return false;
+  if (where.orgId !== undefined && row.orgId !== where.orgId) return false;
+  if (where.runId !== undefined && row.runId !== where.runId) return false;
+  if (where.stepRunId !== undefined && row.stepRunId !== where.stepRunId) return false;
+  if (where.stepId !== undefined && row.stepId !== where.stepId) return false;
+  if (where.dedupeKey !== undefined && row.dedupeKey !== where.dedupeKey) return false;
+  if (where.leaseToken !== undefined && row.leaseToken !== where.leaseToken) return false;
+  if (where.status !== undefined && !matchesStatus(row, where.status)) return false;
+
+  if (where.nextAttemptAt !== undefined) {
+    if (where.nextAttemptAt instanceof Date && (row.nextAttemptAt as Date).getTime() > where.nextAttemptAt.getTime()) {
+      return false;
+    }
+    if (typeof where.nextAttemptAt === "object" && "lte" in (where.nextAttemptAt as { lte: Date })) {
+      const target = (where.nextAttemptAt as { lte: Date }).lte;
+      if (!(row.nextAttemptAt instanceof Date) || row.nextAttemptAt.getTime() > target.getTime()) {
+        return false;
+      }
+    }
+  }
+
+  if (where.leaseExpiresAt !== undefined) {
+    if (typeof where.leaseExpiresAt === "object" && "lte" in (where.leaseExpiresAt as { lte: Date })) {
+      const target = (where.leaseExpiresAt as { lte: Date }).lte;
+      if (!(row.leaseExpiresAt instanceof Date) || row.leaseExpiresAt.getTime() > target.getTime()) {
+        return false;
+      }
+    }
+  }
+
+  if (where.OR !== undefined && Array.isArray(where.OR)) {
+    const anyMatches = (where.OR as Row[]).some((clause) => matchesOutboxWhere(row, clause));
+    if (!anyMatches) return false;
+  }
+
+  return true;
+}
+
+const findFirstWorkflowOutbox = async ({ where }: { where?: Row } = {}) => {
+  const row = store.workflowOutbox.find((candidate) => matchesOutboxWhere(candidate, where));
+  return row ? { ...row } : null;
+};
+
+const findManyWorkflowOutbox = async ({
+  where,
+  orderBy,
+  take,
+}: {
+  where?: Row;
+  orderBy?: Row;
+  take?: number;
+} = {}) => {
+  let rows = store.workflowOutbox.filter((candidate) => matchesOutboxWhere(candidate, where));
+  if (orderBy?.nextAttemptAt) {
+    const dir = orderBy.nextAttemptAt === "desc" ? -1 : 1;
+    rows.sort((a, b) => {
+      const ta = a.nextAttemptAt instanceof Date ? a.nextAttemptAt.getTime() : 0;
+      const tb = b.nextAttemptAt instanceof Date ? b.nextAttemptAt.getTime() : 0;
+      return dir * (ta - tb);
+    });
+  }
+  if (typeof take === "number") {
+    rows = rows.slice(0, take);
+  }
+  return rows.map((r) => ({ ...r }));
+};
+
+const updateWorkflowOutbox = async ({
+  where,
+  data,
+}: {
+  where: { id?: string; dedupeKey?: string };
+  data: Row;
+}) => {
+  const row = store.workflowOutbox.find(
+    (e) => (where.id && e.id === where.id) || (where.dedupeKey && e.dedupeKey === where.dedupeKey),
+  );
+  if (!row) throw new Error("WorkflowOutbox row not found");
+
+  for (const [key, value] of Object.entries(data)) {
+    const increment = value as { increment?: number } | undefined;
+    if (increment && typeof increment === "object" && increment.increment) {
+      row[key] = ((row[key] as number) ?? 0) + increment.increment;
+    } else {
+      row[key] = value;
+    }
+  }
+  row.updatedAt = new Date();
+  return { ...row };
+};
+
+const updateManyWorkflowOutbox = async ({ where, data }: { where: Row; data: Row }) => {
+  const hits = store.workflowOutbox.filter((candidate) => matchesOutboxWhere(candidate, where));
+  for (const row of hits) {
+    for (const [key, value] of Object.entries(data)) {
+      const increment = value as { increment?: number } | undefined;
+      if (increment && typeof increment === "object" && increment.increment) {
+        row[key] = ((row[key] as number) ?? 0) + increment.increment;
+      } else {
+        row[key] = value;
+      }
+    }
+    row.updatedAt = new Date();
+  }
+  return { count: hits.length };
+};
+
+const deleteWorkflowOutbox = async ({ where }: { where: { id?: string } }) => {
+  const idx = store.workflowOutbox.findIndex((e) => e.id === where.id);
+  if (idx === -1) throw new Error("WorkflowOutbox row not found");
+  const [removed] = store.workflowOutbox.splice(idx, 1);
+  return { ...removed };
+};
+
+const deleteManyWorkflowOutbox = async ({ where }: { where?: Row } = {}) => {
+  const initialLen = store.workflowOutbox.length;
+  store.workflowOutbox = store.workflowOutbox.filter((c) => !matchesOutboxWhere(c, where));
+  return { count: initialLen - store.workflowOutbox.length };
+};
+
 const queryRawImpl = async (strings: TemplateStringsArray, ...values: unknown[]) => {
   const text = strings.join("?");
   if (text.includes('FROM "Task" t') && values.length > 0) {
@@ -1035,6 +1337,14 @@ const queryRawImpl = async (strings: TemplateStringsArray, ...values: unknown[])
       },
     ];
   }
+  if (text.includes('INSERT INTO "VectorEntityHead"')) {
+    vehSeq += 1;
+    return [{ id: `head_${vehSeq}`, latestRevision: 1 }];
+  }
+  if (text.includes('INSERT INTO "VectorOutboxEvent"')) {
+    voeSeq += 1;
+    return [{ id: `voe_${voeSeq}` }];
+  }
   if (text.includes('FROM "VectorEntityHead"') && values.length >= 3) {
     const orgId = values[0] as string;
     const entityType = values[1] as string;
@@ -1052,10 +1362,27 @@ const queryRawImpl = async (strings: TemplateStringsArray, ...values: unknown[])
   if (text.includes('FROM "VectorGeneration"')) {
     return [];
   }
+  if (text.includes('FROM "Workflow"') && values.length >= 2) {
+    const workflowId = values[0] as string;
+    const orgId = values[1] as string;
+    const wf = store.workflows.find((w) => w.id === workflowId && w.orgId === orgId);
+    if (!wf) return [];
+    return [
+      {
+        id: wf.id,
+        orgId: wf.orgId,
+        name: wf.name,
+        definition: wf.definition,
+        description: wf.description ?? null,
+        createdAt: wf.createdAt ?? new Date(),
+        updatedAt: wf.updatedAt ?? new Date(),
+      },
+    ];
+  }
   return [];
 };
 
-const executeRawImpl = async (_strings: TemplateStringsArray, ..._values: unknown[]) => {
+const executeRawImpl = async () => {
   return 0;
 };
 
@@ -1196,6 +1523,17 @@ type PrismaDouble = {
     findUnique: jest.Mock;
     findUniqueOrThrow: jest.Mock;
   };
+  workflowOutbox: {
+    create: jest.Mock;
+    upsert: jest.Mock;
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+    delete: jest.Mock;
+    deleteMany: jest.Mock;
+  };
 };
 
 /**
@@ -1295,6 +1633,18 @@ export const prismaDouble: PrismaDouble = {
     findUnique: jest.fn(findUniqueVectorEntityHead),
     findUniqueOrThrow: jest.fn(findUniqueVectorEntityHead),
   },
+
+  workflowOutbox: {
+    create: jest.fn(createWorkflowOutbox),
+    upsert: jest.fn(upsertWorkflowOutbox),
+    findUnique: jest.fn(findUniqueWorkflowOutbox),
+    findFirst: jest.fn(findFirstWorkflowOutbox),
+    findMany: jest.fn(findManyWorkflowOutbox),
+    update: jest.fn(updateWorkflowOutbox),
+    updateMany: jest.fn(updateManyWorkflowOutbox),
+    delete: jest.fn(deleteWorkflowOutbox),
+    deleteMany: jest.fn(deleteManyWorkflowOutbox),
+  },
 };
 
 const realImplementations = {
@@ -1337,6 +1687,15 @@ const realImplementations = {
   updateManyVectorOutboxEvents,
   upsertVectorEntityHead,
   findUniqueVectorEntityHead,
+  createWorkflowOutbox,
+  upsertWorkflowOutbox,
+  findUniqueWorkflowOutbox,
+  findFirstWorkflowOutbox,
+  findManyWorkflowOutbox,
+  updateWorkflowOutbox,
+  updateManyWorkflowOutbox,
+  deleteWorkflowOutbox,
+  deleteManyWorkflowOutbox,
   queryRawImpl,
   executeRawImpl,
   runTransaction,
@@ -1404,6 +1763,15 @@ export function restoreWorkflowDouble(): void {
   prismaDouble.vectorEntityHead.upsert.mockImplementation(realImplementations.upsertVectorEntityHead);
   prismaDouble.vectorEntityHead.findUnique.mockImplementation(realImplementations.findUniqueVectorEntityHead);
   prismaDouble.vectorEntityHead.findUniqueOrThrow.mockImplementation(realImplementations.findUniqueVectorEntityHead);
+  prismaDouble.workflowOutbox.create.mockImplementation(realImplementations.createWorkflowOutbox);
+  prismaDouble.workflowOutbox.upsert.mockImplementation(realImplementations.upsertWorkflowOutbox);
+  prismaDouble.workflowOutbox.findUnique.mockImplementation(realImplementations.findUniqueWorkflowOutbox);
+  prismaDouble.workflowOutbox.findFirst.mockImplementation(realImplementations.findFirstWorkflowOutbox);
+  prismaDouble.workflowOutbox.findMany.mockImplementation(realImplementations.findManyWorkflowOutbox);
+  prismaDouble.workflowOutbox.update.mockImplementation(realImplementations.updateWorkflowOutbox);
+  prismaDouble.workflowOutbox.updateMany.mockImplementation(realImplementations.updateManyWorkflowOutbox);
+  prismaDouble.workflowOutbox.delete.mockImplementation(realImplementations.deleteWorkflowOutbox);
+  prismaDouble.workflowOutbox.deleteMany.mockImplementation(realImplementations.deleteManyWorkflowOutbox);
   prismaDouble.$queryRaw.mockImplementation(realImplementations.queryRawImpl);
   prismaDouble.$executeRaw.mockImplementation(realImplementations.executeRawImpl);
   prismaDouble.$transaction.mockImplementation(realImplementations.transaction);

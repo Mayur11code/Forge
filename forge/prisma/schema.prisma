@@ -60,6 +60,14 @@ enum StepExecutionStatus {
   COMPENSATION_RETRYING
 }
 
+enum WorkflowOutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  RETRYING
+  DEAD_LETTERED
+}
+
 enum LogLevel {
   INFO
   WARN
@@ -612,13 +620,18 @@ model WorkflowRun {
   // `src/lib/workflow/maintenance.ts`.
   lastAdvancedAt DateTime?
 
+  // F-03: Immutable Execution Snapshot & Canonical Hash
+  definitionSnapshot Json?
+  definitionHash     String?
+
   startedAt   DateTime                @default(now())
   completedAt DateTime?
 
  
   workflow    Workflow                @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   stepRuns    StepRun[]
-  auditLogs ExecutionAuditLog[]
+  auditLogs   ExecutionAuditLog[]
+  outboxEvents WorkflowOutbox[]
 
   @@index([workflowId])
   @@index([status])
@@ -650,7 +663,8 @@ model StepRun {
 
   // Relations
   run         WorkflowRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
-  auditLogs  ExecutionAuditLog[]
+  auditLogs   ExecutionAuditLog[]
+  outboxEvents WorkflowOutbox[]
 
   // Critical Indexes: The Engine Evaluator will constantly query these to calculate DAG readiness
   @@index([runId])
@@ -658,6 +672,40 @@ model StepRun {
   @@index([stepId])
 
   @@unique([runId, stepId])
+}
+
+
+model WorkflowOutbox {
+  id                 String               @id @default(cuid())
+  orgId              String
+  runId              String
+  stepRunId          String
+  stepId             String
+  eventType          String
+  payload            Json
+  dedupeKey          String               @unique
+  status             WorkflowOutboxStatus @default(PENDING)
+  attempts           Int                  @default(0)
+  maxAttempts        Int                  @default(5)
+  nextAttemptAt      DateTime             @default(now())
+  leaseToken         String?
+  leaseExpiresAt     DateTime?
+  lastAttemptAt      DateTime?
+  lastError          String?              @db.Text
+  publishedAt        DateTime?
+  deadLetteredAt     DateTime?
+  dispatchGeneration Int                  @default(1)
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  run                WorkflowRun          @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stepRun            StepRun              @relation(fields: [stepRunId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([runId])
+  @@index([stepRunId])
+  @@index([orgId])
+  @@index([leaseExpiresAt])
 }
 
 

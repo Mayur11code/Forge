@@ -20,6 +20,7 @@
 // one here: that is an operational change against live infrastructure.
 
 import { sweepStaleWorkflowRuns } from "@/lib/workflow/maintenance";
+import { drainWorkflowOutbox } from "@/lib/workflow/execution/outbox";
 import type { EventPayloadMap } from "@/lib/events/schema";
 
 type WorkflowMaintenanceWorkerEvent = {
@@ -69,6 +70,7 @@ export async function runWorkflowMaintenance({
 
   try {
     const outcomes = await sweepStaleWorkflowRuns(limit === undefined ? {} : { limit });
+    await drainWorkflowOutbox(limit === undefined ? {} : { limit });
 
     const summary: WorkflowMaintenanceSummary = {
       ok: true,

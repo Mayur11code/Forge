@@ -52,6 +52,7 @@ export type CompensateFunction = (
 export interface WorkflowAction {
 
   id: string; 
+  version: string;
 
   execute: ExecuteFunction; 
   compensate?: CompensateFunction; 

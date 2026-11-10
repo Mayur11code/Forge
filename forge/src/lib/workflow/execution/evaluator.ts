@@ -31,7 +31,13 @@ import crypto from "crypto";
 import { db } from "@/lib/prisma/db";
 import { publishEvent, type PublishDelay } from "@/lib/events/queue";
 import { acquireLock, releaseLock, startRunLockHeartbeat } from "./mutex";
-import { WorkflowDefinitionSchema } from "@/lib/workflow-types/workflow";
+import { verifyWorkflowSnapshotIntegrity } from "@/lib/workflow/validation/canonical-hash";
+import {
+  recordWorkflowDispatchIntent,
+  buildWorkflowOutboxDedupeKey,
+  drainWorkflowOutbox,
+  type WorkflowOutboxTx,
+} from "./outbox";
 
 /**
  * Whether a thrown value is Prisma's unique-constraint violation.
@@ -214,23 +220,79 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
     return { progressed: false, changed: false, terminal: true, fingerprint };
   }
 
-  // The definition is the one input every decision below depends on, so it is
-  // validated at the read boundary rather than cast. A malformed definition used
-  // to yield a run that simply never advanced - no dispatch, no error, no
-  // terminal state, and nothing in the logs to explain it. Phase 7 rejects bad
-  // graphs at write time, so this mostly catches rows that predate it; for those,
-  // a named failure is strictly better than a silent hang.
-  const parsedDefinition = WorkflowDefinitionSchema.safeParse(run.workflow.definition);
-
-  if (!parsedDefinition.success) {
-    throw new Error(
-      `Workflow ${run.workflow.id} has an invalid definition: ${parsedDefinition.error.issues
-        .map((issue) => `${issue.path.join(".") || "definition"}: ${issue.message}`)
-        .join("; ")}`,
+  // F-03: Resolve execution graph from immutable snapshot
+  if (!run.definitionSnapshot) {
+    console.error(
+      `[EVALUATOR] Active WorkflowRun ${runId} has no immutable execution snapshot. Failing closed to REQUIRES_INTERVENTION.`,
     );
+    await db.workflowRun.update({
+      where: { id: runId },
+      data: {
+        status: "REQUIRES_INTERVENTION",
+        completedAt: new Date(),
+      },
+    });
+    const auditStepId = run.stepRuns?.[0]?.id || "run";
+    try {
+      await db.executionAuditLog.create({
+        data: {
+          runId,
+          stepId: auditStepId,
+          logLevel: "ERROR",
+          eventType: "EXECUTION_HALTED",
+          message:
+            "Run lacks immutable execution snapshot (legacy run without frozen snapshot); failing closed to REQUIRES_INTERVENTION to prevent execution from mutable definition",
+          payload: {
+            runId,
+            reason: "MISSING_IMMUTABLE_SNAPSHOT",
+          },
+        },
+      });
+    } catch (auditErr) {
+      console.warn(`[EVALUATOR] Could not persist run-level halt audit log:`, auditErr);
+    }
+    return { progressed: false, changed: true, terminal: true, fingerprint: `halted-${runId}` };
   }
 
-  const steps = parsedDefinition.data.steps;
+  const verification = verifyWorkflowSnapshotIntegrity(
+    run.definitionSnapshot,
+    run.definitionHash,
+  );
+
+  if (!verification.valid) {
+    console.error(
+      `[EVALUATOR] Snapshot integrity check failed for run ${runId}: ${verification.error}`,
+    );
+    await db.workflowRun.update({
+      where: { id: runId },
+      data: {
+        status: "REQUIRES_INTERVENTION",
+        completedAt: new Date(),
+      },
+    });
+    const auditStepId = run.stepRuns?.[0]?.id || "run";
+    try {
+      await db.executionAuditLog.create({
+        data: {
+          runId,
+          stepId: auditStepId,
+          logLevel: "ERROR",
+          eventType: "EXECUTION_HALTED",
+          message: `Snapshot integrity check failed: ${verification.error}`,
+          payload: {
+            runId,
+            reason: verification.code,
+            error: verification.error,
+          },
+        },
+      });
+    } catch (auditErr) {
+      console.warn(`[EVALUATOR] Could not persist snapshot integrity audit log:`, auditErr);
+    }
+    return { progressed: false, changed: true, terminal: true, fingerprint: `corrupted-${runId}` };
+  }
+
+  const steps = verification.snapshot.definition.steps;
   const existingStepRuns = run.stepRuns;
 
   // ====================================================================
@@ -330,22 +392,50 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
         `[SAGA] Pushing ${readyToCompensateIds.length} nodes to compensate:`,
         readyToCompensateIds,
       );
+      const orgId = run.workflow.orgId;
 
       await Promise.all(
         readyToCompensateIds.map(async (stepId) => {
           const stepRun = stepRunByStepId.get(stepId);
           if (!stepRun) return;
 
-          // The wrapper claims a compensation by its persisted status rather
-          // than being told which operation to run, so nothing here has to
-          // transition the row first.
-          await publishEvent("EXECUTE_WORKFLOW_NODE", {
+          const generation = (stepRun.compensationAttempts || 0) + 1;
+          const dedupeKey = buildWorkflowOutboxDedupeKey({
             runId,
             stepRunId: stepRun.id,
-            kind: steps[stepId].kind || "ACTION",
+            actionType: "COMPENSATE",
+            generation,
+          });
+
+          await db.workflowOutbox.upsert({
+            where: { dedupeKey },
+            create: {
+              orgId,
+              runId,
+              stepRunId: stepRun.id,
+              stepId,
+              eventType: "EXECUTE_WORKFLOW_NODE",
+              payload: {
+                runId,
+                stepRunId: stepRun.id,
+                kind: steps[stepId].kind || "ACTION",
+              },
+              dedupeKey,
+              status: "PENDING",
+              dispatchGeneration: generation,
+              nextAttemptAt: new Date(),
+            },
+            update: {
+              status: "PENDING",
+              nextAttemptAt: new Date(),
+              leaseToken: null,
+            },
           });
         }),
       );
+
+      // Trigger the outbox dispatcher to publish events outside DB transaction
+      await drainWorkflowOutbox({ throwOnError: true });
 
       // The compensations are now external work in flight. Looping again would
       // only re-read the same state.
@@ -480,18 +570,31 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
 
   if (readyStepIds.length > 0) {
     console.log(`[EVALUATOR] Run ${runId} dispatching ${readyStepIds.length} steps.`);
+    const orgId = run.workflow.orgId;
 
     await Promise.all(
       readyStepIds.map(async (stepId) => {
         try {
-          const stepRun = await db.stepRun.create({
-            data: { runId, stepId, status: "PENDING" },
-          });
+          await db.$transaction(async (tx) => {
+            const stepRun = await tx.stepRun.create({
+              data: { runId, stepId, status: "PENDING" },
+            });
 
-          await publishEvent("EXECUTE_WORKFLOW_NODE", {
-            runId,
-            stepRunId: stepRun.id,
-            kind: steps[stepId].kind || "ACTION",
+            await recordWorkflowDispatchIntent({
+              tx: tx as unknown as WorkflowOutboxTx,
+              orgId,
+              runId,
+              stepRunId: stepRun.id,
+              stepId,
+              eventType: "EXECUTE_WORKFLOW_NODE",
+              actionType: "EXECUTE",
+              generation: 1,
+              payload: {
+                runId,
+                stepRunId: stepRun.id,
+                kind: steps[stepId].kind || "ACTION",
+              },
+            });
           });
         } catch (error: unknown) {
           // P2002 is the unique (runId, stepId) constraint doing its job: a
@@ -510,6 +613,9 @@ async function evaluateOnce(runId: string): Promise<PassResult> {
         }
       }),
     );
+
+    // Trigger the outbox dispatcher to publish events outside DB transaction
+    await drainWorkflowOutbox({ throwOnError: true });
 
     // Real work was started, and it completes via its own webhook. A backstop is
     // still armed, keyed on the state we just left behind, so a lost completion

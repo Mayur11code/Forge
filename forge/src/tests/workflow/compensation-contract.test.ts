@@ -76,12 +76,14 @@ describe("Real Task Compensation & Safe Saga Reversal (F-02.2)", () => {
 
   const realCompensatorAction: WorkflowAction = {
     id: "test.real_compensator",
+    version: "1.0.0",
     execute: realExecuteMock,
     compensate: realCompensateMock,
   };
 
   const missingCompensatorAction: WorkflowAction = {
     id: "test.missing_compensator",
+    version: "1.0.0",
     execute: jest.fn().mockResolvedValue({ success: true, data: { sideEffect: "active" } }),
   };
 
@@ -1093,5 +1095,257 @@ describe("Real Task Compensation & Safe Saga Reversal (F-02.2)", () => {
     // Run converges to REQUIRES_INTERVENTION
     const run = store.runs.find((r) => r.id === RUN_ID);
     expect(run?.status).toBe("REQUIRES_INTERVENTION");
+  });
+
+  // =========================================================================
+  // F-02.4 Scenario 12: Default Priority Omitted in Inputs & Subsequently Mutated
+  // =========================================================================
+  it("Scenario 12: Default priority omitted in inputs (DB default MEDIUM) mutated to HIGH refuses deletion", async () => {
+    store.runs.push({
+      id: RUN_ID,
+      workflowId: WORKFLOW_ID,
+      status: "ROLLING_BACK",
+      context: {},
+      contextVersion: 0,
+      lastAdvancedAt: new Date(),
+      startedAt: new Date(),
+      completedAt: null,
+      error: "Downstream failed",
+      totalCost: 0,
+    });
+
+    store.workflows.push({
+      id: WORKFLOW_ID,
+      orgId: ORG_ID,
+      name: "Task Compensation WF",
+      definition: {
+        id: "d1",
+        name: "d1",
+        steps: {
+          step_task: {
+            id: "step_task",
+            kind: "ACTION",
+            action: "task.create",
+            dependsOn: [],
+          },
+        },
+      },
+    });
+
+    const TASK_ID = "task_default_mutated";
+    // Task created with default MEDIUM priority
+    store.tasks.push({
+      id: TASK_ID,
+      title: "Task With Default Priority",
+      description: null,
+      status: "TODO",
+      priority: "HIGH", // User later mutated in DB!
+      projectId: PROJECT_ID,
+      assigneeId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // StepRun created without priority input, but snapshot recorded actual creation priority (MEDIUM)
+    store.stepRuns.push({
+      id: "sr_default_mutated",
+      runId: RUN_ID,
+      stepId: "step_task",
+      status: "SUCCESS",
+      attempts: 1,
+      compensationAttempts: 0,
+      inputs: { title: "Task With Default Priority", projectId: PROJECT_ID }, // NO priority!
+      outputs: {
+        taskId: TASK_ID,
+        title: "Task With Default Priority",
+        projectId: PROJECT_ID,
+        taskSnapshot: {
+          id: TASK_ID,
+          title: "Task With Default Priority",
+          description: null,
+          status: "TODO",
+          priority: "MEDIUM",
+          projectId: PROJECT_ID,
+          assigneeId: null,
+        },
+      },
+      createdAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    const req = createPostRequest("sr_default_mutated", RUN_ID);
+    const res = await handleWorkflowEvent(req);
+    expect(res.status).toBe(200);
+
+    // Task must be preserved!
+    expect(store.tasks.find((t) => t.id === TASK_ID)).toBeDefined();
+
+    // StepRun is COMPENSATION_FAILED
+    const step = store.stepRuns.find((s) => s.id === "sr_default_mutated");
+    expect(step?.status).toBe("COMPENSATION_FAILED");
+    expect(step?.error).toContain("priority has been modified");
+
+    // Workflow settles to REQUIRES_INTERVENTION
+    const run = store.runs.find((r) => r.id === RUN_ID);
+    expect(run?.status).toBe("REQUIRES_INTERVENTION");
+  });
+
+  it("Scenario 13: Default priority omitted in inputs (DB default MEDIUM) preserved clean deletion", async () => {
+    store.runs.push({
+      id: RUN_ID,
+      workflowId: WORKFLOW_ID,
+      status: "ROLLING_BACK",
+      context: {},
+      contextVersion: 0,
+      lastAdvancedAt: new Date(),
+      startedAt: new Date(),
+      completedAt: null,
+      error: "Downstream failed",
+      totalCost: 0,
+    });
+
+    store.workflows.push({
+      id: WORKFLOW_ID,
+      orgId: ORG_ID,
+      name: "Task Compensation WF",
+      definition: {
+        id: "d1",
+        name: "d1",
+        steps: {
+          step_task: {
+            id: "step_task",
+            kind: "ACTION",
+            action: "task.create",
+            dependsOn: [],
+          },
+        },
+      },
+    });
+
+    const TASK_ID = "task_default_preserved";
+    store.tasks.push({
+      id: TASK_ID,
+      title: "Task With Default Priority Preserved",
+      description: null,
+      status: "TODO",
+      priority: "MEDIUM",
+      projectId: PROJECT_ID,
+      assigneeId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    store.stepRuns.push({
+      id: "sr_default_preserved",
+      runId: RUN_ID,
+      stepId: "step_task",
+      status: "SUCCESS",
+      attempts: 1,
+      compensationAttempts: 0,
+      inputs: { title: "Task With Default Priority Preserved", projectId: PROJECT_ID },
+      outputs: {
+        taskId: TASK_ID,
+        title: "Task With Default Priority Preserved",
+        projectId: PROJECT_ID,
+        taskSnapshot: {
+          id: TASK_ID,
+          title: "Task With Default Priority Preserved",
+          description: null,
+          status: "TODO",
+          priority: "MEDIUM",
+          projectId: PROJECT_ID,
+          assigneeId: null,
+        },
+      },
+      createdAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    const req = createPostRequest("sr_default_preserved", RUN_ID);
+    const res = await handleWorkflowEvent(req);
+    expect(res.status).toBe(200);
+
+    // Task deleted
+    expect(store.tasks.find((t) => t.id === TASK_ID)).toBeUndefined();
+
+    // StepRun COMPENSATED
+    const step = store.stepRuns.find((s) => s.id === "sr_default_preserved");
+    expect(step?.status).toBe("COMPENSATED");
+  });
+
+  it("Scenario 14: Legacy StepRun without snapshot falling back to inputs priority default detects mutation", async () => {
+    store.runs.push({
+      id: RUN_ID,
+      workflowId: WORKFLOW_ID,
+      status: "ROLLING_BACK",
+      context: {},
+      contextVersion: 0,
+      lastAdvancedAt: new Date(),
+      startedAt: new Date(),
+      completedAt: null,
+      error: "Downstream failed",
+      totalCost: 0,
+    });
+
+    store.workflows.push({
+      id: WORKFLOW_ID,
+      orgId: ORG_ID,
+      name: "Task Compensation WF",
+      definition: {
+        id: "d1",
+        name: "d1",
+        steps: {
+          step_task: {
+            id: "step_task",
+            kind: "ACTION",
+            action: "task.create",
+            dependsOn: [],
+          },
+        },
+      },
+    });
+
+    const TASK_ID = "task_legacy_mutated";
+    store.tasks.push({
+      id: TASK_ID,
+      title: "Legacy Task",
+      description: null,
+      status: "TODO",
+      priority: "HIGH", // Mutated
+      projectId: PROJECT_ID,
+      assigneeId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    // StepRun WITHOUT taskSnapshot and WITHOUT priority in inputs
+    store.stepRuns.push({
+      id: "sr_legacy_mutated",
+      runId: RUN_ID,
+      stepId: "step_task",
+      status: "SUCCESS",
+      attempts: 1,
+      compensationAttempts: 0,
+      inputs: { title: "Legacy Task", projectId: PROJECT_ID }, // NO priority!
+      outputs: {
+        taskId: TASK_ID,
+        title: "Legacy Task",
+        projectId: PROJECT_ID,
+        // NO taskSnapshot!
+      },
+      createdAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    const req = createPostRequest("sr_legacy_mutated", RUN_ID);
+    const res = await handleWorkflowEvent(req);
+    expect(res.status).toBe(200);
+
+    // Task must be preserved!
+    expect(store.tasks.find((t) => t.id === TASK_ID)).toBeDefined();
+
+    const step = store.stepRuns.find((s) => s.id === "sr_legacy_mutated");
+    expect(step?.status).toBe("COMPENSATION_FAILED");
+    expect(step?.error).toContain("priority has been modified");
   });
 });

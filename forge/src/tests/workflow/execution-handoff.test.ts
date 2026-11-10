@@ -112,13 +112,16 @@ describe("37.12 execution handoff", () => {
     // Exactly one run, for the requested workflow, with an empty trigger
     // namespace (a generated workflow references no trigger field).
     expect(workflowRunCreate).toHaveBeenCalledTimes(1);
-    expect(workflowRunCreate).toHaveBeenCalledWith({
-      data: {
-        workflowId: WORKFLOW_ID,
-        status: "RUNNING",
-        context: { trigger: { outputs: {} } },
-      },
-    });
+    expect(workflowRunCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          workflowId: WORKFLOW_ID,
+          status: "RUNNING",
+          context: { trigger: { outputs: {} } },
+          definitionHash: expect.stringMatching(/^sha256:/),
+        }),
+      }),
+    );
 
     // The first domino is pushed exactly once.
     expect(advanceWorkflowMock).toHaveBeenCalledTimes(1);
