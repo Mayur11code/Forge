@@ -1,10 +1,9 @@
-import { chromium } from "playwright";
-import * as fs from "fs";
+import { chromium, Browser } from "playwright";
 import * as path from "path";
 
 const ARTIFACT_DIR = path.resolve("C:/Users/Mayur/.gemini/antigravity-cli/brain/38cff073-959a-4785-8754-8c5ea4041f4d/screenshots");
 
-async function checkKind50(browser: any) {
+async function checkKind50(browser: Browser) {
   console.log("=== CHECKING GOFUNDME KIND 50 ===");
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
@@ -100,8 +99,8 @@ async function checkBizarro() {
     });
     console.log("Bizarro Data:", bizarroData);
 
-  } catch (err: any) {
-    console.error("Bizarro error:", err.message);
+  } catch (err: unknown) {
+    console.error("Bizarro error:", err instanceof Error ? err.message : String(err));
   } finally {
     await browser.close();
   }

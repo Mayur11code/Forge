@@ -22,8 +22,8 @@ async function captureSite(url: string, prefix: string) {
 
   try {
     await page.goto(url, { waitUntil: "networkidle", timeout: 45000 });
-  } catch (e: any) {
-    console.log(`Networkidle timed out, proceeding with current state: ${e.message}`);
+  } catch (e: unknown) {
+    console.log(`Networkidle timed out, proceeding with current state: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // Wait a bit for initial animations / canvas

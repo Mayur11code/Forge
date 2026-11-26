@@ -19,6 +19,7 @@ export type ProjectSummary = {
   name: string;
   description: string | null;
   createdAt: Date;
+  archivedAt?: Date | null;
   taskCount: number;
 };
 
@@ -27,6 +28,7 @@ const projectSummarySelect = {
   name: true,
   description: true,
   createdAt: true,
+  archivedAt: true,
   _count: { select: { tasks: true } },
 } satisfies Prisma.ProjectSelect;
 
@@ -40,23 +42,29 @@ function toSummary(row: ProjectRow): ProjectSummary {
     name: row.name,
     description: row.description,
     createdAt: row.createdAt,
+    archivedAt: row.archivedAt,
     taskCount: row._count.tasks,
   };
 }
 
 export type ListProjectsOptions = {
   take?: number;
+  includeArchived?: boolean;
 };
 
 /**
  * List every project inside a trusted org. Newest first.
+ * By default filters out archived projects.
  */
 export async function listProjectsInOrg(
   orgId: string,
-  { take = 50 }: ListProjectsOptions = {},
+  { take = 50, includeArchived = false }: ListProjectsOptions = {},
 ): Promise<ProjectSummary[]> {
   const rows = await prisma.project.findMany({
-    where: { orgId },
+    where: {
+      orgId,
+      ...(includeArchived ? {} : { archivedAt: null }),
+    },
     select: projectSummarySelect,
     orderBy: { createdAt: "desc" },
     take,
@@ -71,17 +79,18 @@ export async function listProjectsInOrg(
 export async function searchProjectsInOrg(
   orgId: string,
   query: string,
-  { take = 10 }: ListProjectsOptions = {},
+  { take = 10, includeArchived = false }: ListProjectsOptions = {},
 ): Promise<ProjectSummary[]> {
   const trimmed = query.trim();
 
   if (!trimmed) {
-    return listProjectsInOrg(orgId, { take });
+    return listProjectsInOrg(orgId, { take, includeArchived });
   }
 
   const rows = await prisma.project.findMany({
     where: {
       orgId,
+      ...(includeArchived ? {} : { archivedAt: null }),
       OR: [
         { name: { contains: trimmed, mode: "insensitive" } },
         { description: { contains: trimmed, mode: "insensitive" } },

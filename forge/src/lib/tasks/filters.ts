@@ -30,6 +30,9 @@ function toEnumMember<T extends Record<string, string>>(
 }
 
 export function toTaskStatus(raw: string | undefined): TaskStatus | undefined {
+  if (raw === "COMPLETED") {
+    return TaskStatus.DONE;
+  }
   return toEnumMember(TaskStatus, raw);
 }
 
@@ -57,4 +60,38 @@ export function resolveTaskStatusFilter(params: {
     toTaskStatus(params.filter !== "ALL" ? params.filter : undefined) ??
     toTaskStatus(params.status)
   );
+}
+
+/**
+ * Resolves and validates an assignee filter against the organization's verified members.
+ *
+ * Enforces multi-tenant isolation and safe failure (P6):
+ * - "UNASSIGNED" -> returns null (maps to { assigneeId: null } in Prisma).
+ * - "ALL" or undefined -> returns undefined (no assignee filter applied).
+ * - Valid member ID -> returns the userId string.
+ * - Foreign or invalid member ID -> returns sentinel "INVALID_FOREIGN_ASSIGNEE" which
+ *   safely matches 0 tasks rather than throwing or leaking tasks from other tenants.
+ */
+export function resolveTaskAssigneeFilter(
+  rawAssignee: string | undefined,
+  validMemberUserIds: Set<string> | string[]
+): string | null | undefined {
+  if (!rawAssignee || rawAssignee === "ALL") {
+    return undefined;
+  }
+
+  if (rawAssignee === "UNASSIGNED") {
+    return null;
+  }
+
+  const memberSet =
+    validMemberUserIds instanceof Set
+      ? validMemberUserIds
+      : new Set(validMemberUserIds);
+
+  if (memberSet.has(rawAssignee)) {
+    return rawAssignee;
+  }
+
+  return "INVALID_FOREIGN_ASSIGNEE";
 }

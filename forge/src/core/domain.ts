@@ -49,7 +49,8 @@ export const updateTaskSchema = z.object({
     .optional(),
 
   status: z
-    .enum(["TODO", "IN_PROGRESS", "DONE"])
+    .enum(["TODO", "IN_PROGRESS", "BLOCKED", "DONE", "COMPLETED"])
+    .transform((val) => (val === "COMPLETED" ? ("DONE" as const) : val))
     .optional(),
 
   priority: z

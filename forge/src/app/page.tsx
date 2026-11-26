@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import {
   ArrowRight,
   LogIn,
@@ -11,10 +12,28 @@ import {
   Pause,
   ChevronRight,
   ChevronLeft,
-  Move,
   Copy,
   Check,
 } from "lucide-react";
+
+const ThreeCassetteDeck = dynamic(
+  () => import("@/components/ThreeCassetteDeck"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="relative w-full h-[480px] border border-white/[0.08] bg-[#07070a] flex items-center justify-center font-mono text-xs text-zinc-500">
+        INITIALIZING 3D WEBGL DECK...
+      </div>
+    ),
+  }
+);
+
+const CustomCursor = dynamic(
+  () => import("@/components/CustomCursor"),
+  { ssr: false }
+);
+
+import SystemEventsGame from "@/components/SystemEventsGame";
 
 // ============================================================================
 // ARCHITECTURAL DATA CONTRACTS
@@ -342,140 +361,7 @@ function playMechanicalClick(ctx: AudioContext | null) {
   }
 }
 
-// ============================================================================
-// 3D CASSETTE PHYSICS OBJECT DEFINITION (PHOTOREALISTIC ACTIVE-THEORY STYLE)
-// ============================================================================
-
-interface PhysicsBody {
-  id: string;
-  name: string;
-  tapeType: string;
-  timeTag: string;
-  serial: string;
-  side: "A" | "B";
-  x: number;
-  y: number;
-  z: number;
-  vx: number;
-  vy: number;
-  vz: number;
-  rotX: number;
-  rotY: number;
-  rotZ: number;
-  vRotX: number;
-  vRotY: number;
-  vRotZ: number;
-  width: number;
-  height: number;
-  isDragging: boolean;
-  accent: string;
-}
-
 export default function Home() {
-  const [ambientAudioActive, setAmbientAudioActive] = useState(false);
-  const [tapeWarmth, setTapeWarmth] = useState<"33" | "45">("33");
-  const [selectedDagIndex, setSelectedDagIndex] = useState(0);
-  const [activeChapterIndex, setActiveChapterIndex] = useState(0);
-  const [currentTimeUTC, setCurrentTimeUTC] = useState<string>("");
-  const [tapeCounter, setTapeCounter] = useState(14);
-  const [copiedCode, setCopiedCode] = useState(false);
-  const [activeHoverOrbitalIndex, setActiveHoverOrbitalIndex] = useState<number | null>(null);
-
-  // --- KIND 50 ORBITAL WHEEL STATE ---
-  const [wheelAngle, setWheelAngle] = useState(0);
-  const [isDraggingWheel, setIsDraggingWheel] = useState(false);
-  const isDraggingWheelRef = useRef(false);
-  const wheelStartPointerX = useRef(0);
-  const wheelAngleRef = useRef(0);
-  const wheelVelocityRef = useRef(0.002);
-  const lastWheelPointerX = useRef(0);
-  const lastWheelTimestamp = useRef(0);
-
-  // --- BIZARRO 3D PHYSICS CANVAS REFS ---
-  const physicsCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const bodiesRef = useRef<PhysicsBody[]>([
-    {
-      id: "tape-1",
-      name: "FORGE UX-PRO 90",
-      tapeType: "SUPER CHROME CLASS · BIAS 70µs",
-      timeTag: "POSTGRES MUTEX MASTER",
-      serial: "CR-90-A882",
-      side: "A",
-      x: -160,
-      y: -25,
-      z: 0,
-      vx: 0.35,
-      vy: 0.15,
-      vz: 0,
-      rotX: 8,
-      rotY: -12,
-      rotZ: -6,
-      vRotX: 0.06,
-      vRotY: 0.08,
-      vRotZ: 0.03,
-      width: 290,
-      height: 180,
-      isDragging: false,
-      accent: "#f4f4f5",
-    },
-    {
-      id: "tape-2",
-      name: "TRANSACTION OUTBOX",
-      tapeType: "ATOMIC CDC LOG · 50ms LEASE",
-      timeTag: "DISTRIBUTED REDIS GATE",
-      serial: "TX-50-K104",
-      side: "B",
-      x: 150,
-      y: 40,
-      z: -30,
-      vx: -0.25,
-      vy: 0.3,
-      vz: 0,
-      rotX: -7,
-      rotY: 14,
-      rotZ: 10,
-      vRotX: -0.05,
-      vRotY: -0.07,
-      vRotZ: 0.02,
-      width: 280,
-      height: 175,
-      isDragging: false,
-      accent: "#e4e4e7",
-    },
-    {
-      id: "tape-3",
-      name: "SAGA ROLLBACK FLIGHT",
-      tapeType: "REVERSE DAG RECORDER · 24-HR",
-      timeTag: "PINECONE TOMBSTONES",
-      serial: "SG-04-R991",
-      side: "A",
-      x: 10,
-      y: -120,
-      z: 15,
-      vx: 0.18,
-      vy: -0.22,
-      vz: 0,
-      rotX: 12,
-      rotY: 8,
-      rotZ: -12,
-      vRotX: 0.04,
-      vRotY: 0.05,
-      vRotZ: -0.04,
-      width: 285,
-      height: 178,
-      isDragging: false,
-      accent: "#d4d4d8",
-    },
-  ]);
-  const activeDraggedBodyRef = useRef<PhysicsBody | null>(null);
-  const dragOffsetRef = useRef({ x: 0, y: 0 });
-  const lastMousePosRef = useRef({ x: 0, y: 0, time: 0 });
-  const spoolRotationRef = useRef(0);
-
-  // Smooth lerped mouse coordinates for ambient spotlight
-  const targetMousePos = useRef({ x: 0, y: 0 });
-  const [smoothMousePos, setSmoothMousePos] = useState({ x: 0, y: 0 });
-
   // Web Audio & Spectrum Visualizer Refs
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -484,9 +370,49 @@ export default function Home() {
   const filterNodeRef = useRef<BiquadFilterNode | null>(null);
   const decayingBarsRef = useRef<number[]>(new Array(18).fill(2));
 
-  // Section Refs
+  // Section & Animation Refs
   const heroRef = useRef<HTMLElement | null>(null);
-  const scrambleTriggerRef = useRef(0);
+  const targetMousePos = useRef({ x: 0, y: 0 });
+  const isDraggingWheelRef = useRef(false);
+  const wheelStartPointerX = useRef(0);
+  const wheelAngleRef = useRef(0);
+  const wheelVelocityRef = useRef(0.002);
+  const lastWheelPointerX = useRef(0);
+  const lastWheelTimestamp = useRef(0);
+
+  // Component States
+  const [ambientAudioActive, setAmbientAudioActive] = useState(false);
+  const [tapeWarmth, setTapeWarmth] = useState<"33" | "45">("33");
+  const [selectedDagIndex, setSelectedDagIndex] = useState(0);
+  const [activeChapterIndex, setActiveChapterIndex] = useState(0);
+  const [currentTimeUTC, setCurrentTimeUTC] = useState<string>("");
+  const [tapeCounter, setTapeCounter] = useState(14);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [activeHoverOrbitalIndex, setActiveHoverOrbitalIndex] = useState<number | null>(null);
+  const [smoothMousePos, setSmoothMousePos] = useState({ x: 0, y: 0 });
+
+  // --- KIND 50 ORBITAL WHEEL STATE ---
+  const [wheelAngle, setWheelAngle] = useState(0);
+  const [isDraggingWheel, setIsDraggingWheel] = useState(false);
+
+  // --- THREE.JS 3D CASSETTE DECK TRIGGER ---
+  const [scrambleTrigger, setScrambleTrigger] = useState(0);
+
+  // --- RESTORED SYSTEM EVENTS MINI-GAME STATE ---
+  const [isGameOpen, setIsGameOpen] = useState(false);
+  const [logoClickCount, setLogoClickCount] = useState(0);
+
+  const handleLogoClick = useCallback(() => {
+    playMechanicalClick(audioCtxRef.current);
+    setLogoClickCount((prev) => {
+      const next = prev + 1;
+      if (next >= 3) {
+        setIsGameOpen(true);
+        return 0;
+      }
+      return next;
+    });
+  }, []);
 
   // Real-time UTC Clock
   useEffect(() => {
@@ -589,422 +515,8 @@ export default function Home() {
     playMechanicalClick(audioCtxRef.current);
   };
 
-  // ==========================================================================
-  // BIZARRO: PHOTOREALISTIC 3D CASSETTE PHYSICS SIMULATION CANVAS
-  // ==========================================================================
-  useEffect(() => {
-    const canvas = physicsCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    let animId: number;
-
-    const renderPhysics = () => {
-      animId = requestAnimationFrame(renderPhysics);
-
-      const width = canvas.width;
-      const height = canvas.height;
-      const cx = width / 2;
-      const cy = height / 2;
-
-      ctx.clearRect(0, 0, width, height);
-
-      // Advance tape spools
-      spoolRotationRef.current += ambientAudioActive ? 0.05 : 0.01;
-
-      const bodies = bodiesRef.current;
-
-      // Apply any queued scramble impulse
-      if (scrambleTriggerRef.current > 0) {
-        scrambleTriggerRef.current = 0;
-        for (const b of bodies) {
-          b.vx = (Math.random() - 0.5) * 16;
-          b.vy = (Math.random() - 0.5) * 16;
-          b.vRotZ = (Math.random() - 0.5) * 2.8;
-        }
-      }
-
-      // Update positions and velocities
-      for (const b of bodies) {
-        if (!b.isDragging) {
-          b.x += b.vx;
-          b.y += b.vy;
-          b.rotX += b.vRotX;
-          b.rotY += b.vRotY;
-          b.rotZ += b.vRotZ;
-
-          // Gentle ambient damping
-          b.vx *= 0.992;
-          b.vy *= 0.992;
-          b.vRotX *= 0.995;
-          b.vRotY *= 0.995;
-          b.vRotZ *= 0.995;
-
-          // Boundary bouncing
-          const boundX = width / 2 - 150;
-          const boundY = height / 2 - 100;
-
-          if (b.x < -boundX) {
-            b.x = -boundX;
-            b.vx = Math.abs(b.vx) * 0.72 + 0.1;
-            b.vRotZ += 0.2;
-            playMechanicalClick(audioCtxRef.current);
-          } else if (b.x > boundX) {
-            b.x = boundX;
-            b.vx = -Math.abs(b.vx) * 0.72 - 0.1;
-            b.vRotZ -= 0.2;
-            playMechanicalClick(audioCtxRef.current);
-          }
-
-          if (b.y < -boundY) {
-            b.y = -boundY;
-            b.vy = Math.abs(b.vy) * 0.72 + 0.1;
-            b.vRotX += 0.2;
-            playMechanicalClick(audioCtxRef.current);
-          } else if (b.y > boundY) {
-            b.y = boundY;
-            b.vy = -Math.abs(b.vy) * 0.72 - 0.1;
-            b.vRotX -= 0.2;
-            playMechanicalClick(audioCtxRef.current);
-          }
-        }
-      }
-
-      // Sort by Z for realistic depth layering
-      const sortedBodies = [...bodies].sort((a, b) => a.z - b.z);
-
-      for (const b of sortedBodies) {
-        ctx.save();
-        ctx.translate(cx + b.x, cy + b.y);
-
-        // Apply 3D perspective projection
-        const radZ = (b.rotZ * Math.PI) / 180;
-        const radY = (b.rotY * Math.PI) / 180;
-        const radX = (b.rotX * Math.PI) / 180;
-
-        ctx.rotate(radZ);
-        ctx.scale(Math.cos(radY), Math.cos(radX));
-
-        const w = b.width;
-        const h = b.height;
-
-        // Realistic layered contact shadow
-        ctx.shadowColor = "rgba(0, 0, 0, 0.85)";
-        ctx.shadowBlur = b.isDragging ? 36 : 22;
-        ctx.shadowOffsetX = 10;
-        ctx.shadowOffsetY = 18;
-
-        // 1. MAIN CASSETTE SHELL (Rounded Beveled Body)
-        const cornerR = 12;
-        ctx.beginPath();
-        ctx.roundRect(-w / 2, -h / 2, w, h, cornerR);
-
-        // Deep obsidian plastic gradient
-        const bodyGrad = ctx.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
-        bodyGrad.addColorStop(0, "#1c1c24");
-        bodyGrad.addColorStop(0.5, "#121218");
-        bodyGrad.addColorStop(1, "#0a0a0f");
-        ctx.fillStyle = bodyGrad;
-        ctx.fill();
-
-        // 3D Bevel Edge Highlights
-        ctx.strokeStyle = b.isDragging ? "#ffffff" : "rgba(255, 255, 255, 0.22)";
-        ctx.lineWidth = b.isDragging ? 2 : 1;
-        ctx.stroke();
-
-        ctx.shadowColor = "transparent";
-
-        // Inner Chamfer Line
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(-w / 2 + 5, -h / 2 + 5, w - 10, h - 10, 8);
-        ctx.stroke();
-
-        // 2. BOTTOM TRAPEZOID HEAD NOTCH (Signature Cassette Geometry)
-        ctx.fillStyle = "#0c0c10";
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-        ctx.beginPath();
-        ctx.moveTo(-w / 3.2, h / 2 - 2);
-        ctx.lineTo(-w / 4, h / 2 - 22);
-        ctx.lineTo(w / 4, h / 2 - 22);
-        ctx.lineTo(w / 3.2, h / 2 - 2);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-
-        // Exposed Magnetic Tape Ribbon across the notch
-        ctx.strokeStyle = "#382318";
-        ctx.lineWidth = 9;
-        ctx.beginPath();
-        ctx.moveTo(-w / 4 + 6, h / 2 - 11);
-        ctx.lineTo(w / 4 - 6, h / 2 - 11);
-        ctx.stroke();
-
-        // Dual brass roller pins in the notch
-        const drawRoller = (rollerX: number) => {
-          ctx.fillStyle = "#8a7556";
-          ctx.beginPath();
-          ctx.arc(rollerX, h / 2 - 11, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = "#ded6c5";
-          ctx.beginPath();
-          ctx.arc(rollerX, h / 2 - 11, 1.5, 0, Math.PI * 2);
-          ctx.fill();
-        };
-        drawRoller(-w / 4 + 14);
-        drawRoller(w / 4 - 14);
-
-        // 3. VINTAGE SILVER FOIL LABEL PLATE
-        const labelW = w - 24;
-        const labelH = 62;
-        const labelY = -h / 2 + 12;
-
-        const labelGrad = ctx.createLinearGradient(-labelW / 2, labelY, labelW / 2, labelY + labelH);
-        labelGrad.addColorStop(0, "#22222d");
-        labelGrad.addColorStop(0.5, "#181822");
-        labelGrad.addColorStop(1, "#14141c");
-        ctx.fillStyle = labelGrad;
-        ctx.beginPath();
-        ctx.roundRect(-labelW / 2, labelY, labelW, labelH, 6);
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-        ctx.stroke();
-
-        // Silver Accent Stripe on label
-        ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
-        ctx.fillRect(-labelW / 2, labelY + 38, labelW, 2);
-
-        // Technical Typography on Label
-        ctx.fillStyle = b.accent;
-        ctx.font = "bold 11px monospace";
-        ctx.fillText(b.name, -labelW / 2 + 12, labelY + 20);
-
-        ctx.fillStyle = "#a1a1aa";
-        ctx.font = "9px monospace";
-        ctx.fillText(b.tapeType, -labelW / 2 + 12, labelY + 34);
-
-        // Side badge (A or B)
-        ctx.fillStyle = "#ffffff";
-        ctx.font = "bold 13px monospace";
-        ctx.fillText(b.side, labelW / 2 - 20, labelY + 22);
-        ctx.fillStyle = "#71717a";
-        ctx.font = "8px monospace";
-        ctx.fillText(b.serial, labelW / 2 - 68, labelY + 34);
-
-        // 4. RECESSED ACRYLIC CENTER VIEWING WINDOW
-        const winW = w * 0.54;
-        const winH = 46;
-        const winY = -6;
-
-        ctx.fillStyle = "rgba(4, 4, 6, 0.9)";
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.roundRect(-winW / 2, winY, winW, winH, 8);
-        ctx.fill();
-        ctx.stroke();
-
-        // Diagonal Glass Glare Reflection
-        const glassGrad = ctx.createLinearGradient(-winW / 2, winY, winW / 2, winY + winH);
-        glassGrad.addColorStop(0, "rgba(255, 255, 255, 0.12)");
-        glassGrad.addColorStop(0.4, "rgba(255, 255, 255, 0.03)");
-        glassGrad.addColorStop(0.6, "transparent");
-        ctx.fillStyle = glassGrad;
-        ctx.beginPath();
-        ctx.roundRect(-winW / 2, winY, winW, winH, 8);
-        ctx.fill();
-
-        // Tape Meter Scale Markings
-        ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
-        ctx.font = "7px monospace";
-        ctx.fillText("100  ·  50  ·  0", -28, winY + 26);
-
-        // 5. AUTHENTIC TAPE SPOOLS WITH 6-TOOTH SPROCKETS
-        const drawSpool = (spoolX: number, tapeRadius: number, angle: number) => {
-          ctx.save();
-          ctx.translate(spoolX, winY + winH / 2);
-
-          // Wound magnetic tape pack (dark brown layered circle)
-          const tapeGrad = ctx.createRadialGradient(0, 0, 12, 0, 0, tapeRadius);
-          tapeGrad.addColorStop(0, "#24160f");
-          tapeGrad.addColorStop(1, "#3d271b");
-          ctx.fillStyle = tapeGrad;
-          ctx.beginPath();
-          ctx.arc(0, 0, tapeRadius, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Concentric tape layer lines
-          ctx.strokeStyle = "rgba(0, 0, 0, 0.4)";
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.arc(0, 0, tapeRadius * 0.75, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // White inner drive reel ring
-          ctx.fillStyle = "#ededf0";
-          ctx.beginPath();
-          ctx.arc(0, 0, 13, 0, Math.PI * 2);
-          ctx.fill();
-
-          // 6 Rotating sprocket teeth
-          ctx.rotate(angle);
-          ctx.strokeStyle = "#08080c";
-          ctx.lineWidth = 2.2;
-          for (let i = 0; i < 6; i++) {
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(0, -11);
-            ctx.stroke();
-            ctx.rotate((Math.PI * 2) / 6);
-          }
-
-          // Center Red Hub Core
-          ctx.fillStyle = "#8b1c1c";
-          ctx.beginPath();
-          ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.restore();
-        };
-
-        // Left spool has more tape, right spool has less
-        drawSpool(-winW / 3.4, 23, spoolRotationRef.current);
-        drawSpool(winW / 3.4, 16, spoolRotationRef.current * 0.94);
-
-        // 6. CORNER METALLIC PHILIPS SCREWS
-        const drawScrew = (sx: number, sy: number, slotAngle: number) => {
-          ctx.save();
-          ctx.translate(sx, sy);
-          ctx.fillStyle = "#3a3a46";
-          ctx.beginPath();
-          ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-          ctx.lineWidth = 0.8;
-          ctx.stroke();
-
-          // Cross slot
-          ctx.rotate(slotAngle);
-          ctx.strokeStyle = "#121218";
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(-2, 0);
-          ctx.lineTo(2, 0);
-          ctx.moveTo(0, -2);
-          ctx.lineTo(0, 2);
-          ctx.stroke();
-          ctx.restore();
-        };
-
-        drawScrew(-w / 2 + 10, -h / 2 + 10, 0.4);
-        drawScrew(w / 2 - 10, -h / 2 + 10, 1.2);
-        drawScrew(-w / 2 + 10, h / 2 - 10, 0.8);
-        drawScrew(w / 2 - 10, h / 2 - 10, 1.9);
-        drawScrew(0, -h / 2 + 8, 0.1);
-
-        // 7. BIZARRO TECHNICAL HUD TARGETING OVERLAY
-        if (b.isDragging) {
-          ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 4]);
-
-          ctx.beginPath();
-          ctx.moveTo(-w / 2 - 24, 0);
-          ctx.lineTo(-w / 2 - 8, 0);
-          ctx.moveTo(w / 2 + 8, 0);
-          ctx.lineTo(w / 2 + 24, 0);
-          ctx.moveTo(0, -h / 2 - 24);
-          ctx.lineTo(0, -h / 2 - 8);
-          ctx.moveTo(0, h / 2 + 8);
-          ctx.lineTo(0, h / 2 + 24);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          ctx.fillStyle = "#ffffff";
-          ctx.font = "9px monospace";
-          ctx.fillText(`pos: [${Math.round(b.x)}, ${Math.round(b.y)}]`, w / 2 + 12, -h / 2 + 12);
-          ctx.fillStyle = "#a1a1aa";
-          ctx.fillText(`rotZ: ${Math.round(b.rotZ)}°  v: ${(Math.hypot(b.vx, b.vy) * 10).toFixed(1)} px/s`, w / 2 + 12, -h / 2 + 26);
-        }
-
-        ctx.restore();
-      }
-    };
-
-    animId = requestAnimationFrame(renderPhysics);
-
-    return () => cancelAnimationFrame(animId);
-  }, [ambientAudioActive]);
-
-  // Pointer interactions for the Bizarro Physics Canvas
-  const handlePhysicsPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = physicsCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left - canvas.width / 2;
-    const mouseY = e.clientY - rect.top - canvas.height / 2;
-
-    const bodies = bodiesRef.current;
-    for (let i = bodies.length - 1; i >= 0; i--) {
-      const b = bodies[i];
-      if (
-        mouseX >= b.x - b.width / 2 &&
-        mouseX <= b.x + b.width / 2 &&
-        mouseY >= b.y - b.height / 2 &&
-        mouseY <= b.y + b.height / 2
-      ) {
-        b.isDragging = true;
-        activeDraggedBodyRef.current = b;
-        dragOffsetRef.current = { x: mouseX - b.x, y: mouseY - b.y };
-        lastMousePosRef.current = { x: mouseX, y: mouseY, time: performance.now() };
-
-        bodies.splice(i, 1);
-        bodies.push(b);
-
-        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-        playMechanicalClick(audioCtxRef.current);
-        break;
-      }
-    }
-  };
-
-  const handlePhysicsPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const b = activeDraggedBodyRef.current;
-    if (!b) return;
-
-    const canvas = physicsCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left - canvas.width / 2;
-    const mouseY = e.clientY - rect.top - canvas.height / 2;
-
-    const now = performance.now();
-    const dt = Math.max(1, now - lastMousePosRef.current.time);
-
-    b.vx = ((mouseX - lastMousePosRef.current.x) / dt) * 15;
-    b.vy = ((mouseY - lastMousePosRef.current.y) / dt) * 15;
-    b.vRotZ = b.vx * 0.08;
-
-    b.x = mouseX - dragOffsetRef.current.x;
-    b.y = mouseY - dragOffsetRef.current.y;
-
-    lastMousePosRef.current = { x: mouseX, y: mouseY, time: now };
-  };
-
-  const handlePhysicsPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const b = activeDraggedBodyRef.current;
-    if (b) {
-      b.isDragging = false;
-      activeDraggedBodyRef.current = null;
-      (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
-      playMechanicalClick(audioCtxRef.current);
-    }
-  };
-
   const handleScrambleCassettes = () => {
-    scrambleTriggerRef.current += 1;
+    setScrambleTrigger((prev) => prev + 1);
     playMechanicalClick(audioCtxRef.current);
   };
 
@@ -1148,6 +660,16 @@ export default function Home() {
       onMouseMove={handleMouseMoveGlobal}
       className="relative min-h-screen bg-[#060608] text-zinc-100 font-sans antialiased selection:bg-zinc-800 selection:text-white overflow-x-hidden"
     >
+      {/* 1. Ultra-Smooth Precision Custom Cursor (SLX Management Style) */}
+      <CustomCursor />
+
+      {/* 2. Restored System Events Falling Mini-Game */}
+      <SystemEventsGame
+        isOpen={isGameOpen}
+        onClose={() => setIsGameOpen(false)}
+        onPlayClickSound={() => playMechanicalClick(audioCtxRef.current)}
+      />
+
       {/* Dynamic Ambient Mouse Spotlight */}
       <div
         className="pointer-events-none fixed inset-0 z-0 transition-opacity duration-700 ease-out opacity-60"
@@ -1177,14 +699,23 @@ export default function Home() {
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.08] bg-[#060608]/85 backdrop-blur-xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <Link href="/" className="group flex items-center gap-3">
+            <div
+              onClick={handleLogoClick}
+              className="group flex items-center gap-3 cursor-pointer select-none"
+              title="Click 3 times to unlock event stream mini-game"
+            >
               <span className="w-6 h-6 border border-zinc-700 bg-zinc-950 flex items-center justify-center font-mono text-xs font-bold text-zinc-300 group-hover:border-white group-hover:text-white transition-colors duration-300">
                 F
               </span>
               <span className="font-mono text-xs tracking-[0.2em] uppercase text-zinc-100 font-semibold group-hover:text-white transition-colors duration-300">
                 Forge
               </span>
-            </Link>
+              {logoClickCount > 0 && (
+                <span className="text-[10px] font-mono text-zinc-400 font-bold tracking-widest animate-pulse border border-white/[0.2] px-1.5 py-0.5 bg-white/[0.04]">
+                  OVERRIDE: {logoClickCount}/3
+                </span>
+              )}
+            </div>
 
             <div className="hidden lg:flex items-center gap-4 text-[11px] font-mono text-zinc-500 border-l border-white/[0.08] pl-6">
               <span>Release 1.0</span>
@@ -1235,6 +766,18 @@ export default function Home() {
 
           {/* Action CTAs */}
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                playMechanicalClick(audioCtxRef.current);
+                setIsGameOpen(true);
+              }}
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 border border-white/[0.1] hover:border-white/30 text-zinc-400 hover:text-zinc-200 text-xs font-mono tracking-wider transition-all duration-300"
+              title="Launch CDC event stream simulator mini-game"
+            >
+              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-none" />
+              <span>[ Mini-game ]</span>
+            </button>
+
             <Link
               href="/login"
               className="px-4 py-2 border border-white/[0.1] hover:border-white/30 text-zinc-300 hover:text-white text-xs font-mono tracking-wider transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5"
@@ -1275,7 +818,6 @@ export default function Home() {
           onPointerMove={handleWheelPointerMove}
           onPointerUp={handleWheelPointerUp}
           className="relative w-full max-w-6xl h-[720px] flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
-          title="Click and drag horizontally to spin the system orbital wheel"
         >
           {/* Circular Orbital Ring of System Invariant Cards (Kind 50 Architecture) */}
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1335,17 +877,6 @@ export default function Home() {
 
           {/* Center Monumental Console (Framed by the Orbital Wheel) */}
           <div className="relative z-40 max-w-lg text-center px-6 pointer-events-auto">
-            <div className="inline-flex items-center gap-2.5 border border-white/[0.14] bg-zinc-950/90 px-3.5 py-1.5 text-[11px] font-mono text-zinc-300 mb-6 shadow-xl backdrop-blur-md">
-              <span className="text-zinc-100 font-semibold">[ System 01 ]</span>
-              <span>·</span>
-              <span>Multi-tenant architecture</span>
-              <span>·</span>
-              <span className="text-zinc-400 flex items-center gap-1">
-                <Move className="w-3 h-3 text-zinc-400" />
-                <span>Drag to spin</span>
-              </span>
-            </div>
-
             <h1 className="text-4xl sm:text-6xl font-light tracking-[-0.03em] leading-[0.98] text-zinc-100">
               Orchestration <br />
               <span className="font-serif italic font-normal tracking-tight text-zinc-400 text-3xl sm:text-5xl block mt-2">
@@ -1458,30 +989,13 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Right Column: Full-Bleed Interactive 3D Physics Canvas */}
+          {/* Right Column: Real Three.js 3D WebGL Cassette Deck */}
           <div className="lg:col-span-7 flex flex-col items-center">
-            <div className="relative w-full h-[480px] border border-white/[0.08] bg-zinc-950/90 overflow-hidden shadow-2xl">
-              <canvas
-                ref={physicsCanvasRef}
-                width={720}
-                height={480}
-                onPointerDown={handlePhysicsPointerDown}
-                onPointerMove={handlePhysicsPointerMove}
-                onPointerUp={handlePhysicsPointerUp}
-                className="w-full h-full cursor-grab active:cursor-grabbing"
-              />
-
-              {/* Bizarro Technical Colophon HUD Over Canvas */}
-              <div className="pointer-events-none absolute top-4 left-4 font-mono text-[10px] text-zinc-400 space-y-1">
-                <div>[ SONY SUPER CHROME CASSETTE RIG ]</div>
-                <div>PHYSICS: RIGID_BODY_2D_3D_PROJECTED</div>
-              </div>
-
-              <div className="pointer-events-none absolute bottom-4 right-4 font-mono text-[10px] text-zinc-400 text-right">
-                <div>CLICK & FLING ANY CASSETTE</div>
-                <div>BOUNCE COEFFICIENT: 0.72</div>
-              </div>
-            </div>
+            <ThreeCassetteDeck
+              ambientAudioActive={ambientAudioActive}
+              scrambleTrigger={scrambleTrigger}
+              onMechanicalClick={() => playMechanicalClick(audioCtxRef.current)}
+            />
           </div>
         </div>
       </section>
@@ -1518,21 +1032,46 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Chapter Quick Tabs */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-8 scrollbar-none">
-          {CHAPTERS.map((ch, idx) => (
-            <button
-              key={ch.id}
-              onClick={() => handleSelectChapter(idx)}
-              className={`px-3 py-1.5 font-mono text-xs whitespace-nowrap border transition-all duration-300 ${
-                activeChapterIndex === idx
-                  ? "border-white bg-zinc-100 text-zinc-950 font-semibold shadow-lg"
-                  : "border-white/[0.08] bg-zinc-950/60 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
-              }`}
-            >
-              [ {ch.index} ] {ch.title.split("&")[0].trim()}
-            </button>
-          ))}
+        {/* SLX Management-Inspired Architectural Chapter Matrix (Zero Hideous Scrollbars) */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-8">
+          {CHAPTERS.map((ch, idx) => {
+            const isSelected = activeChapterIndex === idx;
+            return (
+              <button
+                key={ch.id}
+                onClick={() => handleSelectChapter(idx)}
+                className={`relative p-3.5 text-left border transition-all duration-300 flex flex-col justify-between min-h-[96px] group ${
+                  isSelected
+                    ? "border-white bg-gradient-to-b from-white/[0.09] to-transparent shadow-[inset_0_2px_0_rgba(255,255,255,0.9),0_10px_25px_rgba(0,0,0,0.5)]"
+                    : "border-white/[0.08] bg-zinc-950/40 hover:border-zinc-600 hover:bg-white/[0.02]"
+                }`}
+              >
+                {/* Top Row: Index + Technical Coordinate / Active Status */}
+                <div className="flex items-center justify-between text-[11px] font-mono">
+                  <span className={isSelected ? "text-white font-bold" : "text-zinc-500 group-hover:text-zinc-300"}>
+                    [ {ch.index} ]
+                  </span>
+                  <span className={`text-[10px] font-mono ${isSelected ? "text-white font-bold" : "text-zinc-600 group-hover:text-zinc-400"}`}>
+                    {isSelected ? "● ACTIVE" : "+"}
+                  </span>
+                </div>
+
+                {/* Chapter Title */}
+                <div className="my-1.5">
+                  <div className={`text-xs font-medium leading-tight tracking-tight transition-colors ${
+                    isSelected ? "text-white font-semibold" : "text-zinc-300 group-hover:text-white"
+                  }`}>
+                    {ch.title.split("&")[0].trim()}
+                  </div>
+                </div>
+
+                {/* Bottom Technical Tag */}
+                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 truncate">
+                  {ch.subtitle.split(" ")[0]} · {ch.metrics[0]?.value.split(" ")[0] || "SPEC"}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {/* Selected Chapter Showcase Deck */}
@@ -1596,7 +1135,7 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="p-5 font-mono text-xs text-zinc-300 overflow-x-auto leading-relaxed">
+            <div className="p-5 font-mono text-xs text-zinc-300 overflow-x-auto no-scrollbar scrollbar-none leading-relaxed">
               <pre className="text-zinc-300">
                 {CHAPTERS[activeChapterIndex].code}
               </pre>
