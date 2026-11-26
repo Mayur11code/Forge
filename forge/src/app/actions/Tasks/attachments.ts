@@ -186,3 +186,14 @@ export async function getSignedDownloadUrl(fileKey: string | null) {
 
   return url;
 }
+
+export async function removeAttachment(attachmentId: string) {
+  if (!attachmentId) {
+    throw new Error("Missing attachmentId");
+  }
+
+  const userId = await requireUserId();
+  const { deleteAttachmentTransactionally } = await import("@/lib/deletion/service");
+  return await deleteAttachmentTransactionally(attachmentId, userId);
+}
+

@@ -3,7 +3,10 @@
 import { db } from "@/lib/prisma/db";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import CommentSection from "@/features/organizations/components/comments/CommentSection";
+import { TaskAttachmentsModalClient } from "@/features/attachments/TaskAttachmentModalClient";
 
 
 
@@ -79,7 +82,17 @@ export default async function TaskDetailPage({
     if (!task) notFound();
 
     return (
-        <div className="max-w-4xl mx-auto space-y-10">
+        <div className="max-w-4xl mx-auto space-y-8">
+            {/* Breadcrumb back to project */}
+            <div>
+                <Link
+                    href={`/org/${orgId}/projects/${projectId}`}
+                    className="inline-flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors"
+                >
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to {project.name}
+                </Link>
+            </div>
 
             {/* Task Header */}
             <div className="space-y-3">
@@ -102,9 +115,12 @@ export default async function TaskDetailPage({
 
             {/* Attachments Section */}
             <div className="rounded-3xl border border-zinc-800/50 bg-zinc-900/20 p-8">
-                <h2 className="text-xl font-semibold text-white mb-6">
-                    Attachments
-                </h2>
+                <div className="flex items-center justify-between mb-6">
+                    <h2 className="text-xl font-semibold text-white">
+                        Attachments
+                    </h2>
+                    <TaskAttachmentsModalClient taskId={task.id} taskTitle={task.title} />
+                </div>
 
                 {task.attachments.length === 0 ? (
                     <p className="text-zinc-500">

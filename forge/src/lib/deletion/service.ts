@@ -177,6 +177,8 @@ export async function deleteTaskTransactionally(
     ? await executeInTx(existingTx)
     : await db.$transaction(executeInTx, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 15000,
+        timeout: 30000,
       });
 
   // The deletion is committed. Drop the org's cached answers so they cannot be
@@ -370,6 +372,8 @@ export async function deleteProjectTransactionally(
 
   const result = await db.$transaction(executeInTx, {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 15000,
+    timeout: 30000,
   });
 
   // Deletion is committed: cached answers for the old project/task set are no
@@ -533,6 +537,9 @@ export async function deleteAttachmentTransactionally(
         storageUsed: { decrement: BigInt(size) },
       },
     });
+  }, {
+    maxWait: 15000,
+    timeout: 30000,
   });
 
   // 3. Attempt synchronous external cleanup (Pinecone vectors + UploadThing file)

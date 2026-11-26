@@ -4,6 +4,7 @@ import React, { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Settings, X, Archive, ArchiveRestore, Trash2, AlertTriangle, Loader2 } from "lucide-react";
 import { updateProject, archiveProject, unarchiveProject, deleteProject } from "@/app/actions/projects/projectActions";
+import { ModalPortal } from "@/features/organizations/components/ui/ModalPortal";
 
 interface ProjectSettingsModalProps {
   orgSlug: string;
@@ -132,8 +133,9 @@ export default function ProjectSettingsModal({
       </button>
 
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="relative w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-950 p-6 text-zinc-100 shadow-2xl space-y-6">
+        <ModalPortal>
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="relative w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-950 p-6 text-zinc-100 shadow-2xl space-y-6">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-zinc-800/80 pb-4">
               <div className="space-y-0.5">
@@ -346,7 +348,8 @@ export default function ProjectSettingsModal({
             )}
           </div>
         </div>
-      )}
+      </ModalPortal>
+    )}
     </>
   );
 }

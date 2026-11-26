@@ -2,6 +2,8 @@
 
 import { Task, TaskStatus } from "@prisma/client";
 import React, { useState, useTransition } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   Calendar,
   Clock,
@@ -18,6 +20,7 @@ import { updateTaskInOrgAction } from "@/app/actions/Tasks/updateTaskInOrg";
 
 interface TaskCardProps {
   task: Task;
+  orgSlug?: string;
   onStatusChange?: (taskId: string, newStatus: TaskStatus) => void;
 }
 
@@ -55,7 +58,14 @@ const STATUS_CONFIG: Record<
   },
 };
 
-export default function TaskCard({ task, onStatusChange }: TaskCardProps) {
+export default function TaskCard({ task, orgSlug, onStatusChange }: TaskCardProps) {
+  const params = useParams();
+  const resolvedOrgSlug =
+    orgSlug || (typeof params?.orgId === "string" ? params.orgId : "");
+  const taskHref = resolvedOrgSlug
+    ? `/org/${resolvedOrgSlug}/projects/${task.projectId}/tasks/${task.id}`
+    : `/projects/${task.projectId}/tasks/${task.id}`;
+
   const [currentStatus, setCurrentStatus] = useState<TaskStatus>(task.status);
   const [isPending, startTransition] = useTransition();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -98,16 +108,19 @@ export default function TaskCard({ task, onStatusChange }: TaskCardProps) {
 
       {/* Header: Title and Quick Action */}
       <div className="flex items-start justify-between gap-3 mb-2">
-        <h3 className="text-zinc-100 font-semibold leading-snug group-hover:text-blue-400 transition-colors">
+        <Link
+          href={taskHref}
+          className="text-zinc-100 font-semibold leading-snug hover:text-blue-400 transition-colors flex-1"
+        >
           {task.title}
-        </h3>
-        <a
-          href={`./projects/${task.projectId}/tasks/${task.id}`}
+        </Link>
+        <Link
+          href={taskHref}
           className="text-zinc-500 hover:text-zinc-300 transition-colors shrink-0 p-0.5"
           title="Open Task"
         >
           <ArrowUpRight className="w-4 h-4" />
-        </a>
+        </Link>
       </div>
 
       {/* Description: Truncated */}
@@ -184,24 +197,24 @@ export default function TaskCard({ task, onStatusChange }: TaskCardProps) {
         </div>
 
         {/* Assignee, Date, Attachments */}
-        <div className="flex items-center gap-2.5 text-xs text-zinc-500">
-          <div className="flex items-center gap-1" title="Created date">
+        <div className="flex items-center gap-2 text-xs text-zinc-500 shrink-0">
+          <div className="hidden sm:flex items-center gap-1" title="Created date">
             <Calendar className="w-3 h-3" />
             <span>{new Date(task.createdAt).toLocaleDateString()}</span>
           </div>
 
-          <span className="text-zinc-700">•</span>
+          <span className="hidden sm:inline text-zinc-700">•</span>
 
           <p
             title={task.assigneeId ?? "Unassigned"}
-            className="text-zinc-400 truncate max-w-[90px]"
+            className="text-zinc-400 truncate max-w-[80px]"
           >
             {task.assigneeId || "Unassigned"}
           </p>
 
           <span className="text-zinc-700">•</span>
 
-          <TaskAttachmentsModalClient taskId={task.id} />
+          <TaskAttachmentsModalClient taskId={task.id} taskTitle={task.title} compact />
         </div>
       </div>
     </div>

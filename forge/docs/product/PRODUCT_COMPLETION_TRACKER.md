@@ -5,7 +5,7 @@ Status:              ACTIVE AUTHORITATIVE TRACKER
 Target Outcome:      COMPLETE FORGE AS A DEMONSTRABLE PRODUCT FIRST (M0–M10)
 Post-Product Scope:  DevOps, Cloud Hosting & Platform Observability (M11)
 Canonical File:      forge/docs/product/PRODUCT_COMPLETION_TRACKER.md
-Last Updated:        2026-11-27 (Milestone M2 Completion, UI Cleanliness & ESLint Zero-Error Pass)
+Last Updated:        2026-11-27 (Milestone M2 Owner Acceptance & M3 Authorization)
 ```
 
 > [!IMPORTANT]
@@ -550,7 +550,8 @@ flowchart TD
   - Deleting project requires explicit name confirmation and cleans up tasks, comments, and attachments.
   - **Tenant Isolation:** Caller can only update/delete projects belonging to their active organization. Negative test verifies Org A user cannot delete Org B project.
 - **Tests & Verification:** Integration test suite `src/tests/projects/project-lifecycle.test.ts` (13/13 tests passing) verifying CRUD lifecycle, cascade deletion, and cross-tenant rejection.
-- **Status:** `DONE (Verified by Automated Test Suite)`
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-27 M2 Owner Manual Acceptance](../dev-log/2026-11-27-m2-owner-manual-acceptance.md)
 
 #### FC-009 | M2 | Interactive Task Lifecycle & Status Transitions
 - **Milestone:** M2
@@ -566,7 +567,8 @@ flowchart TD
   - Updating task priority or assignee emits `task.updated` CDC event.
   - **Tenant Boundary:** Server action enforces `task.organizationId === session.orgId`. Negative test asserts cross-tenant mutation returns 403.
 - **Tests & Verification:** Test suite `src/tests/tasks/task-lifecycle.test.ts` (6/6 tests passing) asserting CDC event dispatch upon status change, `completedAt` lifecycle, and cross-tenant rejection.
-- **Status:** `DONE (Verified by Automated Test Suite)`
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-27 M2 Owner Manual Acceptance](../dev-log/2026-11-27-m2-owner-manual-acceptance.md)
 
 #### FC-010 | M2 | Task Comments & Collaboration Feed
 - **Milestone:** M2
@@ -582,7 +584,8 @@ flowchart TD
   - Author or Admin can delete comment.
   - **Tenant Boundary:** Comment queries and mutations strictly scoped to active organization.
 - **Tests & Verification:** Integration test suite `src/tests/comments/comment-actions.test.ts` (8/8 tests passing) posting, deleting, author-check, and cross-tenant rejection.
-- **Status:** `DONE (Verified by Automated Test Suite)`
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-27 M2 Owner Manual Acceptance](../dev-log/2026-11-27-m2-owner-manual-acceptance.md)
 
 #### FC-011 | M2 | Task Filtering, Debounced Search & Pagination Polish
 - **Milestone:** M2
@@ -597,7 +600,8 @@ flowchart TD
   - Selecting priority or assignee filters board instantaneously.
   - Refreshing page preserves active filter parameters from URL.
 - **Tests & Verification:** Test suite `src/tests/tasks/task-filters.test.ts` (14/14 tests passing) verifying enum resolution, prototype protection, filter precedence, and pagination mathematics.
-- **Status:** `DONE (Verified by Automated Test Suite)`
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-27 M2 Owner Manual Acceptance](../dev-log/2026-11-27-m2-owner-manual-acceptance.md)
 
 ---
 
@@ -1392,5 +1396,8 @@ Milestone M2 (Projects and Task Management) has completed implementation and und
 - **UI & Ergonomic Cleanliness:** Removed all intrusive native browser drag tooltip attributes on orbital wheel controls (`src/app/page.tsx`).
 
 **Release Decision:**
-- **Automated Verification:** PASS.
-- **Owner Manual Acceptance:** **PENDING** (Awaiting manual walkthrough by repository owner. Milestone M3 is NOT entered until owner signs off).
+- **Automated Verification:** **PASS** (133/133 test suites passing, 2,075/2,075 tests).
+- **Owner Manual Acceptance:** **PASS** (All 41 checklist items verified on 2026-11-27).
+- **Milestone M2 Status:** **CLOSED & COMPLETE**.
+- **Active Milestone:** **Milestone M3: Complete Workflow Builder (FC-012 through FC-016)**.
+- **Manual Acceptance Record:** [2026-11-27 M2 Owner Manual Acceptance](../dev-log/2026-11-27-m2-owner-manual-acceptance.md)

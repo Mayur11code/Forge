@@ -148,6 +148,7 @@ export default function TaskBox(props: TaskBoxProps) {
                 <TaskCard
                   key={task.id}
                   task={task}
+                  orgSlug={props.param.orgId}
                   onStatusChange={handleTaskStatusChange}
                 />
               ))}
