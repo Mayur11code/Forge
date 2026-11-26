@@ -28,28 +28,25 @@ async function capture() {
   console.log("Saved:", dragPath);
 
   // 3. Scroll to Section 2: Bizarro 3D Physics Deck
-  await page.mouse.wheel(0, 950);
+  await page.mouse.wheel(0, 850);
   await page.waitForTimeout(1500);
   const physicsPath = path.join(ARTIFACT_DIR, "local_03_physics_deck.png");
   await page.screenshot({ path: physicsPath });
   console.log("Saved:", physicsPath);
 
-  // 4. Click and fling cassette tape on physics canvas
-  await page.mouse.move(950, 480);
-  await page.mouse.down();
-  await page.mouse.move(750, 320, { steps: 12 });
-  await page.mouse.up();
-  await page.waitForTimeout(1200);
-  const tossedPath = path.join(ARTIFACT_DIR, "local_04_physics_tossed.png");
-  await page.screenshot({ path: tossedPath });
-  console.log("Saved:", tossedPath);
-
-  // 5. Scroll to Section 3: Horizontal Architecture Runway
-  await page.mouse.wheel(0, 1400);
+  // 4. Scroll to Section 3: Fluid Architectural Gallery
+  await page.mouse.wheel(0, 800);
   await page.waitForTimeout(1500);
-  const runwayPath = path.join(ARTIFACT_DIR, "local_05_runway.png");
-  await page.screenshot({ path: runwayPath });
-  console.log("Saved:", runwayPath);
+  const galleryPath = path.join(ARTIFACT_DIR, "local_04_gallery_chapter.png");
+  await page.screenshot({ path: galleryPath });
+  console.log("Saved:", galleryPath);
+
+  // 5. Scroll to Section 4: DAG Workflow Engine
+  await page.mouse.wheel(0, 800);
+  await page.waitForTimeout(1500);
+  const dagPath = path.join(ARTIFACT_DIR, "local_05_dag_simulator.png");
+  await page.screenshot({ path: dagPath });
+  console.log("Saved:", dagPath);
 
   await browser.close();
   console.log("Finished all captures successfully!");
