@@ -696,7 +696,7 @@ export default function Home() {
         ctx.shadowOffsetY = 18;
 
         // 1. MAIN CASSETTE SHELL (Rounded Beveled Body)
-        const cornerR = 7;
+        const cornerR = 12;
         ctx.beginPath();
         ctx.roundRect(-w / 2, -h / 2, w, h, cornerR);
 
@@ -719,7 +719,7 @@ export default function Home() {
         ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(-w / 2 + 5, -h / 2 + 5, w - 10, h - 10, 4);
+        ctx.roundRect(-w / 2 + 5, -h / 2 + 5, w - 10, h - 10, 8);
         ctx.stroke();
 
         // 2. BOTTOM TRAPEZOID HEAD NOTCH (Signature Cassette Geometry)
@@ -767,7 +767,7 @@ export default function Home() {
         labelGrad.addColorStop(1, "#14141c");
         ctx.fillStyle = labelGrad;
         ctx.beginPath();
-        ctx.roundRect(-labelW / 2, labelY, labelW, labelH, 3);
+        ctx.roundRect(-labelW / 2, labelY, labelW, labelH, 6);
         ctx.fill();
         ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
         ctx.stroke();
@@ -802,7 +802,7 @@ export default function Home() {
         ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.roundRect(-winW / 2, winY, winW, winH, 4);
+        ctx.roundRect(-winW / 2, winY, winW, winH, 8);
         ctx.fill();
         ctx.stroke();
 
@@ -813,7 +813,7 @@ export default function Home() {
         glassGrad.addColorStop(0.6, "transparent");
         ctx.fillStyle = glassGrad;
         ctx.beginPath();
-        ctx.roundRect(-winW / 2, winY, winW, winH, 4);
+        ctx.roundRect(-winW / 2, winY, winW, winH, 8);
         ctx.fill();
 
         // Tape Meter Scale Markings
@@ -1306,7 +1306,7 @@ export default function Home() {
                     zIndex: isHovered ? 50 : zIndex,
                     transition: isDraggingWheel ? "none" : "transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease",
                   }}
-                  className={`pointer-events-auto absolute w-60 sm:w-64 p-4 border bg-gradient-to-b from-[#1c1c2b]/95 to-[#101018]/95 backdrop-blur-md shadow-[0_22px_50px_rgba(0,0,0,0.92)] transition-all duration-300 ${
+                  className={`pointer-events-auto absolute w-60 sm:w-64 p-4 rounded-2xl border bg-gradient-to-b from-[#1c1c2b]/95 to-[#101018]/95 backdrop-blur-md shadow-[0_22px_50px_rgba(0,0,0,0.92)] transition-all duration-300 ${
                     isHovered
                       ? "border-white text-white shadow-[0_22px_55px_rgba(255,255,255,0.22),inset_0_1px_0_rgba(255,255,255,0.4)]"
                       : "border-white/[0.24] text-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]"
