@@ -10,9 +10,16 @@ import {
   Play,
   Pause,
   ChevronRight,
-  ChevronLeft,
   ArrowUpRight,
 } from "lucide-react";
+import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import Lenis from "lenis";
+
+// Register ScrollTrigger safely in browser context
+if (typeof window !== "undefined") {
+  gsap.registerPlugin(ScrollTrigger);
+}
 
 // --- System Chapters (Kind 50 / Bizarro Narrative Architecture) ---
 interface SystemChapter {
@@ -145,8 +152,6 @@ interface DagNode {
   category: string;
   signature: string;
   compensation: string;
-  x: number;
-  y: number;
 }
 
 const DAG_NODES: DagNode[] = [
@@ -157,8 +162,6 @@ const DAG_NODES: DagNode[] = [
     category: "Domain CDC trigger",
     signature: "{ taskId: UUID, priority: 'URGENT', organizationId: UUID }",
     compensation: "None (Event source invariant)",
-    x: 12,
-    y: 35,
   },
   {
     id: "filter",
@@ -167,8 +170,6 @@ const DAG_NODES: DagNode[] = [
     category: "Isolated logic gate",
     signature: "payload.priority === 'URGENT' -> [true branch]",
     compensation: "None (Stateless evaluation)",
-    x: 37,
-    y: 35,
   },
   {
     id: "mutation",
@@ -177,8 +178,6 @@ const DAG_NODES: DagNode[] = [
     category: "Transactional mutation",
     signature: "UPDATE \"Task\" SET assigneeId = $leadId WHERE id = $taskId",
     compensation: "UPDATE \"Task\" SET assigneeId = NULL WHERE id = $taskId",
-    x: 63,
-    y: 35,
   },
   {
     id: "delivery",
@@ -187,8 +186,6 @@ const DAG_NODES: DagNode[] = [
     category: "External provider",
     signature: "resend.emails.send({ to: lead.email, template: 'urgent_triage' })",
     compensation: "AuditLog.append({ event: 'NOTIFICATION_DISPATCH_RECORDED' })",
-    x: 88,
-    y: 35,
   },
 ];
 
@@ -229,6 +226,14 @@ export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [tapeCounter, setTapeCounter] = useState(14);
   const [isHoveringCassette, setIsHoveringCassette] = useState(false);
+  const [horizontalProgress, setHorizontalProgress] = useState(0);
+
+  // Section Refs for GSAP ScrollTrigger
+  const heroRef = useRef<HTMLElement | null>(null);
+  const cassetteContainerRef = useRef<HTMLDivElement | null>(null);
+  const chaptersContainerRef = useRef<HTMLDivElement | null>(null);
+  const chaptersTrackRef = useRef<HTMLDivElement | null>(null);
+  const dagSectionRef = useRef<HTMLElement | null>(null);
 
   // Buttery Lerped Mouse Coordinates for Spotlight & Cassette 3D Tilt
   const targetMousePos = useRef({ x: 0, y: 0 });
@@ -287,7 +292,6 @@ export default function Home() {
         };
       });
 
-      // Compute smooth cassette 3D tilt
       if (typeof window !== "undefined") {
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
@@ -309,6 +313,127 @@ export default function Home() {
     targetMousePos.current = { x: e.clientX, y: e.clientY };
   };
 
+  // --- Lenis & GSAP ScrollTrigger Master Scroll Choreography ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // 1. Initialize Lenis Smooth Inertial Scrolling
+    const lenis = new Lenis({
+      duration: 1.25,
+      easing: (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
+      smoothWheel: true,
+      touchMultiplier: 1.8,
+    });
+
+    lenis.on("scroll", ScrollTrigger.update);
+
+    const tickerCallback = (time: number) => {
+      lenis.raf(time * 1000);
+    };
+
+    gsap.ticker.add(tickerCallback);
+    gsap.ticker.lagSmoothing(0);
+
+    // 2. Parallax Blueprint Grid Movement
+    gsap.to(".parallax-bg-grid", {
+      y: -120,
+      ease: "none",
+      scrollTrigger: {
+        trigger: "body",
+        start: "top top",
+        end: "bottom bottom",
+        scrub: true,
+      },
+    });
+
+    // 3. Hero Cassette 3D Scrub & Spool Acceleration
+    const cassette = cassetteContainerRef.current;
+    if (cassette && heroRef.current) {
+      gsap.to(cassette, {
+        y: 80,
+        scale: 0.9,
+        rotationZ: -4,
+        opacity: 0.85,
+        ease: "power1.out",
+        scrollTrigger: {
+          trigger: heroRef.current,
+          start: "top top",
+          end: "bottom top",
+          scrub: true,
+          onUpdate: (self) => {
+            spoolAngleRef.current += Math.abs(self.getVelocity() * 0.0006);
+          },
+        },
+      });
+    }
+
+    // 4. Kind 50-Style Pinned Horizontal Chapter Runway Scroll
+    const track = chaptersTrackRef.current;
+    const container = chaptersContainerRef.current;
+    if (track && container) {
+      const getScrollAmount = () => track.scrollWidth - window.innerWidth + 96;
+
+      const horizontalTween = gsap.to(track, {
+        x: () => -getScrollAmount(),
+        ease: "none",
+        scrollTrigger: {
+          trigger: container,
+          pin: true,
+          scrub: 1,
+          start: "top top",
+          end: () => `+=${getScrollAmount()}`,
+          invalidateOnRefresh: true,
+          onUpdate: (self) => {
+            setHorizontalProgress(self.progress);
+            const idx = Math.min(
+              CHAPTERS.length - 1,
+              Math.floor(self.progress * CHAPTERS.length)
+            );
+            setActiveChapterIndex(idx);
+          },
+        },
+      });
+
+      return () => {
+        horizontalTween.kill();
+        lenis.destroy();
+        gsap.ticker.remove(tickerCallback);
+        ScrollTrigger.getAll().forEach((t) => t.kill());
+      };
+    }
+
+    return () => {
+      lenis.destroy();
+      gsap.ticker.remove(tickerCallback);
+      ScrollTrigger.getAll().forEach((t) => t.kill());
+    };
+  }, []);
+
+  // --- Scroll-Driven DAG Sequence Telemetry Trigger ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const dagSection = dagSectionRef.current;
+    if (!dagSection) return;
+
+    const trigger = ScrollTrigger.create({
+      trigger: dagSection,
+      start: "top 65%",
+      end: "bottom 35%",
+      scrub: true,
+      onUpdate: (self) => {
+        const nodeIdx = Math.min(
+          DAG_NODES.length - 1,
+          Math.floor(self.progress * DAG_NODES.length)
+        );
+        setSelectedDagIndex(nodeIdx);
+      },
+    });
+
+    return () => {
+      trigger.kill();
+    };
+  }, []);
+
   // --- Bizarro-Inspired 3D Interactive Cassette Canvas Renderer ---
   useEffect(() => {
     const canvas = cassetteCanvasRef.current;
@@ -323,7 +448,6 @@ export default function Home() {
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Rotate spools if audio is active
       if (ambientAudioActive) {
         spoolAngleRef.current += tapeWarmth === "33" ? 0.035 : 0.055;
       }
@@ -333,7 +457,6 @@ export default function Home() {
       const centerX = w / 2;
       const centerY = h / 2;
 
-      // Outer Cassette Shell
       ctx.save();
       ctx.translate(centerX, centerY);
 
@@ -385,19 +508,16 @@ export default function Home() {
         ctx.save();
         ctx.translate(x, 0);
 
-        // Wound tape spool radius
         ctx.fillStyle = "#33261f";
         ctx.beginPath();
         ctx.arc(0, 0, radius, 0, Math.PI * 2);
         ctx.fill();
 
-        // White plastic wheel
         ctx.fillStyle = "#ededed";
         ctx.beginPath();
         ctx.arc(0, 0, 16, 0, Math.PI * 2);
         ctx.fill();
 
-        // Spool teeth
         ctx.rotate(angle);
         ctx.strokeStyle = "#08080b";
         ctx.lineWidth = 2.5;
@@ -409,7 +529,6 @@ export default function Home() {
           ctx.rotate((Math.PI * 2) / 6);
         }
 
-        // Center hub hole
         ctx.fillStyle = "#08080b";
         ctx.beginPath();
         ctx.arc(0, 0, 6, 0, Math.PI * 2);
@@ -418,7 +537,6 @@ export default function Home() {
         ctx.restore();
       };
 
-      // Spool A (fuller) and Spool B (filling)
       drawSpool(-50, spoolAngleRef.current, 28);
       drawSpool(50, spoolAngleRef.current, 22);
 
@@ -520,14 +638,12 @@ export default function Home() {
       noiseSource.buffer = noiseBuffer;
       noiseSource.loop = true;
 
-      // Warm analog bandpass filter
       const filter = ctx.createBiquadFilter();
       filter.type = "bandpass";
       filter.frequency.setValueAtTime(tapeWarmth === "33" ? 680 : 920, ctx.currentTime);
       filter.Q.setValueAtTime(0.85, ctx.currentTime);
       filterNodeRef.current = filter;
 
-      // Analyser for real canvas spectrum
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 64;
       analyserRef.current = analyser;
@@ -575,8 +691,6 @@ export default function Home() {
     };
   }, []);
 
-  const activeChapter = CHAPTERS[activeChapterIndex] || CHAPTERS[0];
-
   return (
     <div
       onMouseMove={handleMouseMove}
@@ -590,10 +704,10 @@ export default function Home() {
         }}
       />
 
-      {/* --- Architectural Hairline Blueprint Grid --- */}
+      {/* --- Architectural Hairline Blueprint Grid with Parallax Scrub --- */}
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-0 opacity-[0.035] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:48px_48px]"
+        className="parallax-bg-grid pointer-events-none fixed inset-0 z-0 opacity-[0.035] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:48px_48px]"
       />
 
       {/* --- Subtle 35mm Analog Film Grain Texture --- */}
@@ -688,10 +802,11 @@ export default function Home() {
       </header>
 
       {/* ========================================================= */}
-      {/* 2. HERO SECTION: Kind 50 / Bizarro Narrative Architecture */}
+      {/* 2. HERO SECTION: Bizarro Pinned Cassette & Editorial Hero */}
       {/* ========================================================= */}
       <section
-        className={`relative z-10 pt-32 pb-20 border-b border-white/[0.08] max-w-7xl mx-auto px-6 transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        ref={heroRef}
+        className={`relative z-10 pt-32 pb-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6 transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           isLoaded ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
         }`}
       >
@@ -707,7 +822,6 @@ export default function Home() {
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           
-          {/* Left Column: Monumental Headline in Sentence Case */}
           <div className="lg:col-span-7">
             <h1 className="text-5xl sm:text-7xl md:text-8xl lg:text-9xl font-light tracking-[-0.035em] leading-[0.94] text-zinc-100">
               Orchestration <br />
@@ -742,9 +856,10 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Right Column: Bizarro-Style 3D Isometric Interactive Cassette Deck */}
+          {/* Right: Bizarro 3D Cassette Deck with Scroll Scrub Reaction */}
           <div className="lg:col-span-5 flex flex-col items-center justify-center">
             <div
+              ref={cassetteContainerRef}
               onMouseEnter={() => setIsHoveringCassette(true)}
               onMouseLeave={() => setIsHoveringCassette(false)}
               style={{
@@ -760,7 +875,6 @@ export default function Home() {
                 }}
                 className="relative flex flex-col items-center"
               >
-                {/* 3D Cassette Canvas */}
                 <canvas
                   ref={cassetteCanvasRef}
                   width={360}
@@ -770,7 +884,6 @@ export default function Home() {
                   title="Click to spin tape & play ambient warmth"
                 />
 
-                {/* Cassette Deck Transport Controls */}
                 <div className="w-full mt-4 pt-4 border-t border-white/[0.08] flex items-center justify-between text-xs font-mono">
                   <div className="flex items-center gap-2 text-zinc-400">
                     <button
@@ -802,7 +915,7 @@ export default function Home() {
                 </div>
 
                 <div className="w-full mt-2 text-center text-[10px] font-mono text-zinc-600">
-                  {ambientAudioActive ? "Spinning spools · Analog tape hiss active" : "Click cassette body to play ambient sound"}
+                  {ambientAudioActive ? "Spinning spools · Analog tape hiss active" : "Click cassette or scroll to scrub tape motion"}
                 </div>
               </div>
             </div>
@@ -895,140 +1008,115 @@ export default function Home() {
       </section>
 
       {/* ========================================================= */}
-      {/* 4. KIND 50-STYLE INTERACTIVE CHAPTER STORY DECK           */}
+      {/* 4. PINNED HORIZONTAL CHAPTER RUNWAY (Kind 50 Scroll Experience) */}
       {/* ========================================================= */}
-      <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
-        
-        <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-white/[0.08] pb-6 mb-12">
+      <section
+        ref={chaptersContainerRef}
+        className="relative z-20 w-full bg-[#070709] border-b border-white/[0.08] overflow-hidden"
+      >
+        <div className="pt-16 pb-6 px-6 max-w-7xl mx-auto flex items-center justify-between border-b border-white/[0.06]">
           <div>
             <span className="text-xs font-mono tracking-wider text-zinc-500 block mb-1">
-              [ 002 // Movement index ]
+              [ 002 // Kind 50 horizontal runway ]
             </span>
             <h2 className="text-3xl sm:text-5xl font-light tracking-tight text-zinc-100">
-              The Kind 50 narrative chapters
+              Six architectural chapters
             </h2>
           </div>
 
-          <div className="flex items-center gap-3 mt-4 sm:mt-0 font-mono text-xs">
-            <span className="text-zinc-400">
-              Chapter {activeChapter.index} of {CHAPTERS.length < 10 ? `0${CHAPTERS.length}` : CHAPTERS.length}
+          <div className="flex items-center gap-4 font-mono text-xs text-zinc-400">
+            <span>Scroll vertically to unfold chapters</span>
+            <span className="text-zinc-200 font-bold">
+              {Math.round(horizontalProgress * 100)}%
             </span>
-            <div className="flex gap-1 ml-3">
-              <button
-                onClick={() =>
-                  setActiveChapterIndex((prev) =>
-                    prev === 0 ? CHAPTERS.length - 1 : prev - 1
-                  )
-                }
-                className="p-2 border border-white/[0.1] hover:border-white/40 text-zinc-400 hover:text-white transition-colors"
-                title="Previous chapter"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() =>
-                  setActiveChapterIndex((prev) =>
-                    prev === CHAPTERS.length - 1 ? 0 : prev + 1
-                  )
-                }
-                className="p-2 border border-white/[0.1] hover:border-white/40 text-zinc-400 hover:text-white transition-colors"
-                title="Next chapter"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
           </div>
         </div>
 
-        {/* Chapter Carousel Scrub Indicator */}
-        <div className="grid grid-cols-6 gap-2 mb-8">
-          {CHAPTERS.map((chap, idx) => (
-            <button
-              key={chap.id}
-              onClick={() => setActiveChapterIndex(idx)}
-              className={`h-1.5 transition-all duration-400 ${
-                activeChapterIndex === idx
-                  ? "bg-zinc-100 shadow-[0_0_12px_rgba(255,255,255,0.4)]"
-                  : "bg-zinc-800 hover:bg-zinc-700"
-              }`}
-              title={`Jump to Chapter ${chap.index}: ${chap.title}`}
-            />
-          ))}
+        {/* Horizontal Track Scrub Bar */}
+        <div className="w-full bg-zinc-900 h-1 relative">
+          <div
+            style={{ width: `${Math.max(5, horizontalProgress * 100)}%` }}
+            className="h-full bg-zinc-100 shadow-[0_0_12px_rgba(255,255,255,0.4)] transition-all duration-150 ease-out"
+          />
         </div>
 
-        {/* Selected Chapter Master Display */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 border border-white/[0.08] bg-zinc-950/40">
-          
-          <div className="lg:col-span-7 p-8 sm:p-12 border-b lg:border-b-0 lg:border-r border-white/[0.08] flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between text-xs font-mono text-zinc-500 mb-6 pb-3 border-b border-white/[0.06]">
-                <span>CHAPTER [{activeChapter.index}]</span>
-                <span>{activeChapter.subtitle}</span>
-              </div>
+        {/* Pinned Horizontal Scrolling Track */}
+        <div
+          ref={chaptersTrackRef}
+          className="flex flex-nowrap items-stretch gap-8 px-8 py-16 w-max"
+        >
+          {CHAPTERS.map((chapter, idx) => {
+            const isCurrent = activeChapterIndex === idx;
 
-              <h3 className="text-3xl sm:text-4xl font-light text-zinc-100 mb-4 leading-tight">
-                {activeChapter.title}
-              </h3>
-
-              <blockquote className="font-serif italic text-lg sm:text-xl text-zinc-400 mb-6 border-l-2 border-zinc-700 pl-4 py-1">
-                &ldquo;{activeChapter.quote}&rdquo;
-              </blockquote>
-
-              <p className="text-sm sm:text-base text-zinc-300 font-light leading-relaxed mb-8">
-                {activeChapter.detail}
-              </p>
-
-              {/* Chapter Architectural Metrics */}
-              <div className="grid grid-cols-3 border border-zinc-800 p-4 text-xs font-mono divide-x divide-zinc-800 bg-black/40">
-                {activeChapter.metrics.map((m) => (
-                  <div key={m.label} className="px-3">
-                    <span className="text-[10px] text-zinc-500 block mb-0.5">{m.label}</span>
-                    <span className="text-zinc-200 font-medium truncate block">{m.value}</span>
+            return (
+              <div
+                key={chapter.id}
+                className={`w-[85vw] sm:w-[650px] lg:w-[720px] flex-shrink-0 border p-8 sm:p-12 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] relative flex flex-col justify-between ${
+                  isCurrent
+                    ? "border-zinc-200 bg-zinc-900/90 shadow-[0_20px_60px_-15px_rgba(255,255,255,0.06)]"
+                    : "border-white/[0.08] bg-zinc-950/40 hover:border-zinc-600"
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between text-xs font-mono text-zinc-500 mb-6 pb-3 border-b border-white/[0.06]">
+                    <span className={isCurrent ? "text-zinc-100 font-bold" : "text-zinc-400"}>
+                      CHAPTER [{chapter.index}]
+                    </span>
+                    <span className="uppercase text-[11px]">{chapter.subtitle}</span>
                   </div>
-                ))}
+
+                  <h3 className="text-3xl sm:text-4xl font-light text-zinc-100 mb-4 leading-tight">
+                    {chapter.title}
+                  </h3>
+
+                  <blockquote className="font-serif italic text-lg text-zinc-400 mb-6 border-l-2 border-zinc-700 pl-4 py-1">
+                    &ldquo;{chapter.quote}&rdquo;
+                  </blockquote>
+
+                  <p className="text-sm sm:text-base text-zinc-300 font-light leading-relaxed mb-8">
+                    {chapter.detail}
+                  </p>
+
+                  <div className="grid grid-cols-3 border border-zinc-800 p-4 text-xs font-mono divide-x divide-zinc-800 bg-black/40 mb-8">
+                    {chapter.metrics.map((m) => (
+                      <div key={m.label} className="px-3">
+                        <span className="text-[10px] text-zinc-500 block mb-0.5">{m.label}</span>
+                        <span className="text-zinc-200 font-medium truncate block">{m.value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Verified Source Code in Card */}
+                  <pre className="p-4 bg-black border border-zinc-800/80 text-zinc-300 text-xs font-mono overflow-x-auto leading-relaxed">
+                    {chapter.code}
+                  </pre>
+                </div>
+
+                <div className="pt-6 mt-8 border-t border-white/[0.06] flex items-center justify-between">
+                  <Link
+                    href="/signup"
+                    className="text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors group"
+                  >
+                    <span>Initialize this chapter</span>
+                    <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+                  </Link>
+                  <span className="text-[10px] font-mono text-zinc-600">
+                    KIND 50 // CHAPTER {chapter.index}
+                  </span>
+                </div>
               </div>
-            </div>
-
-            <div className="pt-8 mt-8 border-t border-white/[0.06] flex items-center justify-between">
-              <Link
-                href="/signup"
-                className="text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors group"
-              >
-                <span>Initialize this chapter</span>
-                <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
-              </Link>
-              <span className="text-[10px] font-mono text-zinc-600">
-                AUDITED CONTRACT // CHAPTER {activeChapter.index}
-              </span>
-            </div>
-          </div>
-
-          {/* Right: Live Interactive Code Implementation */}
-          <div className="lg:col-span-5 p-8 bg-black flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between text-xs font-mono text-zinc-500 mb-4 pb-2 border-b border-zinc-800">
-                <span>VERIFIED SOURCE CODE</span>
-                <span>PRISMA + POSTGRESQL</span>
-              </div>
-
-              <pre className="p-4 bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs font-mono overflow-x-auto leading-relaxed">
-                {activeChapter.code}
-              </pre>
-            </div>
-
-            <div className="mt-6 pt-4 border-t border-zinc-900 text-xs font-mono text-zinc-500 flex items-center justify-between">
-              <span>Status: Verified clean</span>
-              <span>Level E3 Concurrency</span>
-            </div>
-          </div>
+            );
+          })}
         </div>
       </section>
 
       {/* ========================================================= */}
-      {/* 5. INTERACTIVE DAG SCHEMATIC WITH KINETIC PATHS           */}
+      {/* 5. INTERACTIVE DAG SCHEMATIC WITH SCROLL-DRIVEN TELEMETRY */}
       {/* ========================================================= */}
-      <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
-        
+      <section
+        ref={dagSectionRef}
+        className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6"
+      >
         <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-white/[0.08] pb-6 mb-12">
           <div>
             <span className="text-xs font-mono tracking-wider text-zinc-500 block mb-1">
@@ -1039,14 +1127,11 @@ export default function Home() {
             </h2>
           </div>
           <span className="text-xs font-mono text-zinc-400 mt-2 sm:mt-0">
-            Click a node to inspect its transactional signature
+            Scroll or click to advance through execution nodes
           </span>
         </div>
 
-        {/* Schematic Circuit Graph */}
         <div className="relative border border-white/[0.08] bg-zinc-950/60 p-6 sm:p-10">
-          
-          {/* Subtle Circuit Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 relative z-10">
             {DAG_NODES.map((node, idx) => {
               const isSelected = selectedDagIndex === idx;
@@ -1085,7 +1170,6 @@ export default function Home() {
             })}
           </div>
 
-          {/* Live Node Telemetry Ledger with Smooth Transition */}
           <div className="mt-8 border border-white/[0.08] bg-black p-6 font-mono text-xs transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4 text-xs text-zinc-400">
               <span>
