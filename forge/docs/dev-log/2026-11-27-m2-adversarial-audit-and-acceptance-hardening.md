@@ -2,7 +2,7 @@
 **Date:** 2026-11-27  
 **Scope:** Milestone M2 (FC-008, FC-009, FC-010, FC-011)  
 **Methodology:** Universal Prompt Patterns Registry (UPPR) Rev 4.1  
-**Status:** IMPLEMENTATION VERIFIED / OWNER MANUAL ACCEPTANCE PENDING  
+**Status:** VERIFIED & OWNER-MANUALLY-ACCEPTED (M2 CLOSED)  
 
 ---
 
@@ -70,5 +70,17 @@ Following completion of Milestone M2 implementation (Projects, Tasks, Comments, 
 ## 5. Acceptance Status & Release Decision
 
 - **Automated Verification:** **PASS** (100% green across tests, types, linter, and build).
-- **Owner Manual Acceptance:** **PENDING** (In accordance with UPPR Rev 4.1 governance, Milestone M2 is marked conditional pass awaiting owner manual inspection).
-- **Milestone Scope Boundary:** Strict M2 scope preserved. Milestone M3 (Workflow Builder) has NOT been entered.
+- **Owner Manual Acceptance:** **PASS** (Completed on 2026-11-27; all 41 checklist items verified).
+- **Milestone Status:** **CLOSED**.
+
+---
+
+## 6. Owner Manual Acceptance & Production Disposition (2026-11-27)
+
+On 2026-11-27, the repository owner completed the full manual acceptance protocol across Milestone M2:
+1. **Assignments FC-008 through FC-011:** Formally accepted with unanimous PASS disposition.
+2. **Cross-Organization Security:** Multi-tenant access controls verified across projects, tasks, comments, and attachments. Negative attempts fail closed without leaking internal metadata or foreign rows.
+3. **Collaboration Delivery Mechanics:** Observed cross-browser comment visibility confirmed via optimistic feed updates and durable server persistence. Pusher WebSocket live delivery is preserved as an unwired transport and is explicitly not claimed.
+4. **Attachment Boundary:** Local database retention and cascade integrity verified. Asynchronous third-party storage deletion operates under external API mock boundaries in automated tests.
+5. **M1 Resend Email Deferral:** Continues to be preserved under FC-006; not affected by M2 closure.
+6. **Next Milestone Authorization:** Milestone M3 — Complete Workflow Builder (FC-012 through FC-016) is authorized to begin. Detailed acceptance breakdown: [2026-11-27 M2 Owner Manual Acceptance](2026-11-27-m2-owner-manual-acceptance.md).

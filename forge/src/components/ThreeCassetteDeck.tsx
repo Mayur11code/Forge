@@ -9,10 +9,12 @@ interface ThreeCassetteDeckProps {
   onMechanicalClick?: () => void;
 }
 
-interface CassettePhysicsData {
+interface ComputeBladePhysicsData {
   meshGroup: THREE.Group;
-  spoolLeft: THREE.Object3D;
-  spoolRight: THREE.Object3D;
+  turbineLeft: THREE.Object3D;
+  turbineRight: THREE.Object3D;
+  statusLed: THREE.Mesh;
+  txLed: THREE.Mesh;
   vx: number;
   vy: number;
   vz: number;
@@ -27,236 +29,301 @@ interface CassettePhysicsData {
   initialZ: number;
 }
 
-// Generate high-resolution canvas texture for the cassette label plate
-function createLabelTexture(tape: {
+// Generate high-resolution canvas texture for the compute blade faceplate
+function createBladeFaceplateTexture(node: {
   name: string;
-  type: string;
-  side: string;
+  spec: string;
+  slot: string;
   serial: string;
   accent: string;
+  metric: string;
 }): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
   canvas.width = 1024;
   canvas.height = 360;
   const ctx = canvas.getContext("2d")!;
 
-  // Background dark brushed graphite
+  // 1. Dark brushed titanium / carbon substrate background
   const bgGrad = ctx.createLinearGradient(0, 0, 1024, 360);
-  bgGrad.addColorStop(0, "#22222e");
-  bgGrad.addColorStop(0.5, "#181824");
-  bgGrad.addColorStop(1, "#12121c");
+  bgGrad.addColorStop(0, "#16181f");
+  bgGrad.addColorStop(0.5, "#0e1017");
+  bgGrad.addColorStop(1, "#090a0f");
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, 1024, 360);
 
-  // Silver foil accent stripe across the middle
-  const foilGrad = ctx.createLinearGradient(0, 0, 1024, 0);
-  foilGrad.addColorStop(0, "#888899");
-  foilGrad.addColorStop(0.3, "#e4e4ed");
-  foilGrad.addColorStop(0.7, "#a0a0b2");
-  foilGrad.addColorStop(1, "#ffffff");
-  ctx.fillStyle = foilGrad;
-  ctx.fillRect(0, 220, 1024, 12);
+  // Subtle carbon grid weave
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
+  ctx.lineWidth = 1;
+  for (let x = 0; x < 1024; x += 32) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 360);
+    ctx.stroke();
+  }
+  for (let y = 0; y < 360; y += 32) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(1024, y);
+    ctx.stroke();
+  }
 
-  // Hairline perimeter border
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-  ctx.lineWidth = 4;
-  ctx.strokeRect(12, 12, 1000, 336);
+  // 2. High-speed bus accent line (Cyan / Emerald / Amber)
+  const busGrad = ctx.createLinearGradient(0, 0, 1024, 0);
+  busGrad.addColorStop(0, node.accent);
+  busGrad.addColorStop(0.3, "#ffffff");
+  busGrad.addColorStop(0.7, node.accent);
+  busGrad.addColorStop(1, "rgba(255,255,255,0.2)");
+  ctx.fillStyle = busGrad;
+  ctx.fillRect(0, 208, 1024, 6);
 
-  // Top header typography
+  // 3. Laser-milled perimeter border
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(14, 14, 996, 332);
+
+  // 4. Primary node title & specification
   ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 56px sans-serif";
-  ctx.fillText(tape.name, 48, 95);
+  ctx.font = "bold 52px monospace";
+  ctx.fillText(node.name, 48, 88);
 
-  ctx.fillStyle = "#a1a1b0";
-  ctx.font = "32px monospace";
-  ctx.fillText(tape.type, 48, 160);
+  ctx.fillStyle = "#818cf8";
+  ctx.font = "26px monospace";
+  ctx.fillText(node.spec, 48, 148);
 
-  // Side indicator (A or B)
-  ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 78px sans-serif";
-  ctx.fillText(tape.side, 920, 105);
+  // Slot designation (SLOT-01, SLOT-02)
+  ctx.fillStyle = node.accent;
+  ctx.font = "bold 72px monospace";
+  ctx.fillText(node.slot, 880, 95);
 
-  // Micro details
-  ctx.fillStyle = "#717182";
-  ctx.font = "24px monospace";
-  ctx.fillText(tape.serial, 780, 160);
-  ctx.fillText("FORGE SYSTEM ARCHITECTURE · HIGH BIAS 70µs EQ · NR OFF", 48, 290);
-  ctx.fillText("JAPAN CrO2", 840, 290);
+  // 5. Lower telemetry readouts
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = "20px monospace";
+  ctx.fillText(node.serial, 780, 150);
+  ctx.fillText(`FORGE DISTRIBUTED MESH · ${node.metric} · LOCK: MUTEX_L0`, 48, 290);
+  ctx.fillText("ECC DDR5 100GbE", 780, 290);
+
+  // 6. Micro printed circuit traces
+  ctx.strokeStyle = "rgba(129, 140, 248, 0.35)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(48, 320);
+  ctx.lineTo(240, 320);
+  ctx.lineTo(280, 340);
+  ctx.lineTo(600, 340);
+  ctx.stroke();
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.anisotropy = 8;
   return texture;
 }
 
-// Build a real 3D Cassette Mesh in Three.js
-function buildCassette3D(tape: {
+// Build a real 3D Modular Server Blade Mesh in Three.js
+function buildComputeBlade3D(node: {
   name: string;
-  type: string;
-  side: string;
+  spec: string;
+  slot: string;
   serial: string;
   accent: string;
+  metric: string;
 }): {
   group: THREE.Group;
-  spoolLeft: THREE.Object3D;
-  spoolRight: THREE.Object3D;
+  turbineLeft: THREE.Object3D;
+  turbineRight: THREE.Object3D;
+  statusLed: THREE.Mesh;
+  txLed: THREE.Mesh;
 } {
   const group = new THREE.Group();
 
   const width = 3.8;
   const height = 2.4;
-  const depth = 0.32;
+  const depth = 0.34;
 
-  // 1. Main Plastic Body (Extruded Box with real thickness)
+  // 1. Main Obsidian Titanium Chassis
   const bodyGeo = new THREE.BoxGeometry(width, height, depth);
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0x14141e,
-    roughness: 0.35,
-    metalness: 0.2,
+    color: 0x11131a,
+    roughness: 0.28,
+    metalness: 0.8,
   });
   const bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
   bodyMesh.castShadow = true;
   bodyMesh.receiveShadow = true;
   group.add(bodyMesh);
 
-  // 2. Beveled Face Frame (Chamfer Inset)
-  const faceFrameGeo = new THREE.BoxGeometry(width - 0.2, height - 0.2, 0.02);
-  const faceFrameMat = new THREE.MeshStandardMaterial({
-    color: 0x0c0c12,
+  // 2. Chamfered Face Inset Housing
+  const faceInsetGeo = new THREE.BoxGeometry(width - 0.16, height - 0.16, 0.02);
+  const faceInsetMat = new THREE.MeshStandardMaterial({
+    color: 0x08090d,
     roughness: 0.5,
+    metalness: 0.6,
   });
-  const faceFrame = new THREE.Mesh(faceFrameGeo, faceFrameMat);
-  faceFrame.position.z = depth / 2 + 0.01;
-  group.add(faceFrame);
+  const faceInset = new THREE.Mesh(faceInsetGeo, faceInsetMat);
+  faceInset.position.z = depth / 2 + 0.01;
+  group.add(faceInset);
 
-  // 3. Foil Label Plate (Printed Front Face)
-  const labelTex = createLabelTexture(tape);
+  // 3. Side Aluminum Heatsink Cooling Fins
+  const finMat = new THREE.MeshStandardMaterial({
+    color: 0x222633,
+    roughness: 0.2,
+    metalness: 0.9,
+  });
+  const finGeo = new THREE.BoxGeometry(0.04, 0.18, depth + 0.04);
+  for (let i = 0; i < 9; i++) {
+    const finX = -width / 2 + 0.4 + i * 0.36;
+    // Top heatsink fin
+    const finTop = new THREE.Mesh(finGeo, finMat);
+    finTop.position.set(finX, height / 2 - 0.06, 0);
+    group.add(finTop);
+
+    // Bottom heatsink fin
+    const finBottom = new THREE.Mesh(finGeo, finMat);
+    finBottom.position.set(finX, -height / 2 + 0.06, 0);
+    group.add(finBottom);
+  }
+
+  // 4. Gold Backplane Connector Edge (Enterprise Hot-Swap Pins)
+  const connectorHousingGeo = new THREE.BoxGeometry(2.4, 0.22, 0.18);
+  const connectorHousingMat = new THREE.MeshStandardMaterial({
+    color: 0x07080b,
+    roughness: 0.4,
+  });
+  const connectorHousing = new THREE.Mesh(connectorHousingGeo, connectorHousingMat);
+  connectorHousing.position.set(0, -height / 2 + 0.08, 0);
+  group.add(connectorHousing);
+
+  const goldPinMat = new THREE.MeshStandardMaterial({
+    color: 0xdfb141,
+    metalness: 0.98,
+    roughness: 0.1,
+  });
+  const pinGeo = new THREE.BoxGeometry(0.04, 0.12, 0.015);
+  for (let i = -14; i <= 14; i++) {
+    const pin = new THREE.Mesh(pinGeo, goldPinMat);
+    pin.position.set(i * 0.07, -height / 2 + 0.08, depth / 2 + 0.01);
+    group.add(pin);
+  }
+
+  // 5. Printed Faceplate Plate
+  const labelTex = createBladeFaceplateTexture(node);
   const labelGeo = new THREE.PlaneGeometry(3.4, 1.0);
   const labelMat = new THREE.MeshStandardMaterial({
     map: labelTex,
-    roughness: 0.3,
-    metalness: 0.4,
+    roughness: 0.25,
+    metalness: 0.5,
   });
   const labelMesh = new THREE.Mesh(labelGeo, labelMat);
   labelMesh.position.set(0, 0.45, depth / 2 + 0.022);
   group.add(labelMesh);
 
-  // 4. Recessed Center Window & Acrylic Glare
-  const windowGeo = new THREE.BoxGeometry(2.0, 0.68, 0.04);
+  // 6. Recessed Micro-Turbine Viewing Window
+  const windowGeo = new THREE.BoxGeometry(2.2, 0.68, 0.04);
   const windowMat = new THREE.MeshPhysicalMaterial({
-    color: 0x06060a,
+    color: 0x05070d,
     transparent: true,
-    opacity: 0.4,
-    roughness: 0.1,
-    transmission: 0.85,
-    ior: 1.45,
+    opacity: 0.35,
+    roughness: 0.08,
+    transmission: 0.88,
+    ior: 1.5,
   });
   const windowMesh = new THREE.Mesh(windowGeo, windowMat);
-  windowMesh.position.set(0, -0.25, depth / 2 + 0.02);
+  windowMesh.position.set(0, -0.28, depth / 2 + 0.02);
   group.add(windowMesh);
 
-  // 5. 3D Spools with 6-Tooth Nylon Sprockets
-  const createSpool = (tapeRadius: number) => {
-    const spoolGroup = new THREE.Group();
+  // 7. Rotating High-Speed Cooling Turbines
+  const createTurbine = () => {
+    const turbineGroup = new THREE.Group();
 
-    // Wound magnetic tape cylinder (dark brown)
-    const tapeGeo = new THREE.CylinderGeometry(tapeRadius, tapeRadius, 0.12, 32);
-    tapeGeo.rotateX(Math.PI / 2);
-    const tapeMat = new THREE.MeshStandardMaterial({
-      color: 0x2b1810,
-      roughness: 0.8,
+    // Outer turbine shroud ring
+    const shroudGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.08, 32);
+    shroudGeo.rotateX(Math.PI / 2);
+    const shroudMat = new THREE.MeshStandardMaterial({
+      color: 0x1e2230,
+      roughness: 0.3,
+      metalness: 0.85,
     });
-    const tapeMesh = new THREE.Mesh(tapeGeo, tapeMat);
-    spoolGroup.add(tapeMesh);
+    const shroud = new THREE.Mesh(shroudGeo, shroudMat);
+    turbineGroup.add(shroud);
 
-    // White nylon central drive hub
-    const hubGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.14, 24);
-    hubGeo.rotateX(Math.PI / 2);
-    const hubMat = new THREE.MeshStandardMaterial({
-      color: 0xededf2,
-      roughness: 0.2,
+    // Copper inductor magnetic core
+    const coreGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.12, 24);
+    coreGeo.rotateX(Math.PI / 2);
+    const coreMat = new THREE.MeshStandardMaterial({
+      color: 0xb45309,
+      roughness: 0.3,
+      metalness: 0.9,
     });
-    const hubMesh = new THREE.Mesh(hubGeo, hubMat);
-    spoolGroup.add(hubMesh);
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    turbineGroup.add(core);
 
-    // 6 Sprocket Teeth
-    const toothMat = new THREE.MeshStandardMaterial({
-      color: 0x111116,
-      roughness: 0.4,
+    // 8 Angled aerodynamic turbine blades
+    const bladeMat = new THREE.MeshStandardMaterial({
+      color: 0x94a3b8,
+      metalness: 0.95,
+      roughness: 0.15,
     });
-    for (let i = 0; i < 6; i++) {
-      const toothGeo = new THREE.BoxGeometry(0.04, 0.1, 0.15);
-      const tooth = new THREE.Mesh(toothGeo, toothMat);
-      const angle = (i * Math.PI) / 3;
-      tooth.position.set(Math.cos(angle) * 0.11, Math.sin(angle) * 0.11, 0);
-      tooth.rotation.z = angle;
-      spoolGroup.add(tooth);
+    for (let i = 0; i < 8; i++) {
+      const bladeGeo = new THREE.BoxGeometry(0.035, 0.16, 0.1);
+      const blade = new THREE.Mesh(bladeGeo, bladeMat);
+      const angle = (i * Math.PI) / 4;
+      blade.position.set(Math.cos(angle) * 0.22, Math.sin(angle) * 0.22, 0);
+      blade.rotation.z = angle + 0.35;
+      turbineGroup.add(blade);
     }
 
-    // Red core center hub
-    const redHubGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.16, 16);
-    redHubGeo.rotateX(Math.PI / 2);
-    const redHubMat = new THREE.MeshStandardMaterial({
-      color: 0x991b1b,
-      roughness: 0.3,
-    });
-    const redHub = new THREE.Mesh(redHubGeo, redHubMat);
-    spoolGroup.add(redHub);
-
-    return spoolGroup;
+    return turbineGroup;
   };
 
-  const spoolLeft = createSpool(0.38);
-  spoolLeft.position.set(-0.58, -0.25, 0.04);
-  group.add(spoolLeft);
+  const turbineLeft = createTurbine();
+  turbineLeft.position.set(-0.6, -0.28, 0.03);
+  group.add(turbineLeft);
 
-  const spoolRight = createSpool(0.24);
-  spoolRight.position.set(0.58, -0.25, 0.04);
-  group.add(spoolRight);
+  const turbineRight = createTurbine();
+  turbineRight.position.set(0.6, -0.28, 0.03);
+  group.add(turbineRight);
 
-  // 6. Bottom Trapezoid Notch & Magnetic Tape Path
-  const notchGeo = new THREE.BoxGeometry(2.4, 0.3, 0.2);
-  const notchMat = new THREE.MeshStandardMaterial({
-    color: 0x08080c,
-    roughness: 0.6,
+  // 8. Live LED Status Cluster
+  // Primary Heartbeat Status LED (Emerald Green)
+  const statusLedGeo = new THREE.SphereGeometry(0.05, 16, 16);
+  const statusLedMat = new THREE.MeshStandardMaterial({
+    color: 0x10b981,
+    emissive: 0x10b981,
+    emissiveIntensity: 2.2,
+    roughness: 0.1,
   });
-  const notch = new THREE.Mesh(notchGeo, notchMat);
-  notch.position.set(0, -height / 2 + 0.12, 0);
-  group.add(notch);
+  const statusLed = new THREE.Mesh(statusLedGeo, statusLedMat);
+  statusLed.position.set(-1.45, -0.28, depth / 2 + 0.025);
+  group.add(statusLed);
 
-  // Exposed tape path ribbon across the notch
-  const tapeRibbonGeo = new THREE.BoxGeometry(1.8, 0.12, 0.06);
-  const tapeRibbonMat = new THREE.MeshStandardMaterial({
-    color: 0x331c12,
-    roughness: 0.8,
+  // High-Speed TX/RX Optical Link LED (Cyan)
+  const txLedGeo = new THREE.SphereGeometry(0.04, 16, 16);
+  const txLedMat = new THREE.MeshStandardMaterial({
+    color: 0x06b6d4,
+    emissive: 0x06b6d4,
+    emissiveIntensity: 2.0,
+    roughness: 0.1,
   });
-  const tapeRibbon = new THREE.Mesh(tapeRibbonGeo, tapeRibbonMat);
-  tapeRibbon.position.set(0, -height / 2 + 0.12, depth / 2 + 0.01);
-  group.add(tapeRibbon);
+  const txLed = new THREE.Mesh(txLedGeo, txLedMat);
+  txLed.position.set(-1.32, -0.28, depth / 2 + 0.025);
+  group.add(txLed);
 
-  // Brass guide rollers in the notch
-  const rollerMat = new THREE.MeshStandardMaterial({
-    color: 0xb59a60,
-    metalness: 0.8,
-    roughness: 0.2,
+  // Amber Fault/Sync Bus LED
+  const busLedGeo = new THREE.SphereGeometry(0.035, 16, 16);
+  const busLedMat = new THREE.MeshStandardMaterial({
+    color: 0xf59e0b,
+    emissive: 0xf59e0b,
+    emissiveIntensity: 1.5,
   });
-  const rollerGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.22, 16);
-  rollerGeo.rotateX(Math.PI / 2);
+  const busLed = new THREE.Mesh(busLedGeo, busLedMat);
+  busLed.position.set(1.4, -0.28, depth / 2 + 0.025);
+  group.add(busLed);
 
-  const rollerLeft = new THREE.Mesh(rollerGeo, rollerMat);
-  rollerLeft.position.set(-0.85, -height / 2 + 0.12, 0.02);
-  group.add(rollerLeft);
-
-  const rollerRight = new THREE.Mesh(rollerGeo, rollerMat);
-  rollerRight.position.set(0.85, -height / 2 + 0.12, 0.02);
-  group.add(rollerRight);
-
-  // 7. Metallic Corner Screws (Real 3D Chrome Cylinders)
+  // 9. Precision Hex Torx Fasteners (4 corners)
   const screwMat = new THREE.MeshStandardMaterial({
-    color: 0xd0d0dc,
+    color: 0xd1d5db,
     metalness: 0.95,
     roughness: 0.15,
   });
-  const screwGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.04, 16);
+  const screwGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.03, 6);
   screwGeo.rotateX(Math.PI / 2);
 
   const addScrew = (sx: number, sy: number) => {
@@ -269,9 +336,8 @@ function buildCassette3D(tape: {
   addScrew(width / 2 - 0.18, height / 2 - 0.18);
   addScrew(-width / 2 + 0.18, -height / 2 + 0.18);
   addScrew(width / 2 - 0.18, -height / 2 + 0.18);
-  addScrew(0, height / 2 - 0.14);
 
-  return { group, spoolLeft, spoolRight };
+  return { group, turbineLeft, turbineRight, statusLed, txLed };
 }
 
 export default function ThreeCassetteDeck({
@@ -290,6 +356,7 @@ export default function ThreeCassetteDeck({
   useEffect(() => {
     scrambleTriggerRef.current = scrambleTrigger;
   }, [scrambleTrigger]);
+
   const [activeHUD, setActiveHUD] = useState<{
     name: string;
     serial: string;
@@ -299,9 +366,9 @@ export default function ThreeCassetteDeck({
     vel: number;
   } | null>(null);
 
-  const bodiesRef = useRef<CassettePhysicsData[]>([]);
+  const bodiesRef = useRef<ComputeBladePhysicsData[]>([]);
   const isDraggingRef = useRef(false);
-  const draggedBodyRef = useRef<CassettePhysicsData | null>(null);
+  const draggedBodyRef = useRef<ComputeBladePhysicsData | null>(null);
   const dragPlaneRef = useRef(new THREE.Plane(new THREE.Vector3(0, 0, 1), 0));
   const planeIntersectRef = useRef(new THREE.Vector3());
   const dragOffsetRef = useRef(new THREE.Vector3());
@@ -316,7 +383,7 @@ export default function ThreeCassetteDeck({
 
       raycaster.setFromCamera(new THREE.Vector2(mouseX, mouseY), camera);
 
-      // Check intersections with all cassette bodies
+      // Check intersections with all blade bodies
       const interactiveMeshes = bodiesRef.current.map((b) => b.meshGroup.children[0]);
       const intersects = raycaster.intersectObjects(interactiveMeshes, false);
 
@@ -414,7 +481,7 @@ export default function ThreeCassetteDeck({
 
     // 1. Scene, Camera, Renderer
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x07070a);
+    scene.background = new THREE.Color(0x06070a);
 
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 100);
     camera.position.set(0, 0, 6.2);
@@ -426,33 +493,34 @@ export default function ThreeCassetteDeck({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.appendChild(renderer.domElement);
 
-    // 2. Lights
-    const ambientLight = new THREE.AmbientLight(0x282835, 1.4);
+    // 2. High-Tech Studio Lighting
+    const ambientLight = new THREE.AmbientLight(0x1e2430, 1.6);
     scene.add(ambientLight);
 
-    const dirLight1 = new THREE.DirectionalLight(0xffffff, 2.8);
-    dirLight1.position.set(5, 7, 6);
+    const dirLight1 = new THREE.DirectionalLight(0xe0e7ff, 3.2);
+    dirLight1.position.set(6, 8, 6);
     dirLight1.castShadow = true;
     dirLight1.shadow.mapSize.width = 1024;
     dirLight1.shadow.mapSize.height = 1024;
     scene.add(dirLight1);
 
-    const dirLight2 = new THREE.DirectionalLight(0x7080a0, 1.4);
-    dirLight2.position.set(-5, -4, 4);
+    const dirLight2 = new THREE.DirectionalLight(0x38bdf8, 1.8);
+    dirLight2.position.set(-6, -5, 4);
     scene.add(dirLight2);
 
     const pointLight = new THREE.PointLight(0xffffff, 1.5, 8);
     pointLight.position.set(0, 0, 4);
     scene.add(pointLight);
 
-    // 3. Construct 3 Real 3D Cassettes
-    const tapeConfigs = [
+    // 3. Construct 3 Real 3D Compute Blades
+    const bladeConfigs = [
       {
-        name: "FORGE UX-PRO 90",
-        type: "SUPER CHROME CLASS · BIAS 70µs",
-        side: "A",
-        serial: "CR-90-A882",
-        accent: "#ffffff",
+        name: "BLADE-01: RAFT CONSENSUS",
+        spec: "PRIMARY CORE · DUAL EPYC · 100GbE",
+        slot: "01",
+        serial: "FD-RAFT-A882",
+        accent: "#10b981",
+        metric: "LATENCY < 0.8ms",
         x: -1.2,
         y: -0.2,
         z: 0.1,
@@ -461,11 +529,12 @@ export default function ThreeCassetteDeck({
         rotY: -0.2,
       },
       {
-        name: "TRANSACTION OUTBOX",
-        type: "ATOMIC CDC LOG · 50ms LEASE",
-        side: "B",
-        serial: "TX-50-K104",
-        accent: "#d4d4d8",
+        name: "BLADE-02: TRANSACTION OUTBOX",
+        spec: "ATOMIC CDC LOG · 50ms LEASED MUTEX",
+        slot: "02",
+        serial: "TX-CDC-K104",
+        accent: "#06b6d4",
+        metric: "GUARANTEE: EXACTLY_ONCE",
         x: 1.1,
         y: 0.35,
         z: -0.1,
@@ -474,11 +543,12 @@ export default function ThreeCassetteDeck({
         rotY: 0.25,
       },
       {
-        name: "SAGA ROLLBACK FLIGHT",
-        type: "REVERSE DAG RECORDER · 24-HR",
-        side: "A",
-        serial: "SG-04-R991",
-        accent: "#e4e4e7",
+        name: "BLADE-03: DETERMINISTIC SAGA",
+        spec: "STATE MACHINE · 2-PHASE ROLLBACK",
+        slot: "03",
+        serial: "SG-DAG-R991",
+        accent: "#a855f7",
+        metric: "PERSISTENCE: DURABLE WAL",
         x: 0.1,
         y: -0.9,
         z: 0.2,
@@ -488,16 +558,18 @@ export default function ThreeCassetteDeck({
       },
     ];
 
-    const bodies: CassettePhysicsData[] = tapeConfigs.map((cfg) => {
-      const { group, spoolLeft, spoolRight } = buildCassette3D(cfg);
+    const bodies: ComputeBladePhysicsData[] = bladeConfigs.map((cfg) => {
+      const { group, turbineLeft, turbineRight, statusLed, txLed } = buildComputeBlade3D(cfg);
       group.position.set(cfg.x, cfg.y, cfg.z);
       group.rotation.set(cfg.rotX, cfg.rotY, cfg.rotZ);
       scene.add(group);
 
       return {
         meshGroup: group,
-        spoolLeft,
-        spoolRight,
+        turbineLeft,
+        turbineRight,
+        statusLed,
+        txLed,
         vx: (Math.random() - 0.5) * 0.008,
         vy: (Math.random() - 0.5) * 0.008,
         vz: 0,
@@ -517,7 +589,6 @@ export default function ThreeCassetteDeck({
 
     const raycaster = new THREE.Raycaster();
 
-    // Event listeners attached to DOM container
     const onDown = (e: PointerEvent) =>
       handlePointerDown(e as unknown as React.PointerEvent<HTMLDivElement>, camera, raycaster);
     const onMove = (e: PointerEvent) =>
@@ -536,6 +607,7 @@ export default function ThreeCassetteDeck({
     const animate = () => {
       animId = requestAnimationFrame(animate);
       const delta = clock.getDelta();
+      const elapsed = clock.getElapsedTime();
 
       // Check impulse scramble triggers inside animation frame
       if (scrambleTriggerRef.current !== lastHandledTriggerRef.current) {
@@ -555,10 +627,16 @@ export default function ThreeCassetteDeck({
       const boundY = 1.35;
 
       for (const b of bodiesRef.current) {
-        // Spin tape spools in real 3D
-        const spinSpeed = ambientAudioActive ? 2.5 : 0.6;
-        b.spoolLeft.rotation.z += spinSpeed * delta;
-        b.spoolRight.rotation.z += spinSpeed * 0.94 * delta;
+        // Spin high-speed cooling turbines
+        const spinSpeed = ambientAudioActive ? 7.5 : 2.0;
+        b.turbineLeft.rotation.z += spinSpeed * delta;
+        b.turbineRight.rotation.z -= spinSpeed * delta;
+
+        // Modulate status LEDs
+        const pulse = (Math.sin(elapsed * 4 + b.initialX) + 1) * 0.5;
+        (b.statusLed.material as THREE.MeshStandardMaterial).emissiveIntensity = 1.2 + pulse * 1.5;
+        (b.txLed.material as THREE.MeshStandardMaterial).emissiveIntensity =
+          Math.random() > 0.3 ? 2.5 : 0.5;
 
         if (!b.isDragging) {
           // Linear motion & rotational tumbling
@@ -607,7 +685,6 @@ export default function ThreeCassetteDeck({
 
     animate();
 
-    // Resize handler
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
@@ -632,26 +709,32 @@ export default function ThreeCassetteDeck({
   }, [ambientAudioActive, handlePointerDown, handlePointerMove, handlePointerUp]);
 
   return (
-    <div className="relative w-full h-[480px] border border-white/[0.08] bg-[#07070a] overflow-hidden shadow-2xl cursor-grab active:cursor-grabbing">
+    <div className="relative w-full h-[480px] border border-white/[0.08] bg-[#06070a] overflow-hidden shadow-2xl cursor-grab active:cursor-grabbing">
       <div ref={mountRef} className="w-full h-full" />
 
-      {/* Bizarro Technical Colophon HUD Over Canvas */}
+      {/* Technical Colophon HUD Over Canvas */}
       <div className="pointer-events-none absolute top-4 left-4 font-mono text-[10px] text-zinc-400 space-y-1">
-        <div>[ REAL 3D WEBGL CASSETTE RIG ]</div>
-        <div>MESH: EXTRUDED_CHROME_TYPE_II · THREE.JS</div>
+        <div className="flex items-center gap-1.5 text-zinc-200">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span>[ REAL 3D DISTRIBUTED COMPUTE RIG ]</span>
+        </div>
+        <div>ARCHITECTURE: HOT-SWAP SERVER BLADES · THREE.JS</div>
       </div>
 
       <div className="pointer-events-none absolute bottom-4 right-4 font-mono text-[10px] text-zinc-400 text-right">
-        <div>CLICK & TOSS ANY CASSETTE IN 3D</div>
+        <div>CLICK & TOSS ANY COMPUTE BLADE IN 3D</div>
         <div>INERTIA DAMPING: 0.988 · BOUNCE: 0.75</div>
       </div>
 
       {/* Dynamic targeting HUD indicator when dragging */}
       {activeHUD && (
-        <div className="pointer-events-none absolute top-4 right-4 border border-white/[0.2] bg-zinc-950/80 p-2 font-mono text-[10px] text-zinc-300 backdrop-blur-md shadow-xl">
-          <div className="text-white font-bold">{activeHUD.name}</div>
-          <div className="text-zinc-400">
-            pos: [{activeHUD.x}, {activeHUD.y}] · rot: {activeHUD.rot}° · v: {activeHUD.vel} px/s
+        <div className="pointer-events-none absolute top-4 right-4 border border-indigo-500/40 bg-zinc-950/90 p-2.5 font-mono text-[10px] text-zinc-300 backdrop-blur-md shadow-2xl rounded">
+          <div className="text-white font-bold flex items-center gap-2">
+            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+            {activeHUD.name}
+          </div>
+          <div className="text-zinc-400 mt-1">
+            pos: [{activeHUD.x}, {activeHUD.y}] · rot: {activeHUD.rot}° · v: {activeHUD.vel} MHz
           </div>
         </div>
       )}

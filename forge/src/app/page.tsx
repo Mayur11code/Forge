@@ -911,16 +911,16 @@ export default function Home() {
       </section>
 
       {/* ===================================================================== */}
-      {/* 3. BIZARRO 3D PHYSICS CANVAS & ANALOG MEMORY VAULT                    */}
+      {/* 3. BIZARRO 3D PHYSICS CANVAS & DISTRIBUTED COMPUTE SUBSTRATE          */}
       {/* ===================================================================== */}
       <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
         <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-8 text-xs font-mono tracking-wider text-zinc-500">
           <div className="flex items-center gap-2">
             <span className="text-zinc-300 font-semibold">[ 002 ]</span>
-            <span>Analog memory vault & physics deck</span>
+            <span>Distributed compute substrate & node physics</span>
           </div>
           <div className="hidden sm:block">
-            <span>Photorealistic 3D cassettes · Grab & toss inertia</span>
+            <span>Photorealistic 3D compute blades · Grab & toss cluster nodes</span>
           </div>
         </div>
 
@@ -928,28 +928,28 @@ export default function Home() {
           {/* Left Column: Editorial Blueprint */}
           <div className="lg:col-span-5 pt-2">
             <h2 className="text-3xl sm:text-5xl font-light tracking-[-0.025em] text-zinc-100 leading-[1.12]">
-              Physical certainty in an ephemeral world.
+              Physical certainty in an ephemeral cloud.
             </h2>
             <p className="mt-6 text-sm text-zinc-300 font-light leading-relaxed">
-              Every workflow step is anchored as an immutable domain record. Like high-bias chrome magnetic tape on a precision reel, once serialized under a PostgreSQL row mutex, transactions leave permanent magnetic footprints.
+              Every workflow step is anchored as an immutable domain record. Like hot-swappable enterprise server blades secured in a hardened datacenter rack, transactions serialize under PostgreSQL row mutexes with zero silent state drift.
             </p>
 
             <div className="mt-8 border border-white/[0.08] bg-zinc-950/60 p-5 font-mono text-xs text-zinc-400 space-y-3 shadow-xl">
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
-                <span className="text-zinc-300">Physics Canvas</span>
+                <span className="text-zinc-300">Physics Substrate</span>
                 <span className="text-emerald-400 font-medium">Active (60 FPS)</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Interaction mode</span>
-                <span className="text-zinc-200">Grab, throw, bounce</span>
+                <span className="text-zinc-200">Grab, toss, inspect topology</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>Sound transport</span>
-                <span className="text-zinc-200">{tapeWarmth} RPM analog hiss</span>
+                <span>Bus clock</span>
+                <span className="text-zinc-200">4.8 GHz Turbo · 100GbE</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>Elapsed tape counter</span>
-                <span className="text-zinc-200 font-bold">{tapeCounter} s</span>
+                <span>Cluster topology</span>
+                <span className="text-zinc-200 font-bold">3 Modular Blades Online</span>
               </div>
             </div>
 
@@ -961,12 +961,12 @@ export default function Home() {
                 {ambientAudioActive ? (
                   <>
                     <Pause className="w-3.5 h-3.5" />
-                    <span>Pause tape deck</span>
+                    <span>Mute node telemetry</span>
                   </>
                 ) : (
                   <>
                     <Play className="w-3.5 h-3.5" />
-                    <span>Engage tape audio</span>
+                    <span>Engage node audio</span>
                   </>
                 )}
               </button>
@@ -974,9 +974,9 @@ export default function Home() {
               <button
                 onClick={handleScrambleCassettes}
                 className="py-3 px-4 border border-white/[0.12] hover:border-zinc-500 bg-zinc-950 text-zinc-300 hover:text-white font-mono text-xs tracking-wider transition-all duration-300"
-                title="Apply physical impulse to tapes"
+                title="Apply physical impulse to compute blades"
               >
-                Toss tapes
+                Scramble nodes
               </button>
 
               <button
@@ -984,7 +984,7 @@ export default function Home() {
                 disabled={!ambientAudioActive}
                 className="py-3 px-3.5 border border-white/[0.12] hover:border-zinc-500 bg-zinc-950 text-zinc-400 hover:text-zinc-200 font-mono text-xs tracking-wider disabled:opacity-40 transition-all duration-300"
               >
-                EQ: {tapeWarmth}
+                Clock: {tapeWarmth}
               </button>
             </div>
           </div>
