@@ -413,7 +413,8 @@ source of truth for intent.
 [decisions](forge/docs/architecture/agent/decisions.md) ·
 [historical roadmap archive](forge/docs/archive/agent/roadmap.md)
 
-**dev log** — [F-04 transactional workflow outbox](forge/docs/dev-log/2026-11-10-f04-transactional-workflow-outbox.md) ·
+**dev log** — [M1 owner manual acceptance](forge/docs/dev-log/2026-11-26-m1-owner-manual-acceptance.md) ·
+[F-04 transactional workflow outbox](forge/docs/dev-log/2026-11-10-f04-transactional-workflow-outbox.md) ·
 [F-03 immutable workflow definition contract](forge/docs/dev-log/2026-11-10-f03-immutable-workflow-definition-contract.md) ·
 [F-02 compensation contract & task rollback](forge/docs/dev-log/2026-11-10-f02-compensation-contract-and-task-rollback.md) ·
 [F-01 compensation dispatch & ownership](forge/docs/dev-log/2026-11-09-f01-compensation-dispatch-and-ownership.md) ·

@@ -41,6 +41,26 @@ export async function getOrgAccess(orgSlug: string) {
   };
 }
 
+export async function getUserOrgSummaries(userId: string) {
+  const memberships = await db.membership.findMany({
+    where: { userId },
+    include: {
+      organization: {
+        select: { id: true, name: true, slug: true, logo: true },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return memberships.map((m) => ({
+    id: m.organization.id,
+    name: m.organization.name,
+    slug: m.organization.slug,
+    role: m.role,
+    logo: m.organization.logo,
+  }));
+}
+
 
 //This will replace the requireOrgAccess function in src/features/organizations/require-org-access.ts.
 //  It will return null if the user is not authenticated 

@@ -2,110 +2,159 @@
 
 import { signIn } from "next-auth/react";
 import { useState } from "react";
-import { getOrg } from "@/db/getOrg";
-import { get } from "http";
+import Link from "next/link";
+import { AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 
-export function LoginFormComponent() {
-  const [email, setEmail] = useState("");
+interface LoginFormProps {
+  callbackUrl?: string;
+  registered?: boolean;
+  defaultEmail?: string;
+}
+
+export function LoginFormComponent({
+  callbackUrl,
+  registered,
+  defaultEmail = "",
+}: LoginFormProps) {
+  const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  // const orgId = getOrg(email)?.slug || "default";
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleCredentialsLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    await signIn("credentials", {
-      email,
+    setErrorMessage(null);
+
+    const targetUrl = callbackUrl || "/router";
+
+    const result = await signIn("credentials", {
+      email: email.trim().toLowerCase(),
       password,
-      callbackUrl: `/router`, // Redirect to router to handle org redirection
+      callbackUrl: targetUrl,
+      redirect: false,
     });
-    setIsLoading(false);
+
+    if (result?.error) {
+      setErrorMessage("Invalid email or password. Please try again.");
+      setIsLoading(false);
+    } else {
+      window.location.href = targetUrl;
+    }
   };
 
+  const signupHref = callbackUrl
+    ? `/signup?callbackUrl=${encodeURIComponent(callbackUrl)}`
+    : "/signup";
+
   return (
-    <div className="w-full max-w-md mx-auto p-6 bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-100">
+    <div className="w-full max-w-md mx-auto p-8 bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl text-zinc-100">
       <div className="space-y-6">
         {/* Header Section */}
         <div className="text-center space-y-2">
-          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Welcome back</h2>
-          <p className="text-sm text-slate-500">Please enter your details to sign in</p>
+          <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-blue-600/10 border border-blue-500/20 text-blue-400 mb-1">
+            <span className="font-bold text-lg">F</span>
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight text-white">
+            Welcome back
+          </h2>
+          <p className="text-sm text-zinc-400">
+            Sign in to your Forge workspace
+          </p>
         </div>
 
-        {/* 1. Google Provider */}
-        <button
-          onClick={() => signIn("google", { callbackUrl: "/org/default/dashboard" })}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-slate-200 rounded-xl bg-white hover:bg-slate-50 hover:border-slate-300 active:scale-[0.99] transition-all duration-200"
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24">
-            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
-            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-          </svg>
-          <span className="text-slate-700 font-semibold text-sm">Continue with Google</span>
-        </button>
+        {/* Success Alert if just registered */}
+        {registered && (
+          <div
+            role="status"
+            className="flex items-start gap-3 p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-sm animate-in fade-in"
+          >
+            <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" />
+            <div className="flex-1 font-medium">
+              Account created successfully! Please enter your password to sign in.
+            </div>
+          </div>
+        )}
 
-        <div className="relative flex items-center py-2">
-          <div className="flex-grow border-t border-slate-100"></div>
-          <span className="flex-shrink mx-4 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-            Or use email
-          </span>
-          <div className="flex-grow border-t border-slate-100"></div>
-        </div>
+        {/* Error Alert */}
+        {errorMessage && (
+          <div
+            role="alert"
+            className="flex items-start gap-3 p-3.5 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm animate-in fade-in"
+          >
+            <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+            <div className="flex-1 font-medium">{errorMessage}</div>
+          </div>
+        )}
 
-        {/* 2. Credentials Provider */}
-        <form onSubmit={handleCredentialsLogin} className="space-y-5">
+        {/* Credentials Provider Form */}
+        <form onSubmit={handleCredentialsLogin} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 ml-1">
+            <label
+              htmlFor="login-email"
+              className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5"
+            >
               Email Address
             </label>
             <input
+              id="login-email"
               type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white outline-none transition-all duration-200 placeholder:text-slate-400 text-slate-900 font-medium"
+              className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors disabled:opacity-50"
               placeholder="name@company.com"
               required
+              disabled={isLoading}
             />
           </div>
 
           <div>
-            <div className="flex justify-between items-center mb-1.5 ml-1">
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+            <div className="flex justify-between items-center mb-1.5">
+              <label
+                htmlFor="login-password"
+                className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider"
+              >
                 Password
               </label>
-              <button type="button" className="text-[11px] font-bold text-blue-600 hover:text-blue-700 underline-offset-4 hover:underline">
-                Forgot password?
-              </button>
             </div>
             <input
+              id="login-password"
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 focus:bg-white outline-none transition-all duration-200 placeholder:text-slate-400 text-slate-900 font-medium"
+              className="w-full px-4 py-2.5 bg-zinc-950 border border-zinc-800 rounded-xl text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors disabled:opacity-50"
               placeholder="••••••••"
               required
+              disabled={isLoading}
             />
           </div>
 
           <button
             disabled={isLoading}
             type="submit"
-            className="w-full py-3.5 bg-slate-900 text-white font-bold rounded-xl hover:bg-black active:scale-[0.98] transition-all duration-200 shadow-lg shadow-slate-200 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center"
+            className="w-full py-3 px-4 mt-2 bg-blue-600 hover:bg-blue-500 active:scale-[0.99] text-white font-semibold rounded-xl shadow-lg shadow-blue-600/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
           >
             {isLoading ? (
               <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
-              "Sign In"
+              <>
+                <span>Sign in</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
             )}
           </button>
         </form>
 
-        <p className="text-center text-sm text-slate-500">
+        <p className="text-center text-sm text-zinc-400 pt-2 border-t border-zinc-800">
           Don&apos;t have an account?{" "}
-          <button className="font-bold text-slate-900 hover:text-blue-600 transition-colors">
+          <Link
+            href={signupHref}
+            className="font-semibold text-blue-400 hover:text-blue-300 transition-colors"
+          >
             Create account
-          </button>
+          </Link>
         </p>
       </div>
     </div>

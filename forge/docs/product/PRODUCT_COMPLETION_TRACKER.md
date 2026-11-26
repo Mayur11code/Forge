@@ -384,7 +384,7 @@ flowchart TD
     classDef gate fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff;
     classDef infra fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fff;
 
-    M0["M0: Scope Reset & Authority (DONE)"]:::product --> M1["M1: Accounts & Organizations"]:::product
+    M0["M0: Scope Reset & Authority (DONE)"]:::product --> M1["M1: Accounts & Organizations (ACCEPTED)"]:::product
     M1 --> M2["M2: Projects & Tasks"]:::product
     M1 --> M3["M3: Workflow Builder"]:::product
     M2 --> M4["M4: Event Automation Engine"]:::product
@@ -445,8 +445,9 @@ flowchart TD
     - Path A (No invite): Dispatched to `/onboarding`.
     - Path B (With `inviteToken` param): Dispatched to `/invite/[token]` to accept invitation.
   - Password inputs validated for minimum length (&ge; 8 chars).
-- **Tests & Verification:** Integration test submitting registration action with valid/invalid/duplicate emails; browser test navigating `/login` &rarr; `/signup` &rarr; register &rarr; verify automatic redirect to `/onboarding`.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** Integration test submitting registration action with valid/invalid/duplicate emails; browser test navigating `/login` &rarr; `/signup` &rarr; register &rarr; verify automatic redirect to `/onboarding`. Level E3 automated suite (`src/tests/auth/m1-concurrency.realdb.test.ts`) and Playwright E2E suite (`src/tests/e2e/m1-journeys.spec.ts`) passing. Owner manual acceptance passed on 2026-11-26.
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-26 M1 Owner Manual Acceptance](../dev-log/2026-11-26-m1-owner-manual-acceptance.md)
 
 #### FC-003 | M1 | First-Time Organization Onboarding Flow (`/onboarding`)
 - **Milestone:** M1
@@ -462,8 +463,9 @@ flowchart TD
   - Commits `Organization` and assigns caller as `ADMIN` in a single atomic database transaction.
   - Redirects caller directly to `/org/${slug}/dashboard` with initial starter task.
   - Verification of 3-Tier Security: Unauthenticated access to `/onboarding` redirects to `/login`.
-- **Tests & Verification:** Integration test verifying atomic transaction; E2E test verifying fresh user completes onboarding without manual DB setup.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** Integration test verifying atomic transaction; E2E test verifying fresh user completes onboarding without manual DB setup. Real PostgreSQL concurrency and transaction timeout tests passing. Owner manual acceptance passed on 2026-11-26.
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-26 M1 Owner Manual Acceptance](../dev-log/2026-11-26-m1-owner-manual-acceptance.md)
 
 #### FC-004 | M1 | Multi-Organization Selector & Header Switcher (`/select-org`)
 - **Milestone:** M1
@@ -477,8 +479,9 @@ flowchart TD
   - `/select-org` lists all organizations the user belongs to with their roles.
   - Header dropdown displays current organization and allows instant switching to other organizations.
   - **Tenant Boundary Security:** Switching organizations verifies user membership in target organization before updating session context; attempting to switch to an un-joined organization is rejected with 403.
-- **Tests & Verification:** Create test user in two organizations; verify navigation via selector and header switcher updates URL and visible data.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** Create test user in two organizations; verify navigation via selector and header switcher updates URL and visible data. Multi-org selector and header switcher Playwright test passing. Owner manual acceptance passed on 2026-11-26.
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-26 M1 Owner Manual Acceptance](../dev-log/2026-11-26-m1-owner-manual-acceptance.md)
 
 #### FC-005 | M1 | Member Role Management & Removal Controls (`/members`)
 - **Milestone:** M1
@@ -493,8 +496,9 @@ flowchart TD
   - Admin cannot remove themselves if they are the sole administrator.
   - Removed user immediately loses access to organization routes (session checks return 403).
   - **RBAC Role Enforcement:** Non-admins attempting to change roles or remove members are rejected with 403 Forbidden.
-- **Tests & Verification:** Role mutation test suite verifying RBAC enforcement, cross-tenant rejection, and last-admin refusal.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** Role mutation test suite verifying RBAC enforcement, cross-tenant rejection, and last-admin refusal. Level E3 PostgreSQL mutex serialization suite (Tests A–E) proving sole-admin protection under concurrent interleaving. Owner manual acceptance passed on 2026-11-26.
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-26 M1 Owner Manual Acceptance](../dev-log/2026-11-26-m1-owner-manual-acceptance.md)
 
 #### FC-006 | M1 | Reliable Email Delivery for Invitations via Resend
 - **Milestone:** M1
@@ -508,8 +512,9 @@ flowchart TD
   - Inviting a member creates invitation token and sends an email via Resend with link `/invite/[token]`.
   - Recipient clicking link lands on invitation acceptance view.
   - If email fails to send, clear error feedback is surfaced, but token is not orphaned.
-- **Tests & Verification:** Integration test verifying email dispatch with mock Resend sink; end-to-end invite acceptance flow.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** Application-side invitation token generation, 24-hour expiration lifecycle, and acceptance flow (`/invite/[token]`) verified via Playwright E2E and owner manual inspection. Live Resend external provider test executed against authorized recipient `mayurnanda9857@gmail.com`; returned HTTP 403 sandbox error (`onboarding@resend.dev` requires a verified custom domain at `resend.com/domains` to deliver outside the account owner email). External email delivery is explicitly deferred by owner directive until custom domain verification in a later milestone (tracked downstream in `FC-032`).
+- **Status:** `PARTIAL (App Flow Owner-Accepted; Resend Delivery Deferred)`
+- **Manual Acceptance Record:** [2026-11-26 M1 Owner Manual Acceptance](../dev-log/2026-11-26-m1-owner-manual-acceptance.md)
 
 #### FC-007 | M1 | User Profile & Account Settings Completeness
 - **Milestone:** M1
@@ -523,8 +528,9 @@ flowchart TD
   - User can update display name and avatar URL.
   - User can update password with current password verification.
   - Form validation prevents empty names or insecure passwords.
-- **Tests & Verification:** Unit tests for password validation and profile update actions.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** Unit tests for password validation and profile update actions. Playwright E2E journey for profile and password update passing. Owner manual acceptance passed on 2026-11-26.
+- **Status:** `DONE (Owner Manual Acceptance Passed)`
+- **Manual Acceptance Record:** [2026-11-26 M1 Owner Manual Acceptance](../dev-log/2026-11-26-m1-owner-manual-acceptance.md)
 
 ---
 
@@ -1156,12 +1162,12 @@ flowchart TD
 | ID | Milestone | Capability / Assignment Title | Priority | Size | Status | Blockers / Prereqs |
 | :--- | :---: | :--- | :---: | :---: | :---: | :--- |
 | **FC-001** | **M0** | Scope Contract, Tracker Authority & Document Consolidation | P0 | M | `DONE` | None |
-| **FC-002** | **M1** | Self-Service User Registration (`/signup`) | P0 | S | `NOT_STARTED` | FC-001 |
-| **FC-003** | **M1** | First-Time Organization Onboarding Flow (`/onboarding`) | P0 | M | `NOT_STARTED` | FC-002 |
-| **FC-004** | **M1** | Multi-Organization Selector & Header Switcher (`/select-org`) | P1 | M | `NOT_STARTED` | FC-003 |
-| **FC-005** | **M1** | Member Role Management & Removal Controls (`/members`) | P1 | M | `NOT_STARTED` | FC-003 |
-| **FC-006** | **M1** | Reliable Email Delivery for Invitations via Resend | P1 | S | `NOT_STARTED` | FC-003 |
-| **FC-007** | **M1** | User Profile & Account Settings Completeness | P2 | S | `NOT_STARTED` | FC-002 |
+| **FC-002** | **M1** | Self-Service User Registration (`/signup`) | P0 | S | `DONE (Owner Accepted)` | FC-001 |
+| **FC-003** | **M1** | First-Time Organization Onboarding Flow (`/onboarding`) | P0 | M | `DONE (Owner Accepted)` | FC-002 |
+| **FC-004** | **M1** | Multi-Organization Selector & Header Switcher (`/select-org`) | P1 | M | `DONE (Owner Accepted)` | FC-003 |
+| **FC-005** | **M1** | Member Role Management & Removal Controls (`/members`) | P1 | M | `DONE (Owner Accepted)` | FC-003 |
+| **FC-006** | **M1** | Reliable Email Delivery for Invitations via Resend | P1 | S | `PARTIAL (App Flow Owner-Accepted; Resend Delivery Deferred)` | FC-003 |
+| **FC-007** | **M1** | User Profile & Account Settings Completeness | P2 | S | `DONE (Owner Accepted)` | FC-002 |
 | **FC-008** | **M2** | Project Lifecycle: Edit, Archive & Delete | P1 | M | `NOT_STARTED` | FC-003 |
 | **FC-009** | **M2** | Interactive Task Lifecycle & Status Transitions | P0 | M | `NOT_STARTED` | FC-005, FC-008 |
 | **FC-010** | **M2** | Task Comments & Collaboration Feed | P1 | S | `NOT_STARTED` | FC-009 |
@@ -1276,15 +1282,15 @@ flowchart TD
     classDef gate fill:#047857,stroke:#10b981,stroke-width:3px,color:#fff;
     classDef infra fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fff;
 
-    FC001["FC-001: Tracker Authority"]:::done --> FC002["FC-002: Registration /signup"]:::crit
+    FC001["FC-001: Tracker Authority"]:::done --> FC002["FC-002: Registration /signup"]:::done
     FC001 --> FC033["FC-033: Decommission Razorpay"]:::norm
     
-    FC002 --> FC003["FC-003: Org Onboarding"]:::crit
-    FC002 --> FC007["FC-007: Profile & Settings"]:::norm
+    FC002 --> FC003["FC-003: Org Onboarding"]:::done
+    FC002 --> FC007["FC-007: Profile & Settings"]:::done
     
-    FC003 --> FC004["FC-004: Org Switcher"]:::norm
-    FC003 --> FC005["FC-005: Member RBAC"]:::norm
-    FC003 --> FC006["FC-006: Resend Invites"]:::norm
+    FC003 --> FC004["FC-004: Org Switcher"]:::done
+    FC003 --> FC005["FC-005: Member RBAC"]:::done
+    FC003 --> FC006["FC-006: Resend Invites (Delivery Deferred)"]:::norm
     FC003 --> FC008["FC-008: Project Lifecycle"]:::crit
     
     FC004 --> FC034["FC-034: Navigation Audit"]:::norm
@@ -1355,43 +1361,46 @@ flowchart TD
 
 ---
 
-## 9. Next Action: The First Implementation Task
+## 9. Next Action: Implementation Roadmap Status
 
-The very first implementation task to execute is:
+Milestone **M1 (Identity, Accounts and Organizations)** has been **ACCEPTED** following owner manual inspection (with explicitly documented Resend provider delivery deferral). All acceptance outcomes and automated verification evidence are recorded in [`forge/docs/dev-log/2026-11-26-m1-owner-manual-acceptance.md`](../dev-log/2026-11-26-m1-owner-manual-acceptance.md).
 
-### **`FC-002` — Self-Service User Registration (`/signup`)**
+### Verification & Acceptance Summary:
+1. **Owner Manual Acceptance:** PASS across all customer-facing M1 journeys: FC-002 (Registration & Auth), FC-003 (Org Onboarding), FC-004 (Multi-Org Switcher), FC-005 (Member RBAC & Last-Admin Guard), FC-006 (Invitation App Flow; Provider Delivery Deferred), FC-007 (Profile & Settings), and Cross-Tenant Isolation.
+2. **Resend External Delivery Deferral:** Explicit owner-approved deferral. Live test against `mayurnanda9857@gmail.com` cleanly captured HTTP 403 sandbox constraint. No alternative recipients used. Outstanding delivery will reconcile in Milestone M8 (`FC-032`).
+3. **Transaction Timeout Resolution:** Memoized PostgreSQL connection pool on `globalThis` and set explicit interactive transaction budgets (`maxWait: 10000ms`, `timeout: 15000ms`) to eliminate WAN TLS handshake acquisition timeouts.
+4. **Authoritative Idempotency:** Added unique `idempotencyKey` to `Organization` schema, deployed forward migration `20261126200000_add_org_idempotency_key`, and integrated client component state deduplication.
+5. **Database-Level Mutex Serialization:** Integrated PostgreSQL row-level locking (`SELECT id FROM "Organization" WHERE id = $1 FOR UPDATE`) inside membership mutation transactions with caller privilege and last-admin re-verification.
+6. **Real PostgreSQL Concurrency Suite (Level E3):** 7/7 tests passed 100% green in `src/tests/auth/m1-concurrency.realdb.test.ts` against live Neon PostgreSQL (Tests A–E proving last-admin protection under genuine concurrent interleaving).
+7. **Live Resend Email Verification & Audit:** Script `scripts/send-live-invitation-test.ts` executed against live Resend API for authorized recipient `mayurnanda9857@gmail.com`, verifying token lifecycle and documenting sandbox domain constraints.
+8. **Playwright Browser E2E Acceptance:** 7/7 journeys passed 100% green in `src/tests/e2e/m1-journeys.spec.ts` (`PW-M1-01` through `PW-M1-07`) in Chromium against the running application.
+9. **Regression Gates:** 129 Jest test suites passed (2,025 unit tests), `npx tsc --noEmit` passed with 0 errors, ESLint passed with 0 errors, and Next.js `npm run build` completed with 0 errors.
+
+With Milestone M1 accepted, the repository transitions to **Milestone M2 (Projects and Task Management)**. The first assignment is unblocked and ready for implementation:
+
+### **`FC-008` — Project Lifecycle: Edit, Archive & Delete**
 
 ```text
-Assignment ID:       FC-002
-Milestone:           M1 (Identity, Accounts and Organizations)
-Priority:            P0 (Critical Blocker)
-Estimated Effort:    Small (1-2 days)
-Direct Dependency:   FC-001 (DONE)
-Directly Unblocks:   FC-003 (First-Time Organization Onboarding Flow)
-Key Source Files:    src/app/signup/page.tsx
-                     src/app/login/login-form.tsx
-                     src/app/actions/user/registerUser.ts
+Assignment ID:       FC-008
+Milestone:           M2 (Projects and Task Management)
+Priority:            P1 (High)
+Estimated Effort:    Medium (2-3 days)
+Direct Dependency:   FC-003 (M1: First-Time Organization Onboarding Flow)
+Directly Unblocks:   FC-009 (Interactive Task Lifecycle & Status Transitions)
+Key Source Files:    src/app/actions/projects/projectActions.ts
+                     src/features/projects/components/ProjectSettingsModal.tsx
 ```
 
 #### Detailed Execution Scope:
-1. **Build Signup View (`src/app/signup/page.tsx`):**  
-   - Modern, high-conversion registration form matching existing Forge dark theme.
-   - Form fields: Full Name, Email Address, Password, Confirm Password.
-   - Support optional `?inviteToken=...` query parameter to preserve invitation acceptance context.
-2. **Wire Server Action (`src/app/actions/user/registerUser.ts`):**  
-   - Validate input schemas using Zod (email format, password &ge; 8 characters).
-   - Check email uniqueness in Postgres `User` table; return user-friendly error if email already registered.
-   - Hash password securely using `bcryptjs` (salt rounds &ge; 10).
-   - Commit `User` record to database.
-   - Automatically sign in caller via NextAuth credentials or return success token for immediate sign-in.
-3. **Dispatch Router Logic (`src/app/router/page.tsx`):**  
-   - Path A (New Founder without invite): User has 0 memberships &rarr; automatically redirected to `/onboarding` (`FC-003`).
-   - Path B (Invited Member): User has `inviteToken` &rarr; automatically redirected to `/invite/[token]` to join team.
-4. **Update Login Screen (`src/app/login/login-form.tsx`):**  
-   - Convert the inert `<button>Create account</button>` at line 106 into a Next.js `<Link href="/signup">` component.
-   - Remove dead Google sign-in button pending schema extension.
-
-#### Verification Criteria:
-- Automated test submitting valid registration commits user with bcrypt hash.
-- Automated test submitting duplicate email returns friendly error message.
-- Browser test navigating `/login` &rarr; click "Create account" &rarr; fill `/signup` &rarr; automatically arrives on `/onboarding`.
+1. **Project Settings & Metadata Editing:**
+   - Admin and Manager roles can update project name and description.
+   - Form validation prevents empty names or cross-tenant modification.
+2. **Project Archival:**
+   - Soft-archival toggle with confirmation dialog.
+   - Active workflow engines and board views filter out archived projects.
+3. **Destructive Cascading Deletion:**
+   - Modal requiring explicit project name typed confirmation before deletion.
+   - Cascades cleanup of related tasks, comments, and file attachments in transactional boundary.
+4. **Tenant Boundary Enforcement:**
+   - Verify caller belongs to project's organization with `ADMIN` or `MANAGER` role.
+   - Negative test verifies Org A member cannot mutate Org B project.

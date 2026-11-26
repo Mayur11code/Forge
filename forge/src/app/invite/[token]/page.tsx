@@ -7,18 +7,20 @@ import AlreadyMemberPage from "@/features/organizations/components/invitation/Al
 import ExpiredInvitationPage from "@/features/organizations/components/invitation/ExpiredInvitation";
 import AlreadyUsedPage from "@/features/organizations/components/invitation/AlreadyUsedInv";
 
-
-
 interface PageProps {
   token: string;
 }
 
-export const dynamic = "force-dynamic"; // Ensure no caching
+export const dynamic = "force-dynamic";
 
-export default async function InvitePage({ params }: { params: Promise<PageProps> }) {
+export default async function InvitePage({
+  params,
+}: {
+  params: Promise<PageProps>;
+}) {
   const { token } = await params;
 
-  // 1️⃣ Fetch Invitation
+  // 1. Fetch Invitation
   const invitation = await db.invitation.findUnique({
     where: { token },
     include: {
@@ -28,70 +30,69 @@ export default async function InvitePage({ params }: { params: Promise<PageProps
     },
   });
 
-  // 2️⃣ Token Exists?
+  // 2. Token Exists?
   if (!invitation) {
     return notFound();
   }
 
-  // 3️⃣ Expired?
+  // 3. Expired Check
   if (invitation.expiresAt < new Date()) {
-    // Optionally mark expired
     if (invitation.status === InvitationStatus.PENDING) {
-    //   await db.invitation.update({
-    //     where: { id: invitation.id },
-    //     data: { status: InvitationStatus.EXPIRED },
-    //   });
-
-    await db.invitation.updateMany({
-  where: {
-    id: invitation.id,
-    status: InvitationStatus.PENDING,
-  },
-  data: {
-    status: InvitationStatus.EXPIRED,
-  },
-
-});
-//IDEMPOTENT UPDATE: Only update if still PENDING, so if two requests come in at the same time, only one will mark it as expired, and the other will see it's already expired and won't change it again. This prevents
+      await db.invitation.updateMany({
+        where: {
+          id: invitation.id,
+          status: InvitationStatus.PENDING,
+        },
+        data: {
+          status: InvitationStatus.EXPIRED,
+        },
+      });
     }
 
-    return (
-      <ExpiredInvitationPage />
-    );
+    return <ExpiredInvitationPage />;
   }
 
-  // 4️⃣ Already Used?
+  // 4. Already Used Check
   if (invitation.status !== InvitationStatus.PENDING) {
-    return (
-      <AlreadyUsedPage />
-    );
+    return <AlreadyUsedPage />;
   }
 
-  // 5️⃣ Auth Check
+  // 5. Authentication Check
   const session = await auth();
 
   if (!session?.user?.id) {
-    // Redirect to login with callback
     redirect(`/login?callbackUrl=/invite/${token}`);
   }
 
   const userId = session.user.id;
-  if (session.user.email !== invitation.email) {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-center p-6">
-      <h1 className="text-xl font-semibold text-red-400">
-        Email Mismatch
-      </h1>
-      <p className="text-zinc-400">
-        This invitation was sent to {invitation.email}.
-        Please log in with the correct account.
-      </p>
-    </div>
-  );
-}
+  const userEmail = session.user.email?.trim().toLowerCase();
+  const inviteEmail = invitation.email.trim().toLowerCase();
 
+  // 6. Recipient Email Mismatch Check (Case-insensitive)
+  if (userEmail !== inviteEmail) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-950 text-center p-6 text-zinc-100">
+        <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-8 space-y-4 shadow-2xl">
+          <h1 className="text-xl font-semibold text-red-400">Email Mismatch</h1>
+          <p className="text-zinc-400 text-sm">
+            This invitation was sent to{" "}
+            <strong className="text-white">{invitation.email}</strong>. You are currently signed in as{" "}
+            <strong className="text-white">{session.user.email}</strong>.
+          </p>
+          <div className="pt-2">
+            <a
+              href={`/login?callbackUrl=/invite/${token}`}
+              className="inline-block px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-colors"
+            >
+              Sign In with Matching Account
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  // 6️⃣ Already Member Check
+  // 7. Already Member Check
   const existingMembership = await db.membership.findUnique({
     where: {
       userId_orgId: {
@@ -102,15 +103,13 @@ export default async function InvitePage({ params }: { params: Promise<PageProps
   });
 
   if (existingMembership) {
-    return (
-      <AlreadyMemberPage orgSlug={invitation.organization.slug} />
-    );
+    return <AlreadyMemberPage orgSlug={invitation.organization.slug} />;
   }
 
-  // 7️⃣ ACCEPT INVITATION (Transaction-Safe)
+  // 8. Atomic Transaction Acceptance
   try {
     await db.$transaction(async (tx) => {
-      // Double-check status inside transaction (race safety)
+      // Re-query status inside transaction with row lock / concurrency check
       const freshInvite = await tx.invitation.findUnique({
         where: { id: invitation.id },
       });
@@ -136,13 +135,10 @@ export default async function InvitePage({ params }: { params: Promise<PageProps
         },
       });
     });
-
   } catch (error) {
-    return (
-      <RaceConditionPage />
-    );
+    return <RaceConditionPage />;
   }
 
-  // 8️⃣ Redirect to Org Dashboard
-  redirect(`/org/${invitation.organization.slug}`);
+  // 9. Redirect cleanly to Org Dashboard
+  redirect(`/org/${invitation.organization.slug}/dashboard`);
 }

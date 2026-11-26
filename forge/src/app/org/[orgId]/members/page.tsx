@@ -2,7 +2,7 @@ import React from 'react';
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/prisma/db';
 import { getOrgAccess } from '@/features/organizations/getOrgAccess';
-import { MembersTable } from '@/features/organizations/components/invitation/members-table';
+import { MembersTable, MemberItem } from '@/features/organizations/components/invitation/members-table';
 import InviteMemberModal from '@/features/organizations/components/invitation/InviteMemberModal';
 
 export default async function MembersPage({ params }: { params: Promise<{ orgId: string }> }) {
@@ -36,16 +36,18 @@ export default async function MembersPage({ params }: { params: Promise<{ orgId:
   });
 
   // 3. Transform to Member shape for client table
-  const members = memberships.map((m) => {
+  const members: MemberItem[] = memberships.map((m) => {
     const userName = m.user?.name?.trim() || m.user?.email?.split('@')[0] || "Unknown User";
     const userHandle = m.user?.email ? `@${m.user.email.split('@')[0]}` : "@unknown";
     const roleFormatted = m.role.charAt(0).toUpperCase() + m.role.slice(1).toLowerCase();
 
     return {
       id: m.id,
+      userId: m.user?.id,
       name: userName,
       handle: userHandle,
       role: roleFormatted,
+      roleFormatted,
       status: "active",
       lastActive: "Active",
     };
@@ -79,7 +81,12 @@ export default async function MembersPage({ params }: { params: Promise<{ orgId:
         </div>
 
         {/* --- SECTION 3: MEMBERS TABLE --- */}
-        <MembersTable initialMembers={members} />
+        <MembersTable
+          initialMembers={members}
+          orgSlug={orgId}
+          currentUserRole={access.membership.role}
+          currentUserId={access.userId}
+        />
       </section>
     </div>
   );

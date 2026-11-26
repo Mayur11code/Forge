@@ -30,7 +30,7 @@ const config = {
   // Live-model suites are named `*.live.test.ts` and run under
   // jest.live.config.ts instead (each run spends real model quota and needs
   // network access, so they are never part of the default run).
-  testPathIgnorePatterns: ['\\.realdb\\.test\\.ts$', '\\.live\\.test\\.ts$'],
+  testPathIgnorePatterns: ['\\.realdb\\.test\\.ts$', '\\.live\\.test\\.ts$', '<rootDir>/src/tests/e2e/'],
   transform: {},
 }satisfies Config;
 
