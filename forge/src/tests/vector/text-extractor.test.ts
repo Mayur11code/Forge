@@ -74,7 +74,8 @@ describe('Contextual Hydration (Stringification)', () => {
       projectId: 'proj_456',
       assigneeId: 'user_789',
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      completedAt: null,
     };
 
     const payload = buildSemanticPayload(mockTask);
@@ -100,7 +101,8 @@ expect(payload).toContain('Title: Fix\n\nLOGIN');
       projectId: 'proj_456',
       assigneeId: null, // Missing assignee
       createdAt: new Date(),
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      completedAt: null,
     };
 
     const payload = buildSemanticPayload(mockTask);

@@ -9,6 +9,14 @@ jest.mock("next/navigation", () => ({
   notFound: jest.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
   }),
+  useRouter: jest.fn(() => ({
+    push: jest.fn(),
+    refresh: jest.fn(),
+  })),
+}));
+
+jest.mock("@/features/organizations/components/OrgSwitcher", () => ({
+  OrgSwitcher: () => <div data-testid="org-switcher" />,
 }));
 
 jest.mock("@/features/organizations/getOrgAccess", () => ({

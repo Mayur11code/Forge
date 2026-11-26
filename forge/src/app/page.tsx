@@ -1,186 +1,1280 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import Link from "next/link";
+import dynamic from "next/dynamic";
+import {
+  ArrowRight,
+  LogIn,
+  Volume2,
+  VolumeX,
+  Play,
+  Pause,
+  ChevronRight,
+  ChevronLeft,
+  Copy,
+  Check,
+} from "lucide-react";
 
-type SystemEvent = {
-  id: number;
-  left: number;
-  top: number;
-  type: string;
-};
+const ThreeCassetteDeck = dynamic(
+  () => import("@/components/ThreeCassetteDeck"),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="relative w-full h-[480px] border border-white/[0.08] bg-[#07070a] flex items-center justify-center font-mono text-xs text-zinc-500">
+        INITIALIZING 3D WEBGL DECK...
+      </div>
+    ),
+  }
+);
 
-const EVENT_TYPES = [
-  "TASK_CREATED", 
-  "FILE_UPLOADED", 
-  "WORKFLOW_EXECUTED", 
-  "ROLE_CHANGED",
-  "VECTOR_EMBEDDED",
-  "QUOTA_UPDATED"
+const CustomCursor = dynamic(
+  () => import("@/components/CustomCursor"),
+  { ssr: false }
+);
+
+import SystemEventsGame from "@/components/SystemEventsGame";
+
+// ============================================================================
+// ARCHITECTURAL DATA CONTRACTS
+// ============================================================================
+
+interface OrbitalCard {
+  id: string;
+  index: string;
+  tag: string;
+  title: string;
+  subtitle: string;
+  metric: string;
+  codeSnippet: string;
+}
+
+const ORBITAL_CARDS: OrbitalCard[] = [
+  {
+    id: "mutex",
+    index: "01",
+    tag: "Row lock serialization",
+    title: "PostgreSQL row mutex",
+    subtitle: "FOR UPDATE concurrency gate",
+    metric: "Sole admin invariant",
+    codeSnippet: `SELECT id FROM "Organization" WHERE id = $orgId FOR UPDATE;`,
+  },
+  {
+    id: "outbox",
+    index: "02",
+    tag: "Domain CDC persistence",
+    title: "Transactional outbox",
+    subtitle: "Atomic domain event creation",
+    metric: "0 ghost event leaks",
+    codeSnippet: `await db.$transaction([tx.task.update(...), tx.outbox.create(...)]);`,
+  },
+  {
+    id: "saga",
+    index: "03",
+    tag: "Deterministic DAG",
+    title: "Reverse saga engine",
+    subtitle: "Backward compensation chain",
+    metric: "Zero orphaned state",
+    codeSnippet: `await saga.compensate({ runId, chain: step.compensatingActions });`,
+  },
+  {
+    id: "agent",
+    index: "04",
+    tag: "Human approval boundary",
+    title: "Midnight agent gate",
+    subtitle: "Reviewable diff signature",
+    metric: "Dual-key verification",
+    codeSnippet: `if (proposal.criticality === "HIGH") renderApprovalCard(proposal);`,
+  },
+  {
+    id: "tombstone",
+    index: "05",
+    tag: "Vector lifecycle",
+    title: "Pinecone tombstones",
+    subtitle: "Deterministic vector erasure",
+    metric: "Strict tenant isolation",
+    codeSnippet: `await pinecone.deleteMany({ filter: { orgId: { $eq: orgId } } });`,
+  },
+  {
+    id: "tokens",
+    index: "06",
+    tag: "Cryptographic delivery",
+    title: "Resend token fabric",
+    subtitle: "24-hour single-tenant invite",
+    metric: "Crypto-random UUID",
+    codeSnippet: `await db.invitation.create({ token: crypto.randomUUID(), orgId });`,
+  },
 ];
 
-export default function Home() {
-  const [clickCount, setClickCount] = useState(0);
-  const [gameActive, setGameActive] = useState(false);
-  const [events, setEvents] = useState<SystemEvent[]>([]);
-  const [processedCount, setProcessedCount] = useState(0);
+interface SystemChapter {
+  id: string;
+  index: string;
+  title: string;
+  subtitle: string;
+  detail: string;
+  quote: string;
+  fileName: string;
+  metrics: { label: string; value: string }[];
+  code: string;
+}
 
-  // Handle the secret trigger
-  const handleHeaderClick = () => {
-    if (gameActive) return;
-    const newCount = clickCount + 1;
-    setClickCount(newCount);
-    if (newCount >= 3) {
-      setGameActive(true);
+const CHAPTERS: SystemChapter[] = [
+  {
+    id: "identity",
+    index: "01",
+    title: "Tenant sanctuary & row mutex",
+    subtitle: "PostgreSQL row lock serialization",
+    detail: "Complete account onboarding, active organization context switching, and strict last-administrator safeguards enforced via database row-level mutex transactions.",
+    quote: "A team should never be left without an anchor. Row locks guarantee exactly one admin always remains.",
+    fileName: "mutex.transaction.ts",
+    metrics: [
+      { label: "Primitive", value: "SELECT FOR UPDATE" },
+      { label: "Isolation", value: "Read committed" },
+      { label: "Guarantee", value: "Sole admin invariant" },
+    ],
+    code: `await db.$transaction(async (tx) => {
+  // Acquire row-level mutex on the organization anchor
+  await tx.$executeRaw\`SELECT id FROM "Organization" WHERE id = \${orgId} FOR UPDATE\`;
+  
+  const admins = await tx.membership.count({
+    where: { organizationId: orgId, role: "ADMIN" }
+  });
+  if (admins <= 1) {
+    throw new Error("LAST_ADMIN_PROTECTED");
+  }
+  return tx.membership.delete({ where: { id: targetId } });
+});`,
+  },
+  {
+    id: "outbox",
+    index: "02",
+    title: "Transactional event outbox",
+    subtitle: "Atomic domain CDC persistence",
+    detail: "Domain events are written to PostgreSQL inside the same atomic transaction as the mutation. Distributed Redis leases prevent split-brain workers.",
+    quote: "No ghost events. If the database rolls back, the event was never born.",
+    fileName: "cdc.outbox.ts",
+    metrics: [
+      { label: "Outbox pattern", value: "Dual-write elimination" },
+      { label: "Delivery", value: "At-least-once" },
+      { label: "Lock mechanism", value: "Redis lease mutex" },
+    ],
+    code: `await db.$transaction([
+  db.task.update({
+    where: { id: taskId },
+    data: { status: "IN_PROGRESS" }
+  }),
+  db.outboxEvent.create({
+    data: {
+      type: "task.updated",
+      payload: { taskId, orgId, timestamp: Date.now() }
+    }
+  })
+]);`,
+  },
+  {
+    id: "saga",
+    index: "03",
+    title: "Deterministic saga engine",
+    subtitle: "Reverse rollback compensation",
+    detail: "Workflows execute as deterministic directed acyclic graphs. When an external step times out or fails, registered backward compensation routines trigger in reverse order.",
+    quote: "When distributed steps break in the night, the engine walks back its footprints clean.",
+    fileName: "saga.engine.ts",
+    metrics: [
+      { label: "Topology", value: "Deterministic DAG" },
+      { label: "Rollback", value: "Reverse saga chain" },
+      { label: "Side effects", value: "Zero orphaned state" },
+    ],
+    code: `try {
+  await executeStep(step, context);
+} catch (error) {
+  // Trigger backward compensation chain in reverse order
+  await sagaEngine.compensate({
+    runId,
+    failedStepId: step.id,
+    compensationChain: step.compensatingActions.reverse()
+  });
+  throw new SagaCompensatedError(runId, step.id);
+}`,
+  },
+  {
+    id: "agent",
+    index: "04",
+    title: "Midnight autonomous agent",
+    subtitle: "Inline human approval boundary",
+    detail: "A conversational assistant that reasons over organization context and proposes structural DAG adjustments. High-impact operations present reviewable diff cards for human sign-off.",
+    quote: "Intelligence that asks before it cuts. Critical migrations require human touch.",
+    fileName: "agent.proposal.ts",
+    metrics: [
+      { label: "Execution model", value: "Tool proposal gateway" },
+      { label: "Safety tier", value: "Human-in-the-loop" },
+      { label: "Memory", value: "Scoped vector sandbox" },
+    ],
+    code: `const proposal = await agent.planModification({
+  prompt,
+  currentWorkflow
+});
+
+if (proposal.criticality === "HIGH") {
+  return renderApprovalCard({
+    proposal,
+    requiresSignature: true,
+    expiresAt: Date.now() + 3600000
+  });
+}`,
+  },
+  {
+    id: "notifications",
+    index: "05",
+    title: "Whispered notification fabric",
+    subtitle: "Cryptographic 24-hour tokens",
+    detail: "Team member invitation lifecycles, transactional alerts, and delivery feedback backed by Resend API infrastructure with recipient boundary verification.",
+    quote: "Invitations that respect borders. Tokens expire like milk at dawn.",
+    fileName: "resend.delivery.ts",
+    metrics: [
+      { label: "Token entropy", value: "crypto.randomUUID()" },
+      { label: "TTL lifespan", value: "24-hour auto-expire" },
+      { label: "Scope", value: "Single-tenant boundary" },
+    ],
+    code: `const token = crypto.randomUUID();
+await db.invitation.create({
+  data: {
+    email,
+    token,
+    expiresAt: new Date(Date.now() + 86400000),
+    organizationId
+  }
+});`,
+  },
+  {
+    id: "vectors",
+    index: "06",
+    title: "Semantic vector lifecycle",
+    subtitle: "Pinecone indexing & deterministic tombstones",
+    detail: "Project attachments upload to UploadThing, parse into semantic markdown chunks, generate embeddings, and ensure clean vector tombstoning on document deletion.",
+    quote: "A system that forgets on command. Deleting a document wipes its ghost from vector space.",
+    fileName: "pinecone.tombstone.ts",
+    metrics: [
+      { label: "Search index", value: "Cosine hybrid vector" },
+      { label: "Chunking", value: "Semantic boundary" },
+      { label: "Tombstoning", value: "Synchronous delete" },
+    ],
+    code: `await pinecone.index.deleteMany({
+  filter: {
+    organizationId: { $eq: orgId },
+    documentId: { $eq: fileId }
+  }
+});`,
+  },
+];
+
+interface DagNode {
+  id: string;
+  label: string;
+  stepNumber: string;
+  category: string;
+  signature: string;
+  compensation: string;
+}
+
+const DAG_NODES: DagNode[] = [
+  {
+    id: "trigger",
+    label: "task.created",
+    stepNumber: "Node 01",
+    category: "Domain CDC trigger",
+    signature: "{ taskId: UUID, priority: 'URGENT', organizationId: UUID }",
+    compensation: "None (Event source invariant)",
+  },
+  {
+    id: "filter",
+    label: "condition.evaluate",
+    stepNumber: "Node 02",
+    category: "Isolated logic gate",
+    signature: "payload.priority === 'URGENT' -> [true branch]",
+    compensation: "None (Stateless evaluation)",
+  },
+  {
+    id: "mutation",
+    label: "task.assign_lead",
+    stepNumber: "Node 03",
+    category: "Transactional mutation",
+    signature: "UPDATE \"Task\" SET assigneeId = $leadId WHERE id = $taskId",
+    compensation: "UPDATE \"Task\" SET assigneeId = NULL WHERE id = $taskId",
+  },
+  {
+    id: "delivery",
+    label: "resend.dispatch_alert",
+    stepNumber: "Node 04",
+    category: "External provider",
+    signature: "resend.emails.send({ to: lead.email, template: 'urgent_triage' })",
+    compensation: "AuditLog.append({ event: 'NOTIFICATION_DISPATCH_RECORDED' })",
+  },
+];
+
+// ============================================================================
+// AUDIO GENERATORS (ANALOG TAPE HISS & MECHANICAL CLICKS)
+// ============================================================================
+
+function generateVinylNoiseBuffer(ctx: AudioContext): AudioBuffer {
+  const bufferSize = ctx.sampleRate * 2;
+  const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+  const output = noiseBuffer.getChannelData(0);
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+
+  for (let i = 0; i < bufferSize; i++) {
+    const white = Math.random() * 2 - 1;
+    b0 = 0.99886 * b0 + white * 0.0555179;
+    b1 = 0.99332 * b1 + white * 0.0750759;
+    b2 = 0.96900 * b2 + white * 0.1538520;
+    b3 = 0.86650 * b3 + white * 0.3104856;
+    b4 = 0.55000 * b4 + white * 0.5329522;
+    b5 = -0.76160 * b5 - white * 0.0168980;
+    let pink = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+    b6 = white * 0.115926;
+
+    if (Math.random() < 0.0006) {
+      pink += (Math.random() - 0.5) * 4.2;
+    }
+
+    output[i] = pink * 0.04;
+  }
+
+  return noiseBuffer;
+}
+
+function playMechanicalClick(ctx: AudioContext | null) {
+  if (!ctx || ctx.state !== "running") return;
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(460, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(90, ctx.currentTime + 0.04);
+    gain.gain.setValueAtTime(0.09, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.04);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.045);
+  } catch {
+    // ignore
+  }
+}
+
+export default function Home() {
+  // Web Audio & Spectrum Visualizer Refs
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const spectrumAnimIdRef = useRef<number | null>(null);
+  const filterNodeRef = useRef<BiquadFilterNode | null>(null);
+  const decayingBarsRef = useRef<number[]>(new Array(18).fill(2));
+
+  // Section & Animation Refs
+  const heroRef = useRef<HTMLElement | null>(null);
+  const targetMousePos = useRef({ x: 0, y: 0 });
+  const isDraggingWheelRef = useRef(false);
+  const wheelStartPointerX = useRef(0);
+  const wheelAngleRef = useRef(0);
+  const wheelVelocityRef = useRef(0.002);
+  const lastWheelPointerX = useRef(0);
+  const lastWheelTimestamp = useRef(0);
+
+  // Component States
+  const [ambientAudioActive, setAmbientAudioActive] = useState(false);
+  const [tapeWarmth, setTapeWarmth] = useState<"33" | "45">("33");
+  const [selectedDagIndex, setSelectedDagIndex] = useState(0);
+  const [activeChapterIndex, setActiveChapterIndex] = useState(0);
+  const [currentTimeUTC, setCurrentTimeUTC] = useState<string>("");
+  const [tapeCounter, setTapeCounter] = useState(14);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [activeHoverOrbitalIndex, setActiveHoverOrbitalIndex] = useState<number | null>(null);
+  const [smoothMousePos, setSmoothMousePos] = useState({ x: 0, y: 0 });
+
+  // --- KIND 50 ORBITAL WHEEL STATE ---
+  const [wheelAngle, setWheelAngle] = useState(0);
+  const [isDraggingWheel, setIsDraggingWheel] = useState(false);
+
+  // --- THREE.JS 3D CASSETTE DECK TRIGGER ---
+  const [scrambleTrigger, setScrambleTrigger] = useState(0);
+
+  // --- RESTORED SYSTEM EVENTS MINI-GAME STATE ---
+  const [isGameOpen, setIsGameOpen] = useState(false);
+  const [logoClickCount, setLogoClickCount] = useState(0);
+
+  const handleLogoClick = useCallback(() => {
+    playMechanicalClick(audioCtxRef.current);
+    setLogoClickCount((prev) => {
+      const next = prev + 1;
+      if (next >= 3) {
+        setIsGameOpen(true);
+        return 0;
+      }
+      return next;
+    });
+  }, []);
+
+  // Real-time UTC Clock
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setCurrentTimeUTC(
+        now.toISOString().replace("T", " ").slice(0, 19) + " UTC"
+      );
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Tape Counter Clock
+  useEffect(() => {
+    if (!ambientAudioActive) return;
+    const interval = setInterval(() => {
+      setTapeCounter((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [ambientAudioActive]);
+
+  // Smooth mouse lerp loop
+  useEffect(() => {
+    let animId: number;
+    const lerpLoop = () => {
+      setSmoothMousePos((prev) => {
+        const dx = targetMousePos.current.x - prev.x;
+        const dy = targetMousePos.current.y - prev.y;
+        if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) return prev;
+        return {
+          x: prev.x + dx * 0.08,
+          y: prev.y + dy * 0.08,
+        };
+      });
+      animId = requestAnimationFrame(lerpLoop);
+    };
+    animId = requestAnimationFrame(lerpLoop);
+    return () => cancelAnimationFrame(animId);
+  }, []);
+
+  const handleMouseMoveGlobal = (e: React.MouseEvent<HTMLDivElement>) => {
+    targetMousePos.current = { x: e.clientX, y: e.clientY };
+  };
+
+  // ==========================================================================
+  // KIND 50: 3D ORBITAL CAROUSEL WHEEL PHYSICS & DRAG LOOP
+  // ==========================================================================
+  useEffect(() => {
+    let animId: number;
+
+    const updateOrbitalWheel = () => {
+      if (!isDraggingWheelRef.current) {
+        if (Math.abs(wheelVelocityRef.current) > 0.0008) {
+          wheelVelocityRef.current *= 0.94;
+        } else {
+          wheelVelocityRef.current = activeHoverOrbitalIndex !== null ? 0 : 0.0016;
+        }
+        wheelAngleRef.current += wheelVelocityRef.current;
+        setWheelAngle(wheelAngleRef.current);
+      }
+      animId = requestAnimationFrame(updateOrbitalWheel);
+    };
+
+    animId = requestAnimationFrame(updateOrbitalWheel);
+    return () => cancelAnimationFrame(animId);
+  }, [activeHoverOrbitalIndex]);
+
+  const handleWheelPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    isDraggingWheelRef.current = true;
+    setIsDraggingWheel(true);
+    wheelStartPointerX.current = e.clientX;
+    lastWheelPointerX.current = e.clientX;
+    lastWheelTimestamp.current = performance.now();
+    wheelVelocityRef.current = 0;
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  };
+
+  const handleWheelPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingWheelRef.current) return;
+    const now = performance.now();
+    const dt = Math.max(1, now - lastWheelTimestamp.current);
+    const dx = e.clientX - lastWheelPointerX.current;
+
+    const dTheta = (dx / 460) * 1.4;
+    wheelAngleRef.current += dTheta;
+    setWheelAngle(wheelAngleRef.current);
+
+    wheelVelocityRef.current = dTheta / (dt / 16.6);
+    lastWheelPointerX.current = e.clientX;
+    lastWheelTimestamp.current = now;
+  };
+
+  const handleWheelPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDraggingWheelRef.current) return;
+    isDraggingWheelRef.current = false;
+    setIsDraggingWheel(false);
+    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
+    playMechanicalClick(audioCtxRef.current);
+  };
+
+  const handleScrambleCassettes = () => {
+    setScrambleTrigger((prev) => prev + 1);
+    playMechanicalClick(audioCtxRef.current);
+  };
+
+  // ==========================================================================
+  // WEB AUDIO & SPECTRUM VISUALIZER
+  // ==========================================================================
+  const renderSpectrum = useCallback(() => {
+    if (!canvasRef.current || !analyserRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const analyser = analyserRef.current;
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const draw = () => {
+      spectrumAnimIdRef.current = requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const barWidth = 3;
+      const gap = 2;
+      let x = 0;
+
+      for (let i = 0; i < 18; i++) {
+        const val = dataArray[i] || 0;
+        const targetHeight = Math.max(2, (val / 255) * canvas.height * 0.88);
+        const current = decayingBarsRef.current[i] || 2;
+        const updated = current < targetHeight ? targetHeight : current * 0.91;
+        decayingBarsRef.current[i] = updated;
+
+        ctx.fillStyle = "rgba(228, 228, 231, 0.75)";
+        ctx.fillRect(x, canvas.height - updated, barWidth, updated);
+        x += barWidth + gap;
+      }
+    };
+
+    draw();
+  }, []);
+
+  const toggleAmbientAudio = useCallback(() => {
+    if (typeof window === "undefined") return;
+
+    if (ambientAudioActive) {
+      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+        audioCtxRef.current.suspend();
+      }
+      setAmbientAudioActive(false);
+      return;
+    }
+
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+
+      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+        audioCtxRef.current = new AudioCtx();
+      } else if (audioCtxRef.current.state === "suspended") {
+        audioCtxRef.current.resume();
+      }
+
+      const ctx = audioCtxRef.current;
+      const noiseBuffer = generateVinylNoiseBuffer(ctx);
+
+      const noiseSource = ctx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(tapeWarmth === "33" ? 680 : 920, ctx.currentTime);
+      filter.Q.setValueAtTime(0.85, ctx.currentTime);
+      filterNodeRef.current = filter;
+
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      analyserRef.current = analyser;
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.045, ctx.currentTime);
+
+      noiseSource.connect(filter);
+      filter.connect(gain);
+      gain.connect(analyser);
+      analyser.connect(ctx.destination);
+
+      noiseSource.start();
+      setAmbientAudioActive(true);
+      renderSpectrum();
+    } catch {
+      setAmbientAudioActive(false);
+    }
+  }, [ambientAudioActive, tapeWarmth, renderSpectrum]);
+
+  const toggleTapeSpeed = () => {
+    const next = tapeWarmth === "33" ? "45" : "33";
+    setTapeWarmth(next);
+    if (filterNodeRef.current && audioCtxRef.current) {
+      filterNodeRef.current.frequency.setValueAtTime(
+        next === "33" ? 680 : 920,
+        audioCtxRef.current.currentTime
+      );
+    }
+    playMechanicalClick(audioCtxRef.current);
+  };
+
+  const handleCopyCode = (code: string) => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(code);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+      playMechanicalClick(audioCtxRef.current);
     }
   };
 
-  // Close the game and reset states
-  const handleCloseSystem = () => {
-    setGameActive(false);
-    setClickCount(0);
-    setEvents([]);
-    setProcessedCount(0);
+  const handleSelectChapter = (idx: number) => {
+    setActiveChapterIndex(idx);
+    playMechanicalClick(audioCtxRef.current);
   };
 
-  // Game Loop: Spawning and Falling
   useEffect(() => {
-    if (!gameActive) return;
-
-    // Spawner: Create a new event every 800ms
-    const spawner = setInterval(() => {
-      setEvents((prev) => [
-        ...prev,
-        {
-          id: Date.now(),
-          left: Math.random() * 70 + 10, 
-          top: -10,
-          type: EVENT_TYPES[Math.floor(Math.random() * EVENT_TYPES.length)],
-        },
-      ]);
-    }, 800);
-
-    // Physics Loop: Move events down every 50ms
-    const physics = setInterval(() => {
-      setEvents((prev) =>
-        prev
-          .map((e) => ({ ...e, top: e.top + 1.2 })) // Slowed down slightly for better clicking
-          .filter((e) => e.top < 110)
-      );
-    }, 50);
-
     return () => {
-      clearInterval(spawner);
-      clearInterval(physics);
+      if (spectrumAnimIdRef.current) {
+        cancelAnimationFrame(spectrumAnimIdRef.current);
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+        try {
+          audioCtxRef.current.close();
+        } catch {
+          // ignore
+        }
+      }
     };
-  }, [gameActive]);
-
-  // Handle processing an event - Changed to Pointer Event for instant response
-  const handleProcessEvent = (id: number, e: React.PointerEvent) => {
-    e.stopPropagation();
-    e.preventDefault(); // Prevents ghost clicks on mobile
-    setEvents((prev) => prev.filter((event) => event.id !== id));
-    setProcessedCount((prev) => prev + 1);
-  };
+  }, []);
 
   return (
-    <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-slate-950 px-4 py-20 sm:py-24 selection:bg-indigo-500/30 font-sans">
-      
-      {/* --- Engineering Grid Background --- */}
-      <div className="absolute inset-0 z-0 bg-[linear-gradient(to_right,#4f4f4f15_1px,transparent_1px),linear-gradient(to_bottom,#4f4f4f15_1px,transparent_1px)] bg-[size:24px_24px] md:bg-[size:32px_32px]" />
+    <div
+      onMouseMove={handleMouseMoveGlobal}
+      className="relative min-h-screen bg-[#060608] text-zinc-100 font-sans antialiased selection:bg-zinc-800 selection:text-white overflow-x-hidden"
+    >
+      {/* 1. Ultra-Smooth Precision Custom Cursor (SLX Management Style) */}
+      <CustomCursor />
 
-      {/* --- Ambient Background Glows --- */}
-      <div className="absolute top-1/4 left-1/4 h-64 w-64 md:h-96 md:w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-indigo-600/20 blur-[100px] md:blur-[128px] pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 h-64 w-64 md:h-96 md:w-96 translate-x-1/2 translate-y-1/2 rounded-full bg-fuchsia-600/20 blur-[100px] md:blur-[128px] pointer-events-none" />
+      {/* 2. Restored System Events Falling Mini-Game */}
+      <SystemEventsGame
+        isOpen={isGameOpen}
+        onClose={() => setIsGameOpen(false)}
+        onPlayClickSound={() => playMechanicalClick(audioCtxRef.current)}
+      />
 
-      {/* --- THE GAME RENDERER --- */}
-      {gameActive && (
-        <>
-          {/* Responsive Scoreboard with Close Button */}
-          <div className="absolute top-4 left-4 right-4 sm:right-auto sm:top-8 sm:left-8 z-50 rounded-xl border border-emerald-500/30 bg-slate-900/90 px-4 py-3 sm:px-6 sm:py-4 backdrop-blur-md shadow-[0_0_30px_rgba(16,185,129,0.15)] flex justify-between items-center gap-6">
-            <div>
-              <p className="text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest mb-0 sm:mb-1">Active Queue</p>
-              <p className="text-lg sm:text-2xl font-black text-emerald-400 font-mono tracking-tight">
-                Processed: {processedCount}
-              </p>
-            </div>
-            
-            {/* Kill Process Button */}
-            <button
-              onClick={handleCloseSystem}
-              className="px-3 py-1.5 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-mono font-bold hover:bg-red-500/20 hover:scale-105 active:scale-95 transition-all"
+      {/* Dynamic Ambient Mouse Spotlight */}
+      <div
+        className="pointer-events-none fixed inset-0 z-0 transition-opacity duration-700 ease-out opacity-60"
+        style={{
+          background: `radial-gradient(850px circle at ${smoothMousePos.x}px ${smoothMousePos.y}px, rgba(255, 255, 255, 0.045), transparent 80%)`,
+        }}
+      />
+
+      {/* Parallax Blueprint Grid */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 opacity-[0.03] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:48px_48px]"
+      />
+
+      {/* Subtle 35mm Analog Film Grain Texture */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-40 opacity-[0.035] mix-blend-screen bg-repeat"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+        }}
+      />
+
+      {/* ===================================================================== */}
+      {/* 1. TOP NAV: Museum-Grade Hairline Navigation                          */}
+      {/* ===================================================================== */}
+      <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.08] bg-[#060608]/85 backdrop-blur-xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <div
+              onClick={handleLogoClick}
+              className="group flex items-center gap-3 cursor-pointer select-none"
+              title="Click 3 times to unlock event stream mini-game"
             >
-              SIGTERM
+              <span className="w-6 h-6 border border-zinc-700 bg-zinc-950 flex items-center justify-center font-mono text-xs font-bold text-zinc-300 group-hover:border-white group-hover:text-white transition-colors duration-300">
+                F
+              </span>
+              <span className="font-mono text-xs tracking-[0.2em] uppercase text-zinc-100 font-semibold group-hover:text-white transition-colors duration-300">
+                Forge
+              </span>
+              {logoClickCount > 0 && (
+                <span className="text-[10px] font-mono text-zinc-400 font-bold tracking-widest animate-pulse border border-white/[0.2] px-1.5 py-0.5 bg-white/[0.04]">
+                  OVERRIDE: {logoClickCount}/3
+                </span>
+              )}
+            </div>
+
+            <div className="hidden lg:flex items-center gap-4 text-[11px] font-mono text-zinc-500 border-l border-white/[0.08] pl-6">
+              <span>Release 1.0</span>
+              <span>·</span>
+              <span>DAG orchestration</span>
+              <span>·</span>
+              <span className="text-zinc-400 font-medium">{currentTimeUTC || "UTC sync"}</span>
+            </div>
+          </div>
+
+          {/* Sound Deck Controls */}
+          <div className="hidden sm:flex items-center gap-2 border border-white/[0.08] bg-zinc-950/80 px-3 py-1.5 transition-colors duration-300 hover:border-zinc-700">
+            <button
+              onClick={toggleAmbientAudio}
+              className={`flex items-center gap-2 text-[11px] font-mono tracking-wider transition-colors duration-300 ${
+                ambientAudioActive ? "text-zinc-100" : "text-zinc-500 hover:text-zinc-300"
+              }`}
+              title="Toggle analog tape hiss & vinyl warmth"
+            >
+              {ambientAudioActive ? (
+                <Volume2 className="w-3.5 h-3.5 text-zinc-100 transition-transform duration-300" />
+              ) : (
+                <VolumeX className="w-3.5 h-3.5" />
+              )}
+              <span>
+                {ambientAudioActive ? `Tape hiss: ${tapeWarmth} RPM` : "Tape hiss: Muted"}
+              </span>
+            </button>
+
+            {ambientAudioActive && (
+              <canvas
+                ref={canvasRef}
+                width={88}
+                height={14}
+                className="ml-1 border-l border-white/[0.1] pl-2 transition-opacity duration-500"
+              />
+            )}
+
+            <button
+              onClick={toggleTapeSpeed}
+              disabled={!ambientAudioActive}
+              className="text-[10px] font-mono px-1.5 py-0.5 border border-white/[0.1] text-zinc-500 hover:text-zinc-300 hover:border-zinc-500 disabled:opacity-30 transition-all duration-300 uppercase ml-1"
+              title="Toggle playback EQ filter"
+            >
+              {tapeWarmth}
             </button>
           </div>
 
-          {/* Falling Events */}
-          {events.map((ev) => (
+          {/* Action CTAs */}
+          <div className="flex items-center gap-3">
             <button
-              key={ev.id}
-              // Changed from onClick to onPointerDown for massive responsiveness improvement
-              onPointerDown={(e) => handleProcessEvent(ev.id, e)}
-              style={{ left: `${ev.left}%`, top: `${ev.top}%` }}
-              className="absolute z-[100] flex items-center gap-2 rounded-md border border-indigo-500/40 bg-slate-900/95 px-3 py-2 text-[10px] sm:text-xs font-mono text-indigo-300 shadow-lg backdrop-blur-md hover:border-indigo-400 hover:bg-slate-800 active:scale-95 cursor-crosshair group touch-none"
+              onClick={() => {
+                playMechanicalClick(audioCtxRef.current);
+                setIsGameOpen(true);
+              }}
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 border border-white/[0.1] hover:border-white/30 text-zinc-400 hover:text-zinc-200 text-xs font-mono tracking-wider transition-all duration-300"
+              title="Launch CDC event stream simulator mini-game"
             >
-              <span className="h-2 w-2 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.8)] animate-pulse pointer-events-none"></span>
-              <span className="pointer-events-none">{ev.type}</span>
+              <span className="w-1.5 h-1.5 bg-zinc-400 rounded-none" />
+              <span>[ Mini-game ]</span>
             </button>
-          ))}
-        </>
-      )}
 
-      {/* --- Main Glassmorphism Card --- */}
-      <div className="relative z-10 flex w-full max-w-2xl flex-col items-center text-center p-6 sm:p-10 md:p-14 rounded-3xl bg-slate-900/60 border border-slate-800 shadow-2xl backdrop-blur-xl">
-        
-        {/* Pulsing "In Dev" Badge */}
-        <div className="mb-6 md:mb-8 inline-flex items-center rounded-full border border-indigo-500/30 bg-indigo-500/10 px-3 py-1 sm:px-4 sm:py-1.5 text-xs sm:text-sm font-medium text-indigo-300 backdrop-blur-sm">
-          <span className="relative flex h-2 w-2 sm:h-2.5 sm:w-2.5 mr-2 sm:mr-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 sm:h-2.5 sm:w-2.5 bg-indigo-500"></span>
-          </span>
-          Engineered Forge OS v0.1.0-alpha
+            <Link
+              href="/login"
+              className="px-4 py-2 border border-white/[0.1] hover:border-white/30 text-zinc-300 hover:text-white text-xs font-mono tracking-wider transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5"
+            >
+              Sign in
+            </Link>
+
+            <Link
+              href="/signup"
+              className="px-5 py-2 bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-mono font-semibold tracking-wider transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5 hover:shadow-[0_4px_25px_rgba(255,255,255,0.18)]"
+            >
+              Enter Forge
+            </Link>
+          </div>
         </div>
+      </header>
 
-        {/* Gradient Heading */}
-        <div className="relative">
-          <h1 
-            onClick={handleHeaderClick}
-            className={`mb-4 text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-white via-indigo-200 to-fuchsia-400 transition-all duration-300 select-none ${clickCount > 0 && !gameActive ? 'scale-105 cursor-pointer drop-shadow-md' : ''} ${gameActive ? 'animate-pulse opacity-50' : ''}`}
-          >
-            Something Awesome <br className="hidden sm:block" /> is Cooking
-          </h1>
-          
-          {/* Secret Unlock Hint */}
-          {!gameActive && clickCount > 0 && (
-            <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[10px] font-mono text-indigo-400 font-bold tracking-widest animate-pulse">
-              OVERRIDE: {clickCount}/3
-            </div>
-          )}
-        </div>
-
-        {/* Subtitle */}
-        <p className="mt-4 mb-8 sm:mb-10 text-sm sm:text-base md:text-lg text-slate-400 max-w-lg mx-auto leading-relaxed px-2">
-          A multi-tenant, event-driven architecture is currently being forged. Connect with me on LinkedIn while the workers queue up.
-        </p>
-
-        {/* LinkedIn Button */}
-        <a 
-          href="https://www.linkedin.com/in/mayur-nanda1121/"
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center px-6 py-3 sm:px-8 sm:py-3.5 rounded-full bg-white text-slate-950 text-sm sm:text-base font-semibold transition-all duration-500 ease-out hover:bg-slate-100 hover:scale-105 hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.4)] active:scale-95 w-full sm:w-auto"
+      {/* ===================================================================== */}
+      {/* 2. HERO: KIND 50 3D ORBITAL ROTATING WHEEL & MONUMENTAL TYPOGRAPHY    */}
+      {/* ===================================================================== */}
+      <section
+        ref={heroRef}
+        className="relative z-10 min-h-[96vh] flex flex-col items-center justify-center pt-24 pb-20 border-b border-white/[0.08]"
+      >
+        {/* Monumental Backdrop Typography Spanning Full Edge-to-Edge (Kind 50 Style) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center select-none opacity-[0.065] overflow-hidden whitespace-nowrap"
         >
-          <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-2" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-            <path fillRule="evenodd" d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z" clipRule="evenodd" />
-          </svg>
-          Connect on LinkedIn
-        </a>
-      </div>
+          <span className="font-sans font-black tracking-[-0.05em] text-[18vw] leading-none uppercase text-white">
+            ORCHESTRATION
+          </span>
+        </div>
 
-      {/* --- Footer --- */}
-      <div className="absolute bottom-6 sm:bottom-8 text-slate-600 text-xs sm:text-sm font-medium tracking-wide">
-        &copy; {new Date().getFullYear()} Engineered Forge. All rights reserved.
-      </div>
-    </main>
+        {/* Center Stage: The 3D Orbital Interactive Carousel Stage */}
+        <div
+          onPointerDown={handleWheelPointerDown}
+          onPointerMove={handleWheelPointerMove}
+          onPointerUp={handleWheelPointerUp}
+          className="relative w-full max-w-6xl h-[720px] flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
+        >
+          {/* Circular Orbital Ring of System Invariant Cards (Kind 50 Architecture) */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            {ORBITAL_CARDS.map((card, idx) => {
+              const total = ORBITAL_CARDS.length;
+              const angle = wheelAngle + (idx / total) * (Math.PI * 2);
+              const radiusX = 480; // Expanded horizontal radius for clean separation
+              const radiusY = 265; // Ample vertical clearance below center console
+
+              const posX = Math.cos(angle) * radiusX;
+              const posY = Math.sin(angle) * radiusY;
+
+              // 3D Depth Scale & Perspective
+              const depthFactor = (Math.sin(angle) + 1) / 2; // 0 (far) to 1 (near)
+              const scale = 0.82 + depthFactor * 0.32;
+              const opacity = 0.65 + depthFactor * 0.35;
+              const zIndex = Math.round(depthFactor * 30);
+              const isHovered = activeHoverOrbitalIndex === idx;
+
+              return (
+                <div
+                  key={card.id}
+                  onPointerEnter={() => setActiveHoverOrbitalIndex(idx)}
+                  onPointerLeave={() => setActiveHoverOrbitalIndex(null)}
+                  style={{
+                    transform: `translate3d(${posX}px, ${posY}px, 0) scale(${isHovered ? scale * 1.08 : scale}) rotate(${posX * 0.008}deg)`,
+                    opacity,
+                    zIndex: isHovered ? 50 : zIndex,
+                    transition: isDraggingWheel ? "none" : "transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease",
+                  }}
+                  className={`pointer-events-auto absolute w-60 sm:w-64 p-4 rounded-2xl border bg-gradient-to-b from-[#1c1c2b]/95 to-[#101018]/95 backdrop-blur-md shadow-[0_22px_50px_rgba(0,0,0,0.92)] transition-all duration-300 ${
+                    isHovered
+                      ? "border-white text-white shadow-[0_22px_55px_rgba(255,255,255,0.22),inset_0_1px_0_rgba(255,255,255,0.4)]"
+                      : "border-white/[0.24] text-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pb-2 border-b border-white/[0.1] mb-2.5">
+                    <span className="text-zinc-100 font-bold">[ {card.index} ]</span>
+                    <span className="text-zinc-300 font-medium">{card.tag}</span>
+                  </div>
+
+                  <h3 className="font-mono text-xs font-semibold text-zinc-100 tracking-tight leading-snug">
+                    {card.title}
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 mt-1 font-light leading-snug">
+                    {card.subtitle}
+                  </p>
+
+                  <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                    <span className="text-zinc-200 font-medium">{card.metric}</span>
+                    <ChevronRight className="w-3 h-3 text-zinc-400" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Center Monumental Console (Framed by the Orbital Wheel) */}
+          <div className="relative z-40 max-w-lg text-center px-6 pointer-events-auto">
+            <h1 className="text-4xl sm:text-6xl font-light tracking-[-0.03em] leading-[0.98] text-zinc-100">
+              Orchestration <br />
+              <span className="font-serif italic font-normal tracking-tight text-zinc-400 text-3xl sm:text-5xl block mt-2">
+                in slow motion.
+              </span>
+            </h1>
+
+            <p className="text-sm sm:text-base text-zinc-400 font-light leading-relaxed mt-5 max-w-md mx-auto">
+              A multi-tenant, event-driven engine where workflows, teams, and autonomous agents operate with quiet, deterministic certainty.
+            </p>
+
+            {/* Tactical Interactive Action CTAs */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-7">
+              <Link
+                href="/signup"
+                className="w-full sm:w-auto py-3 px-6 bg-zinc-100 hover:bg-white text-zinc-950 font-mono text-xs font-bold tracking-wider flex items-center justify-center gap-2 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(255,255,255,0.14)] group"
+              >
+                <span>Create workspace</span>
+                <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-1" />
+              </Link>
+
+              <Link
+                href="/login"
+                className="w-full sm:w-auto py-3 px-6 border border-white/[0.12] hover:border-white/40 bg-zinc-950/70 text-zinc-300 hover:text-white font-mono text-xs tracking-wider flex items-center justify-center gap-2 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5"
+              >
+                <span>Resume session</span>
+                <LogIn className="w-3.5 h-3.5 text-zinc-500" />
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 3. BIZARRO 3D PHYSICS CANVAS & ANALOG MEMORY VAULT                    */}
+      {/* ===================================================================== */}
+      <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-8 text-xs font-mono tracking-wider text-zinc-500">
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-300 font-semibold">[ 002 ]</span>
+            <span>Analog memory vault & physics deck</span>
+          </div>
+          <div className="hidden sm:block">
+            <span>Photorealistic 3D cassettes · Grab & toss inertia</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+          {/* Left Column: Editorial Blueprint */}
+          <div className="lg:col-span-5 pt-2">
+            <h2 className="text-3xl sm:text-5xl font-light tracking-[-0.025em] text-zinc-100 leading-[1.12]">
+              Physical certainty in an ephemeral world.
+            </h2>
+            <p className="mt-6 text-sm text-zinc-300 font-light leading-relaxed">
+              Every workflow step is anchored as an immutable domain record. Like high-bias chrome magnetic tape on a precision reel, once serialized under a PostgreSQL row mutex, transactions leave permanent magnetic footprints.
+            </p>
+
+            <div className="mt-8 border border-white/[0.08] bg-zinc-950/60 p-5 font-mono text-xs text-zinc-400 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
+                <span className="text-zinc-300">Physics Canvas</span>
+                <span className="text-emerald-400 font-medium">Active (60 FPS)</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Interaction mode</span>
+                <span className="text-zinc-200">Grab, throw, bounce</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Sound transport</span>
+                <span className="text-zinc-200">{tapeWarmth} RPM analog hiss</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Elapsed tape counter</span>
+                <span className="text-zinc-200 font-bold">{tapeCounter} s</span>
+              </div>
+            </div>
+
+            <div className="mt-8 flex flex-wrap items-center gap-3">
+              <button
+                onClick={toggleAmbientAudio}
+                className="py-3 px-5 border border-white/[0.12] hover:border-white/40 bg-zinc-950 text-zinc-200 hover:text-white font-mono text-xs tracking-wider flex items-center gap-2 transition-all duration-300"
+              >
+                {ambientAudioActive ? (
+                  <>
+                    <Pause className="w-3.5 h-3.5" />
+                    <span>Pause tape deck</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5" />
+                    <span>Engage tape audio</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={handleScrambleCassettes}
+                className="py-3 px-4 border border-white/[0.12] hover:border-zinc-500 bg-zinc-950 text-zinc-300 hover:text-white font-mono text-xs tracking-wider transition-all duration-300"
+                title="Apply physical impulse to tapes"
+              >
+                Toss tapes
+              </button>
+
+              <button
+                onClick={toggleTapeSpeed}
+                disabled={!ambientAudioActive}
+                className="py-3 px-3.5 border border-white/[0.12] hover:border-zinc-500 bg-zinc-950 text-zinc-400 hover:text-zinc-200 font-mono text-xs tracking-wider disabled:opacity-40 transition-all duration-300"
+              >
+                EQ: {tapeWarmth}
+              </button>
+            </div>
+          </div>
+
+          {/* Right Column: Real Three.js 3D WebGL Cassette Deck */}
+          <div className="lg:col-span-7 flex flex-col items-center">
+            <ThreeCassetteDeck
+              ambientAudioActive={ambientAudioActive}
+              scrambleTrigger={scrambleTrigger}
+              onMechanicalClick={() => playMechanicalClick(audioCtxRef.current)}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 4. FLUID ARCHITECTURAL GALLERY (REFINED NON-AWKWARD RUNWAY)           */}
+      {/* ===================================================================== */}
+      <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-8 text-xs font-mono tracking-wider text-zinc-500">
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-300 font-semibold">[ 003 ]</span>
+            <span>Deterministic system invariant gallery</span>
+          </div>
+          <div className="flex items-center gap-4 text-xs font-mono text-zinc-400">
+            <span>Chapter {activeChapterIndex + 1} of {CHAPTERS.length}</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => handleSelectChapter(Math.max(0, activeChapterIndex - 1))}
+                disabled={activeChapterIndex === 0}
+                className="p-1 border border-white/[0.1] hover:border-white/40 disabled:opacity-20 transition-all"
+                title="Previous chapter"
+              >
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => handleSelectChapter(Math.min(CHAPTERS.length - 1, activeChapterIndex + 1))}
+                disabled={activeChapterIndex === CHAPTERS.length - 1}
+                className="p-1 border border-white/[0.1] hover:border-white/40 disabled:opacity-20 transition-all"
+                title="Next chapter"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* SLX Management-Inspired Architectural Chapter Matrix (Zero Hideous Scrollbars) */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 mb-8">
+          {CHAPTERS.map((ch, idx) => {
+            const isSelected = activeChapterIndex === idx;
+            return (
+              <button
+                key={ch.id}
+                onClick={() => handleSelectChapter(idx)}
+                className={`relative p-3.5 text-left border transition-all duration-300 flex flex-col justify-between min-h-[96px] group ${
+                  isSelected
+                    ? "border-white bg-gradient-to-b from-white/[0.09] to-transparent shadow-[inset_0_2px_0_rgba(255,255,255,0.9),0_10px_25px_rgba(0,0,0,0.5)]"
+                    : "border-white/[0.08] bg-zinc-950/40 hover:border-zinc-600 hover:bg-white/[0.02]"
+                }`}
+              >
+                {/* Top Row: Index + Technical Coordinate / Active Status */}
+                <div className="flex items-center justify-between text-[11px] font-mono">
+                  <span className={isSelected ? "text-white font-bold" : "text-zinc-500 group-hover:text-zinc-300"}>
+                    [ {ch.index} ]
+                  </span>
+                  <span className={`text-[10px] font-mono ${isSelected ? "text-white font-bold" : "text-zinc-600 group-hover:text-zinc-400"}`}>
+                    {isSelected ? "● ACTIVE" : "+"}
+                  </span>
+                </div>
+
+                {/* Chapter Title */}
+                <div className="my-1.5">
+                  <div className={`text-xs font-medium leading-tight tracking-tight transition-colors ${
+                    isSelected ? "text-white font-semibold" : "text-zinc-300 group-hover:text-white"
+                  }`}>
+                    {ch.title.split("&")[0].trim()}
+                  </div>
+                </div>
+
+                {/* Bottom Technical Tag */}
+                <div className="text-[10px] font-mono uppercase tracking-wider text-zinc-500 truncate">
+                  {ch.subtitle.split(" ")[0]} · {ch.metrics[0]?.value.split(" ")[0] || "SPEC"}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Selected Chapter Showcase Deck */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 border border-white/[0.08] bg-gradient-to-b from-zinc-950/90 to-[#0c0c12]/90 backdrop-blur-xl p-8 shadow-2xl">
+          {/* Left Column: Narrative, Quote, Metrics */}
+          <div className="lg:col-span-5 flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-xs font-mono text-zinc-400 pb-3 border-b border-white/[0.08]">
+                <span className="text-zinc-200 font-semibold">[ Chapter {CHAPTERS[activeChapterIndex].index} ]</span>
+                <span>{CHAPTERS[activeChapterIndex].subtitle}</span>
+              </div>
+
+              <h3 className="text-2xl sm:text-4xl font-light text-zinc-100 tracking-tight mt-6 leading-snug">
+                {CHAPTERS[activeChapterIndex].title}
+              </h3>
+
+              <p className="text-sm text-zinc-300 font-light leading-relaxed mt-4">
+                {CHAPTERS[activeChapterIndex].detail}
+              </p>
+
+              <blockquote className="mt-6 border-l-2 border-white/20 pl-4 text-xs font-serif italic text-zinc-400">
+                &ldquo;{CHAPTERS[activeChapterIndex].quote}&rdquo;
+              </blockquote>
+            </div>
+
+            {/* Metrics */}
+            <div className="grid grid-cols-3 gap-3 mt-8 pt-6 border-t border-white/[0.08]">
+              {CHAPTERS[activeChapterIndex].metrics.map((m, i) => (
+                <div key={i} className="font-mono">
+                  <div className="text-[10px] text-zinc-400 uppercase tracking-wider">{m.label}</div>
+                  <div className="text-xs text-zinc-200 font-semibold mt-1 truncate">{m.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right Column: High-End Code Inspector */}
+          <div className="lg:col-span-7 flex flex-col justify-between border border-white/[0.08] bg-[#07070a] shadow-inner">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/[0.08] bg-zinc-950 font-mono text-xs text-zinc-400">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 border border-zinc-700 bg-zinc-900 inline-block" />
+                <span className="text-zinc-200">{CHAPTERS[activeChapterIndex].fileName}</span>
+              </div>
+
+              <button
+                onClick={() => handleCopyCode(CHAPTERS[activeChapterIndex].code)}
+                className="flex items-center gap-1.5 text-[11px] hover:text-white transition-colors"
+                title="Copy code contract to clipboard"
+              >
+                {copiedCode ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copy</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <div className="p-5 font-mono text-xs text-zinc-300 overflow-x-auto no-scrollbar scrollbar-none leading-relaxed">
+              <pre className="text-zinc-300">
+                {CHAPTERS[activeChapterIndex].code}
+              </pre>
+            </div>
+
+            <div className="px-4 py-2 border-t border-white/[0.06] bg-zinc-950/50 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+              <span>PRISMA 7.3.0 · PG DRIVER ADAPTER · READ COMMITTED</span>
+              <span>100% PRODUCTION VERIFIED</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 5. INTERACTIVE DAG WORKFLOW ENGINE DEMO                                */}
+      {/* ===================================================================== */}
+      <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-12 text-xs font-mono tracking-wider text-zinc-500">
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-300 font-semibold">[ 004 ]</span>
+            <span>Interactive DAG workflow execution simulator</span>
+          </div>
+          <div className="hidden sm:block">
+            <span>Deterministic step resolution & compensation</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          {/* Node Selector */}
+          <div className="lg:col-span-5 space-y-3">
+            {DAG_NODES.map((node, index) => {
+              const isSelected = selectedDagIndex === index;
+              return (
+                <button
+                  key={node.id}
+                  onClick={() => {
+                    setSelectedDagIndex(index);
+                    playMechanicalClick(audioCtxRef.current);
+                  }}
+                  className={`w-full text-left p-4 border transition-all duration-300 ${
+                    isSelected
+                      ? "border-white bg-zinc-900/90 text-white shadow-lg"
+                      : "border-white/[0.08] bg-zinc-950/40 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[10px] font-mono mb-1">
+                    <span className={isSelected ? "text-white font-bold" : "text-zinc-500"}>
+                      [ {node.stepNumber} ]
+                    </span>
+                    <span className="text-zinc-400">{node.category}</span>
+                  </div>
+                  <div className="font-mono text-sm font-semibold tracking-tight">{node.label}</div>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Node Inspector */}
+          <div className="lg:col-span-7 border border-white/[0.08] bg-zinc-950/80 p-8 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 font-mono text-xs">
+              <span className="text-zinc-400">Node Invariant Contract</span>
+              <span className="text-zinc-200 font-semibold">{DAG_NODES[selectedDagIndex].label}</span>
+            </div>
+
+            <div className="mt-6 space-y-6 font-mono text-xs">
+              <div>
+                <div className="text-zinc-400 uppercase tracking-wider text-[10px]">Execution Contract</div>
+                <div className="mt-2 p-3 bg-black/60 border border-white/[0.06] text-zinc-200 break-all leading-relaxed">
+                  {DAG_NODES[selectedDagIndex].signature}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-zinc-400 uppercase tracking-wider text-[10px]">Saga Rollback Compensation</div>
+                <div className="mt-2 p-3 bg-black/60 border border-white/[0.06] text-zinc-300 break-all leading-relaxed">
+                  {DAG_NODES[selectedDagIndex].compensation}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ===================================================================== */}
+      {/* 6. COLOPHON & MINIMALIST FOOTER (BIZARRO FOUR-CORNER HUD)             */}
+      {/* ===================================================================== */}
+      <footer className="relative z-10 py-16 max-w-7xl mx-auto px-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 text-xs font-mono text-zinc-400">
+          <div>
+            <div className="font-bold text-zinc-100 uppercase tracking-widest mb-3">Forge System</div>
+            <p className="text-zinc-400 font-light leading-relaxed">
+              Quiet, deterministic orchestration for high-velocity engineering organizations.
+            </p>
+          </div>
+
+          <div>
+            <div className="font-bold text-zinc-200 uppercase tracking-widest mb-3">Guarantees</div>
+            <ul className="space-y-1.5 text-zinc-400">
+              <li>PostgreSQL row mutex</li>
+              <li>CDC transactional outbox</li>
+              <li>Reverse saga rollback</li>
+              <li>Scoped Pinecone tombstones</li>
+            </ul>
+          </div>
+
+          <div>
+            <div className="font-bold text-zinc-200 uppercase tracking-widest mb-3">Endpoints</div>
+            <ul className="space-y-1.5">
+              <li>
+                <Link href="/login" className="hover:text-white transition-colors">
+                  Sign in
+                </Link>
+              </li>
+              <li>
+                <Link href="/signup" className="hover:text-white transition-colors">
+                  Create account
+                </Link>
+              </li>
+              <li>
+                <Link href="/select-org" className="hover:text-white transition-colors">
+                  Select organization
+                </Link>
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <div className="font-bold text-zinc-200 uppercase tracking-widest mb-3">Colophon</div>
+            <p className="text-zinc-400 leading-relaxed">
+              Designed with late-night aesthetic restraint. Zero pills. Zero oscillating points. Real physics & spatial typography.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-12 pt-8 border-t border-white/[0.08] flex flex-col sm:flex-row items-center justify-between text-[11px] font-mono text-zinc-400">
+          <div>© {new Date().getFullYear()} Forge Technologies Inc. All rights reserved.</div>
+          <div className="mt-2 sm:mt-0">Production M1 Certified · Branch: feat/m1-identity-and-latenight-landing</div>
+        </div>
+      </footer>
+    </div>
   );
 }

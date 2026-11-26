@@ -67,7 +67,7 @@ export default async function TaskDetailPage({
                         select: {
                             id: true,
                             name: true,
-
+                            image: true,
                         },
                     },
                 },
@@ -153,6 +153,8 @@ export default async function TaskDetailPage({
                     orgSlug={orgId}
                     taskId={task.id}
                     initialComments={task.comments}
+                    currentUserId={access.userId}
+                    currentUserRole={access.membership.role}
                 />
             </div>
 

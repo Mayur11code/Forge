@@ -292,7 +292,7 @@ export function buildClarificationFailure({
 export const taskSummaryOutputSchema = z.object({
   id: z.string(),
   title: z.string(),
-  status: z.enum(["TODO", "IN_PROGRESS", "DONE"]),
+  status: z.enum(["TODO", "IN_PROGRESS", "BLOCKED", "DONE"]),
   priority: z.enum(["LOW", "MEDIUM", "HIGH"]),
   projectName: z.string(),
   assigneeId: z.string().nullable(),

@@ -112,6 +112,11 @@ export async function updateTaskInOrg(
 
   if (changes.status !== undefined) {
     data.status = changes.status;
+    if (changes.status === "DONE") {
+      data.completedAt = new Date();
+    } else {
+      data.completedAt = null;
+    }
   }
 
   if (changes.priority !== undefined) {
@@ -208,8 +213,16 @@ export async function updateTaskInOrg(
         subject: "Task Updated",
         body: `Task "${task.title}" has been modified.`,
       });
+
+      if (task.status === "DONE") {
+        await dispatchEvent("TASK_COMPLETED", {
+          taskId: task.id,
+          orgId: actor.orgId,
+          projectId: task.projectId,
+        });
+      }
     } catch (cdcErr) {
-      console.warn("[CDC] Best-effort TASK_UPDATED event dispatch failed:", cdcErr);
+      console.warn("[CDC] Best-effort TASK_UPDATED / TASK_COMPLETED event dispatch failed:", cdcErr);
     }
 
     return { success: true, task };

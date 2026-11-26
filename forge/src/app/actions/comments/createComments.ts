@@ -44,7 +44,7 @@ export async function createComment({
         select: {
           id: true,
           name: true,
-          
+          image: true,
         },
       },
     },
