@@ -5,9 +5,10 @@
 > assumed. Where the code and an earlier plan disagree, **the code wins** for
 > implemented status, and the disagreement is recorded explicitly.
 >
-> This is the entry point. Read this file, [`roadmap.md`](./roadmap.md),
-> [`decisions.md`](./decisions.md) and [`runtime.md`](./runtime.md) before
-> making changes.
+> This is the entry point. Read this file, [`decisions.md`](./decisions.md),
+> [`runtime.md`](./runtime.md) and [`security.md`](./security.md) before making changes.
+> Active product completion is tracked authoritatively in
+> [`PRODUCT_COMPLETION_TRACKER.md`](../../product/PRODUCT_COMPLETION_TRACKER.md).
 
 ## Status legend
 
@@ -16,14 +17,14 @@
 | `IMPLEMENTED` | Exists in code and is wired into the runtime. |
 | `PARTIAL` | Exists but with a known correctness or durability gap. |
 | `DECLARED ONLY` | The type, enum or column exists; nothing produces it. |
-| `PLANNED` | Intentionally not built yet. Tracked in [`roadmap.md`](./roadmap.md). |
+| `PLANNED` | Intentionally not built yet. Tracked in [`PRODUCT_COMPLETION_TRACKER.md`](../../product/PRODUCT_COMPLETION_TRACKER.md). |
 | `DEFERRED` | Deliberately pushed out of the current architecture. |
 | `REMOVED` | Existed and was deleted. |
 
 Two authorities, deliberately separated:
 
 - **The repository is the source of truth for what is implemented.**
-- **[`roadmap.md`](./roadmap.md) is the source of truth for what we intend to build.**
+- **[`PRODUCT_COMPLETION_TRACKER.md`](../../product/PRODUCT_COMPLETION_TRACKER.md) is the single authoritative source of truth for what remains to finish Forge Release 1.** (Historical planning is archived in [`../../archive/agent/roadmap.md`](../../archive/agent/roadmap.md)).
 
 ## The central principle
 
@@ -137,9 +138,10 @@ rather than papered over.
 | [`task-tools.md`](./task-tools.md) | The canonical task operations and the consolidation that produced them. |
 | [`tools.md`](./tools.md) | Tool anatomy, the single registry, and the current tool surface. |
 | [`prompt.md`](./prompt.md) | The system prompt, its sections, and prompt provenance. |
-| [`roadmap.md`](./roadmap.md) | Phases 0–6, the current-state matrix, and deferred items. |
 | [`decisions.md`](./decisions.md) | Architectural decisions and the reasoning behind them. |
-| [`assignments-35-36-audit.md`](./assignments-35-36-audit.md) | Closure report for Assignments 35/36: what is proven, what is only implemented, what is not done. |
+| [`PRODUCT_COMPLETION_TRACKER.md`](../../product/PRODUCT_COMPLETION_TRACKER.md) | Single authoritative Release 1 product completion tracker. |
+| [`archive/agent/roadmap.md`](../../archive/agent/roadmap.md) | Historical agent milestone tracker (archived). |
+| [`archive/agent/assignments-35-36-audit.md`](../../archive/agent/assignments-35-36-audit.md) | Closure report for Assignments 35/36 (archived). |
 | [`../../dev-log/2026-09-29.md`](../../dev-log/2026-09-29.md) | Chronological record of every pass. |
 
 ## Current vs target architecture

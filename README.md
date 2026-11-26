@@ -47,7 +47,8 @@ The thesis is narrow and deliberate:
 > bypasses the same authorization the UI uses.
 
 Everything below is described as it is implemented — including the parts that
-do not work yet. See [Status & Known Limitations](#status--known-limitations).
+do not work yet. See [Status & Known Limitations](#status--known-limitations)
+and the authoritative [Product Completion Tracker](forge/docs/product/PRODUCT_COMPLETION_TRACKER.md).
 
 ---
 
@@ -398,22 +399,19 @@ documentation.
 The architecture is documented separately from the code, and the docs are the
 source of truth for intent.
 
+**product completion** — [Release 1 Product Completion Tracker](forge/docs/product/PRODUCT_COMPLETION_TRACKER.md)
+(authoritative single source of truth for all Release 1 capabilities, milestones, acceptance criteria, and status)
+
+**workflows** — [architecture](forge/docs/architecture/workflows/README.md) ·
+[historical assignment 37 archive](forge/docs/archive/workflows/assignment-37/)
+
 **agent** — [entry point](forge/docs/architecture/agent/README.md) ·
 [security boundaries](forge/docs/architecture/agent/security.md) ·
 [runtime](forge/docs/architecture/agent/runtime.md) ·
 [tools](forge/docs/architecture/agent/tools.md) ·
 [task tools](forge/docs/architecture/agent/task-tools.md) ·
 [decisions](forge/docs/architecture/agent/decisions.md) ·
-[roadmap](forge/docs/architecture/agent/roadmap.md)
-
-**workflows** — [tracker](forge/docs/architecture/workflows/assignments-37-tracker.md) (Phases 37.0–37.15, 37.17 verified) ·
-[issue register](forge/docs/architecture/workflows/assignments-37-issue-register.md) ·
-[plan](forge/docs/architecture/workflows/assignments-37-plan.md) ·
-[phase 0 audit](forge/docs/architecture/workflows/assignments-37-phase-0-audit.md) ·
-[capability catalog](forge/docs/architecture/workflows/assignments-37-phase-37.1-capability-catalog.md) ·
-[proposal schema](forge/docs/architecture/workflows/assignments-37-phase-37.2-workflow-proposal-schema.md) ·
-[compiler](forge/docs/architecture/workflows/assignments-37-phase-37.4-proposal-compiler.md) ·
-[generator](forge/docs/architecture/workflows/assignments-37-phase-37.5-generate-workflow.md)
+[historical roadmap archive](forge/docs/archive/agent/roadmap.md)
 
 **dev log** — [F-04 transactional workflow outbox](forge/docs/dev-log/2026-11-10-f04-transactional-workflow-outbox.md) ·
 [F-03 immutable workflow definition contract](forge/docs/dev-log/2026-11-10-f03-immutable-workflow-definition-contract.md) ·
@@ -424,9 +422,12 @@ source of truth for intent.
 [full test matrix](forge/docs/dev-log/2026-10-21-phase-37.15-full-test-matrix.md) ·
 [CI & lint](forge/docs/dev-log/2026-10-01-lint-and-ci.md)
 
-**security & hardening** — [credential vault & BYOK](forge/docs/security/credential-vault.md) ·
+**security & hardening** — [security audit](forge/docs/architecture/security/2026-10-20-security-audit.md) ·
+[credential vault & BYOK](forge/docs/security/credential-vault.md) ·
 [distributed rate limiting & AI admission control](forge/docs/security/rate-limiting.md) ·
 [zero-downtime credential rotation](forge/docs/security/key-rotation.md)
+
+**archive** — [documentation archive](forge/docs/archive/README.md)
 
 **methodology** — [Universal Prompt Patterns Registry (UPPR) Rev 4.1](docs/pp.md)
 
