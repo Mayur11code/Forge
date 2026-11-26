@@ -5,23 +5,24 @@ Status:              ACTIVE AUTHORITATIVE TRACKER
 Target Outcome:      COMPLETE FORGE AS A DEMONSTRABLE PRODUCT FIRST (M0–M10)
 Post-Product Scope:  DevOps, Cloud Hosting & Platform Observability (M11)
 Canonical File:      forge/docs/product/PRODUCT_COMPLETION_TRACKER.md
-Last Rebuilt:        2026-11-26 (Source-grounded audit against working tree)
+Last Updated:        2026-11-26 (Final Dynamic Gate & Visual Dependency Correction Pass)
 ```
 
 > [!IMPORTANT]
-> **Single Source of Truth:**
-> This document supersedes all previous roadmaps, phase trackers, and issue registers. All historical trackers have been retired and archived under `forge/docs/archive/`.
-> The central directive: **Complete Forge as a real, usable product first.** Work is organized strictly from M0 to M10 to achieve product completeness, with DevOps, Cloud Deployment, and Platform Observability isolated in M11 as the only remaining work post-product completion.
+> **Single Source of Truth & Core Directive:**
+> This document is the **sole authoritative execution plan** for Forge. All historical trackers, phase logs, and issue registers have been retired and archived under `forge/docs/archive/`.
+> The central directive: **COMPLETE FORGE AS A PRODUCT FIRST (Milestones M0 through M10).**
+> The only major work remaining after product completion is DevOps, Cloud Deployment, and Platform Observability, strictly isolated in Milestone M11. No user-facing product features, UI components, or application routes may be deferred to M11.
 
 ---
 
-## 1. Product Vision & Explicit Scope Decisions
+## 1. Product Vision, Explicit Scope Decisions & Action Catalog
 
 ### 1.1 The Forge Product Promise
-Forge is a multi-tenant, event-driven project execution and DAG workflow orchestration platform. It is engineered to bridge collaborative project management (projects, tasks, comments, attachments) with durable automated workflow execution (event triggers, DAG pipeline execution, saga compensations) and human-in-the-loop AI assistance.
+Forge is a multi-tenant, event-driven project execution and DAG workflow orchestration platform. It is engineered to bridge collaborative project management (projects, tasks, comments, attachments) with durable automated workflow execution (domain change data capture events, DAG pipeline execution, saga compensations) and human-in-the-loop AI assistance.
 
 ### 1.2 The Release 1 Product Boundary
-A feature must not exist in a half-built or decorative state. Every advertised feature must either function end-to-end or be explicitly disabled/marked as Planned.
+A feature must not exist in a half-built or decorative state. Every advertised feature must either function end-to-end or be explicitly disabled/removed from user navigation.
 
 ```mermaid
 flowchart TD
@@ -30,15 +31,15 @@ flowchart TD
         ORG["Org Creation, Switching & RBAC (ADMIN/MANAGER/MEMBER)"]
         WORK["Projects, Tasks, Comments & UploadThing Attachments"]
         BUILDER["Visual DAG Builder, Validation & Immutable Publishing"]
-        TRIGGERS["Real Domain Event Triggers (Task & Project CDC)"]
-        ACTIONS["Action Catalogue: Tasks, Comments, Email, Reports, Logic"]
-        MONITOR["Run Center: Org History, Step Timeline, Inspector & Retries"]
+        TRIGGERS["Real Domain CDC Event Triggers (Task & Project Events)"]
+        ACTIONS["Action Catalogue: Tasks, Comments, Email, Reports, SSRF-Safe HTTP, Logic"]
+        MONITOR["Run Center: Org History, Step Timeline, Inspector & UI Retries"]
         AI["Unified Conversational Workspace & Proposal Approvals"]
-        DEMO["Seeded Demo Environment & 3-Minute Product Walkthrough"]
+        DEMO["Seeded Demo Environment (forge-demo) & 3-Min Walkthrough"]
     end
 
     subgraph OUT_OF_SCOPE["Explicitly Out of Scope / Deferred (Post-Release 1)"]
-        BILLING["Commercial Billing, Subscriptions & Invoicing (Disabled)"]
+        BILLING["Commercial Billing, Subscriptions & Invoicing (Decommissioned)"]
         OAUTH["Google OAuth (Deferred until Account schema migration)"]
         ENTERPRISE["Enterprise SAML/SSO & Custom Subdomain Routing"]
         COMPLEX_POLL["External Polling Connectors (GitHub/Jira sync)"]
@@ -51,147 +52,191 @@ flowchart TD
 1. **Account Creation Policy (Self-Service + Invites):**  
    - *Decision:* Forge v1 supports **Self-Service registration** (`/signup`) for new organization founders and **Token-based invitations** (`/invite/[token]`) for joining existing teams.  
    - *Rationale:* A product cannot be adopted if the first user requires developer database seeding to obtain an account. Team members, however, join via secure invitations without open public signup confusion.
-2. **Billing & Commercial Affordances (Completely Disabled for v1):**  
+2. **Billing & Commercial Affordances (Completely Decommissioned for v1):**  
    - *Decision:* **Billing is strictly excluded from Release 1.** The application operates in an unrestricted "Developer Edition / Team Preview" mode.  
-   - *Rationale:* Razorpay subscriptions (`create-order`, webhook) are incomplete, lacking subscription state machines, plan upgrades, cancellation, and invoice history. Leaving dead "Upgrade" buttons in `/Tasks` violates Gate G0 (Scope Truth). All billing buttons and checkout modals are removed from user navigation.
+   - *Rationale:* Razorpay subscriptions (`create-order`, webhook) are incomplete, lacking subscription state machines, plan upgrades, cancellation, and invoice history. Leaving dead "Upgrade" buttons in `/Tasks` violates Gate G0 (Scope Truth). All billing buttons and checkout modals are removed from user navigation (`FC-033`).
 3. **Authentication Provider Boundary (Credentials Active; Google OAuth Deferred):**  
    - *Decision:* Standard email/password authentication via NextAuth Credentials is the sole active auth provider for v1. Google OAuth is temporarily disabled on `/login`.  
    - *Rationale:* The Prisma schema lacks NextAuth's `Account` and `VerificationToken` models. Attempting Google sign-in fails at runtime. Rather than shipping a broken button, it is removed until the schema is extended.
 4. **Automation Trigger Set (Core Domain Events):**  
-   - *Decision:* Triggers are restricted to core domain events (`task.created`, `task.updated`, `task.completed`, `project.created`) and manual execution.  
+   - *Decision:* Triggers are restricted to core domain CDC events (`task.created`, `task.updated`, `task.completed`, `project.created`) and manual execution.  
    - *Rationale:* Complex cron schedules and external polling integrations add failure modes without demonstrating core value. Domain CDC events prove reactive workflow execution end-to-end.
-5. **Action Catalogue & Reversibility Taxonomy:**  
-   - *Decision:* A practical catalogue of 6 actions is established: `task.create`, `task.update`, `comment.create`, `email.send`, `report.generate`, and `logic.condition`. Arbitrary `http.request` is scoped as an optional enhancement.  
-   - *Rationale:* Actions are explicitly categorized by compensation semantics:
-     - **Reversible:** `task.create` (deleted on rollback), `task.update` (prior values restored), `report.generate` (file deleted from storage).
-     - **Irreversible / External:** `email.send` (receipt logged, manual follow-up), `comment.create` (comment tombstone appended).
-     - **Stateless:** `logic.condition` (no side effects).
+5. **Action Catalogue & Egress Security Boundary (Arbitrary HTTP Action in v1 with Strict SSRF Defense):**  
+   - *Decision:* Outbound HTTP requests (`http.request`, `FC-022`) **are INCLUDED in Release 1 scope**, governed by an uncompromising SSRF and egress security contract. It is NOT an arbitrary unconstrained fetcher; it is a hardened webhook dispatcher.  
+   - *Security Contract:*
+     - **Private & Reserved IP Blocking:** Outbound requests resolving to loopback (`127.0.0.0/8`, `::1`), link-local / cloud instance metadata (`169.254.0.0/16`, `fe80::/10`), RFC 1918 private subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), unique local IPv6 (`fc00::/7`), carrier-grade NAT (`100.64.0.0/10`), broadcast/multicast, and IPv4-mapped IPv6 representations (`::ffff:127.0.0.1`) are blocked immediately.
+     - **DNS Rebinding Mitigation:** The host resolves the hostname prior to connection, validates the resolved IP against the blocklist, and pins the socket directly to the validated IP address rather than re-resolving during connection.
+     - **Redirect Validation:** Max 3 redirects; redirects are intercepted, re-resolved, and destination IPs re-validated against the blocklist before following. Protocol downgrades (e.g., HTTPS to HTTP, or transitions to `file://`, `gopher://`, `ftp://`) are rejected.
+     - **Strict Timeouts & Resource Bounds:** Connect timeout &le; 5s, read timeout &le; 10s, max response body size capped at 1 MB (buffered stream aborts if exceeded).
+     - **Credential & Header Safety:** `Authorization`, `Cookie`, and `X-Api-Key` headers are redacted in execution logs and `ExecutionAuditLog`. Credentials are never forwarded across redirect domain boundaries.
+     - **Safe Error Masking:** Generic error masking (`Destination prohibited by security policy` or `Request timed out`) prevents internal DNS or topology disclosure.
+     - **Gate Alignment:** Release Gate G3 explicitly verifies that outbound requests cannot probe internal services or cloud metadata endpoints (`169.254.169.254`).
+
+### 1.4 Action Catalogue & Reversibility Taxonomy
+
+Every workflow action in Forge has explicit compensation and reversibility semantics.
+
+| Action Name | Key | Classification | Type | Reversibility Semantics & Rollback Handler |
+| :--- | :--- | :---: | :---: | :--- |
+| **Create Task** | `task.create` | Core Native | Mutation | **Reversible:** Deletes created task by ID on backward saga rollback. |
+| **Update Task** | `task.update` | Core Native | Mutation | **Reversible:** Restores previous task fields from execution snapshot captured prior to execution. |
+| **Generate Report** | `report.generate` | Core Native | Mutation | **Reversible:** Deletes generated report artifact from storage via UploadThing file deletion API. |
+| **Create Comment** | `comment.create` | Core Native | Append | **Compensatable:** Appends a compensation tombstone: `⚠️ [Compensated: Action rolled back by Saga Engine]`. |
+| **Archive Project** | `project.archive` | Core Native | Mutation | **Reversible:** Un-archives the project, restoring active status. |
+| **Send Email** | `email.send` | Integration | External | **Irreversible:** External email cannot be un-sent. Compensator logs an audit record and creates a follow-up review task. |
+| **HTTP Request** | `http.request` | Integration | External | **Irreversible:** External HTTP requests cause remote side effects. Compensator records execution audit receipt; no automated undo. |
+| **Evaluate Condition**| `logic.condition`| Control | Logic | **Stateless / Read-only:** Pure evaluation; produces no mutations, requiring zero compensation. |
 
 ---
 
 ## 2. Definition of Product Complete
 
-Forge Release 1 is **Product Complete** when and only when:
+Forge Release 1 is **Product Complete** when and only when all 10 criteria are met:
 
 1. **Independent First-Mile Onboarding:** A new user can register at `/signup`, create an organization at `/onboarding`, and immediately arrive on a populated dashboard without developer intervention or SQL seeding.
-2. **Team Collaboration:** Admins can invite team members via Resend emails; invitees accept and join with enforced roles (`ADMIN`, `MANAGER`, `MEMBER`).
+2. **Team Collaboration & RBAC:** Admins can invite team members via Resend emails; invitees accept and join with strictly enforced roles (`ADMIN`, `MANAGER`, `MEMBER`).
 3. **Usable DAG Workflow Builder:** Users visually author, connect, validate, and name workflows on the React Flow canvas with clear validation error highlights and explicit draft/publish state.
-4. **End-to-End Reactive Triggers:** Creating or updating a task automatically fires the domain event dispatcher, advancing any matching active workflow into execution.
-5. **Demonstrable Automation Scenarios:** The action catalogue supports three distinct real-world business flows:
-   - *Scenario A (Triage):* Task Created &rarr; AI Triage Classification &rarr; Priority Update &rarr; In-App Notification.
-   - *Scenario B (Digest):* Trigger &rarr; Gather Metrics &rarr; Generate Report File &rarr; Email Stakeholder via Resend.
-   - *Scenario C (Escalation & Rollback):* Critical Task &rarr; Attempt Action &rarr; Failure &rarr; Saga Backward Compensation reverses side effects cleanly.
+4. **End-to-End Reactive Triggers:** Creating or updating a task automatically fires the domain event dispatcher, advancing matching active workflows into execution.
+5. **Demonstrable Automation Scenarios:** The action catalogue supports three distinct, real-world business flows:
+   - *Scenario 1 (Auto-Triage):* Task Created &rarr; Priority Check &rarr; Assign Tech Lead & Status Update &rarr; Resend Email Notification.
+   - *Scenario 2 (Progress Digest):* Trigger &rarr; Compile Metrics &rarr; Generate Real Markdown Report &rarr; Post Comment &rarr; Email Stakeholder.
+   - *Scenario 3 (Escalation & Rollback):* Critical Task &rarr; Update Status &rarr; Downstream Failure &rarr; Saga Backward Compensation restores previous status and logs audit comment.
 6. **Full Operator Visibility:** An organization run history page (`/runs`) displays past executions; opening a run reveals a step-by-step timeline, inputs, outputs, timestamps, and failure explanations.
 7. **No-SQL Failure Recovery:** Operators can retry failed runs or cancel hung runs directly from the UI without database queries.
 8. **Trustworthy AI Interface:** The AI assistant provides a unified conversational interface for project context (RAG) and workflow generation, requiring explicit human review and approval for mutations.
 9. **Zero Dead Ends & Honest Scope:** Every link, button, and navigation item in the sidebar resolves to a functioning screen; mock buttons and broken upgrade CTAs are eliminated.
 10. **Clean Demo Baseline:** The application runs deterministically from a clean seed (`forge-demo`) for a 3-to-5 minute live demonstration.
 
+> [!NOTE]
+> **Product Complete vs Cloud Deployment:**
+> Product completeness is achieved on local/self-hosted infrastructure in Milestone M10. Cloud infrastructure provisioning, custom domain DNS, production CI/CD deployment pipelines, and centralized cloud telemetry are strictly isolated in Milestone M11.
+
 ---
 
 ## 3. Comprehensive Architecture & Implementation Audit
 
-### Path Trace 1: Domain Event Automation Pipeline
+### Path Trace 1: Domain Event Automation Pipeline (with Multi-Tenant Validation)
 ```text
-[User creates task]
+[User creates task in Org A]
        │
        ▼
 src/app/actions/Tasks/createTask.ts (Server Action)
-       │ validates with Zod & checks rate limits
+       │ 1. Authenticate caller session
+       │ 2. Verify caller belongs to Org A (getOrgAccess)
+       │ 3. Validate input payload via Zod
        ▼
-src/lib/tasks/create-task.ts (createTaskInOrg)
-       │ executes prisma.task.create + VectorOutboxEvent in single DB tx
+src/lib/workflow/event-bus/task-events.ts (Domain CDC Producer)
+       │ 4. Transactional commit: Task record + Outbox event payload
+       │ 5. Outbox event tagged with organizationId: "Org A"
        ▼
-dispatchEvent("TASK_CREATED", payload) (src/lib/events/event-bus.ts)
-       │ fans out to QStash queue
+src/lib/workflow/worker/event-dispatcher.ts (Queue Consumer)
+       │ 6. Read Outbox row atomically
+       │ 7. Query Published Workflows: WHERE organizationId == "Org A" AND trigger.type == "task.created"
+       │    (STRICT TENANT ISOLATION: Workflows belonging to Org B are never evaluated)
        ▼
-src/app/api/worker/route.ts (/api/worker)
-       │
-       ├──► embeddingWorkerHandler (Processes vector embeddings)
-       ├──► emailWorkerHandler (Sends developer notification)
-       └──► [DISCONNECTED] Zero handler exists to query Workflow table and call startWorkflow()!
+src/lib/workflow/engine/workflow-engine.ts (DAG Orchestrator)
+       │ 8. Generate execution context locked to Org A
+       │ 9. Acquire distributed Redis lock for execution step
+       │ 10. Execute actions (task.update, email.send, report.generate)
+       ▼
+src/features/organizations/components/workflow/WorkflowRunDashboard.tsx (UI)
+       │ 11. Run history updated in Org A's Run Center
 ```
-*Current Verdict:* **DISCONNECTED.** The event triggers shown on canvas nodes (`task.created`) never start workflows. Bridging this via an event dispatcher is the highest priority for M4.
-
----
 
 ### Path Trace 2: Action Registry to Canvas Pipeline
 ```text
-src/lib/workflow-types/action-registry.ts (Runtime Authority)
-       ├── "task.create" ──────► Registered, versioned (@1.0.0), executable
-       ├── "send-email"   ──────► Implemented in core/send-email.ts, UNREGISTERED
-       ├── "generate-report" ───► Implemented in core/generate-report.ts, UNREGISTERED
-       └── "condition"    ──────► Implemented in logic/conditions.ts, UNREGISTERED
-       │
+Action Definition (src/lib/workflow/actions/core/update-task.ts)
+       │ implements ActionHandler interface & compensation rollback
        ▼
-src/lib/workflow-types/action-capabilities.ts (Semantic Contract)
-       └── Only "task.create" has defined input/output schemas
-       │
+Registry Entry (src/lib/workflow-types/action-registry.ts)
+       │ registerAction('task.update', handler, schema, compensationHandler)
        ▼
-src/lib/workflow-types/registry.ts (UI Presentation)
-       └── Only "task.create" is built into AVAILABLE_ACTIONS
-       │
+Capability Catalog (src/lib/workflow-types/action-capabilities.ts)
+       │ defines input/output types, property schemas, and display labels
        ▼
-React Flow Canvas (Sidebar & Properties Panel)
-       └── Canvas only offers "Create Task"!
+Canvas Presentation (src/lib/workflow-types/registry.ts)
+       │ exposes widget in React Flow sidebar palette with configuration drawer
+       ▼
+Validation & Execution
+       │ canvas validates edge compatibility; engine invokes registered handler
 ```
-*Current Verdict:* **PARTIAL.** Three functional actions exist in the codebase but are unlinked from the registry, capability catalog, and canvas UI.
 
----
-
-### Path Trace 3: Workflow Run Monitoring Pipeline
+### Path Trace 3: Workflow Run Monitoring & Operator Recovery Pipeline
 ```text
-startWorkflow() (src/lib/workflow/execution/trigger.ts)
-       │ captures definitionSnapshot, SHA-256 hash & creates WorkflowRun
-       ▼
-advanceWorkflow() (src/lib/workflow/execution/evaluator.ts)
-       │ writes StepRun & WorkflowOutbox atomically (F-04)
-       ▼
-/api/worker (handleWorkflowEvent)
-       │ executes action wrapper, handles retries & saga rollback
-       ▼
-Pusher Realtime (private-workflow-${runId})
+[Step Failure Occurs in Workflow Run]
        │
-       ├──► /org/[orgId]/runs/[runId] (WorkflowRunDashboard renders node status)
-       │      └── Lacks: Input/Output inspector, error stack drawer, retry/cancel buttons
-       │
-       └──► /org/[orgId]/runs (Run History Index) ──► [MISSING 404]
+       ▼
+src/lib/workflow/engine/workflow-engine.ts
+       │ 1. Catch error, classify failure (TRANSCRIPTION, TIMEOUT, PERMANENT)
+       │ 2. Execute saga compensation handlers for prior completed steps (if unrecoverable)
+       │ 3. Mark StepRun as FAILED or COMPENSATED; mark WorkflowRun as REQUIRES_INTERVENTION
+       ▼
+src/app/org/[orgId]/runs/[runId]/page.tsx (Run Inspector Drawer)
+       │ 4. Operator views step timeline, formatted error stack, and JSON inputs/outputs
+       │ 5. Operator clicks "Retry Step" or "Cancel Run"
+       ▼
+src/app/actions/workflows/operatorActions.ts (Server Action)
+       │ 6. Verify caller belongs to run's organization (ADMIN/MANAGER role)
+       │ 7. Re-enqueue step execution or gracefully abort in-flight locks
+       ▼
+Execution Resumes Without Manual SQL or Developer DB Access
 ```
-*Current Verdict:* **PARTIAL.** Execution engine is robust, but operator visibility is crippled by a missing runs list route and lack of step inspection.
+
+### Subsystem Implementation & Health Matrix
+
+| Subsystem | Primary Source Route | Current Code Health | Identified Defect / Gap | Target Assignment |
+| :--- | :--- | :---: | :--- | :---: |
+| **Authentication** | `src/app/login/login-form.tsx` | PARTIAL | "Create account" button is inert; no `/signup` route exists. | `FC-002` |
+| **Onboarding** | `src/app/router/page.tsx` | DISCONNECTED | Redirects to `/onboarding` which returns 404. | `FC-003` |
+| **Org Switching** | `src/app/org/[orgId]/layout.tsx` | PARTIAL | Static text; lacks interactive organization switcher. | `FC-004` |
+| **Member RBAC** | `members-table.tsx` | DECORATIVE | Three-dot menu button is inert; no role change or remove action. | `FC-005` |
+| **Invitations** | `createInvitation.ts` | PARTIAL | Generates token but does not dispatch email via Resend. | `FC-006` |
+| **Projects** | `projectActions.ts` | WORKING | Project CRUD works; needs archive/delete modal polish. | `FC-008` |
+| **Tasks** | `src/app/actions/Tasks/` | WORKING | Full task CRUD works; status transitions need optimistic UI polish. | `FC-009` |
+| **Comments** | `createComments.ts` | PARTIAL | Task detail renders comment input but lacks live collaboration feed. | `FC-010` |
+| **Workflow Canvas**| `WorkflowCanvas.tsx` | WORKING | Drag-and-drop works; property drawer and naming require polish. | `FC-012`, `FC-013` |
+| **Workflow Publish**| `WorkflowEditorHeader.tsx` | PARTIAL | Save works; draft vs published state lifecycle not enforced. | `FC-015` |
+| **Domain Events** | `task-events.ts` | PARTIAL | CDC events defined but not dispatched to active workflows. | `FC-017`, `FC-018` |
+| **Action Registry** | `action-registry.ts` | PARTIAL | Email and Report exist in code but are unregistered in canvas catalog. | `FC-020` |
+| **HTTP Action** | `http-request.ts` | MISSING | Outbound HTTP webhook node not implemented; needs SSRF airgap. | `FC-022` |
+| **Run History** | `src/app/org/[orgId]/runs/` | MISSING | `/runs` route does not exist (404); omitted from sidebar. | `FC-024` |
+| **Run Inspector** | `WorkflowRunDashboard.tsx` | PARTIAL | Step timeline rendered, but clicking nodes does not open step drawer. | `FC-025` |
+| **Operator Controls**| `operatorActions.ts` | MISSING | No UI controls to retry failed runs or cancel stalled runs. | `FC-026` |
+| **AI Assistant** | `src/app/org/[orgId]/ai/` | PARTIAL | Chat functional; tool proposals lack inline human approval cards. | `FC-027`, `FC-028` |
+| **File Deletion** | `src/app/actions/files/` | PARTIAL | Files upload to UploadThing; deletion lacks vector tombstoning. | `FC-030` |
+| **Audit Logs** | `src/app/org/[orgId]/audit/` | MISALIGNED | Renders code pastebin prompt instead of `ExecutionAuditLog` table. | `FC-031` |
+| **Commercial UX** | `Tasks/page.tsx` | BROKEN | Renders dead `UpgradeButton` pointing to broken Razorpay flow. | `FC-033` |
+
+### 3-Tier Multi-Tenant Security Boundary Model
+
+A shared authorization helper (`getOrgAccess`) is NOT sufficient proof of security by itself. Every organization-scoped server action, API route, database query, vector search, and workflow execution path must be verified against three explicit threat scenarios:
+
+```mermaid
+flowchart LR
+    REQ["Incoming Invocation (Server Action / API / Dispatch)"] --> CHECK_AUTH{"1. Authenticated Session?"}
+    CHECK_AUTH -- No --> ERR_AUTH["401 Unauthorized / Redirect to Login"]
+    CHECK_AUTH -- Yes --> CHECK_TENANT{"2. Org Boundary Match? (session.orgId == target.orgId)"}
+    CHECK_TENANT -- No (Cross-Tenant) --> ERR_TENANT["403 Forbidden / 404 Not Found (Zero Leakage, Audit Alert)"]
+    CHECK_TENANT -- Yes --> CHECK_ROLE{"3. Sufficient Role? (ADMIN / MANAGER / MEMBER)"}
+    CHECK_ROLE -- No --> ERR_ROLE["403 Insufficient Permissions"]
+    CHECK_ROLE -- Yes --> EXEC["Execute Authorized Operation"]
+```
+
+1. **Unauthorized Scenario (Unauthenticated caller):** Request lacking active session cookie must return `401 Unauthorized` or redirect to `/login`.
+2. **Cross-Tenant Scenario (Authenticated User in Org A querying Org B resources):** Request with valid Org A session attempting to read or mutate Org B IDs (e.g. `projectId`, `taskId`, `workflowId`, `runId`, `fileId`) must fail with `403 Forbidden` or `404 Not Found`. Queries MUST scope by `WHERE organizationId == session.orgId`. No data, entity metadata, or error hints may leak across tenants.
+3. **Insufficient-Role Scenario (MEMBER attempting privileged mutations):** Authenticated user with `MEMBER` role attempting admin-only operations (e.g. changing member roles, deleting projects, publishing workflows, triggering manual redrives, modifying org settings) must fail with `403 Insufficient Permissions`.
 
 ---
-
-### Subsystem Implementation Matrix
-
-| Subsystem | Source Location | Implementation State | Production Completeness Finding |
-| :--- | :--- | :---: | :--- |
-| **User Registration** | `src/app/login/login-form.tsx` | DECORATIVE | "Create account" button is inert. No `/signup` route exists. |
-| **Onboarding Router** | `src/app/router/page.tsx` | BROKEN | Redirects 0-org users to `/onboarding` and multi-org to `/select-org`. Both routes are 404s. |
-| **Org Creation** | `src/features/organizations/` | MISSING | No runtime form or action creates an organization. Only seed script can do it. |
-| **Member Management** | `src/app/org/[orgId]/members/` | PARTIAL | Displays real memberships, but table action buttons ("Edit", "Remove") are inert stubs. |
-| **Tasks & Projects** | `src/lib/tasks/`, `src/app/actions/` | IMPLEMENTED | Canonical writes, Zod validation, rate limiting, and project ownership checks work. |
-| **Workflow Canvas** | `src/features/organizations/components/workflow/` | PARTIAL | React Flow canvas and cycle detection work. Hardcodes workflow name, uses `alert()` popups. |
-| **Workflow Engine** | `src/lib/workflow/execution/` | IMPLEMENTED | Transactional outbox (F-04), definition snapshots (F-03), saga rollbacks (F-01/F-02) fully tested. |
-| **Event Dispatcher** | `src/lib/events/router.ts` | DISCONNECTED | Events publish to QStash, but no worker consumer triggers `startWorkflow()`. |
-| **Action Catalogue** | `src/lib/workflow-types/action-registry.ts` | PARTIAL | Only `task.create` exposed. `send-email`, `generate-report`, `conditions` need registry wiring. |
-| **Run History Index** | `src/app/org/[orgId]/runs/` | MISSING | Route does not exist (404); Sidebar omits "Runs" link. |
-| **Run Detail Inspector**| `WorkflowRunDashboard.tsx` | PARTIAL | Displays graph status; lacks input/output inspection drawer and retry/cancel controls. |
-| **AI Assistant** | `src/app/org/[orgId]/ai/page.tsx` | PARTIAL | `ChatWorkspace` (RAG) and `WorkflowProposalPanel` stacked separately; lacks unified conversation. |
-| **Execution Audit Logs**| `src/app/org/[orgId]/audit/page.tsx` | MISALIGNED | Renders code pastebin prompt instead of displaying `ExecutionAuditLog` table. |
-| **Billing / Upgrades** | `src/app/org/[orgId]/Tasks/page.tsx` | BROKEN | Renders `UpgradeButton` pointing to incomplete Razorpay flow. Must be decommissioned. |
-
----
-
 ## 4. Addendum Reconciliation Matrix
 
-Mapping all **19 Domains**, **10 Customer Journeys**, and **8 Release Gates** from `forge_product_completeness_addendum.md`:
+Mapping all **19 Domains**, **10 Customer Journeys**, and **8 Release Acceptance Gates** from `forge_product_completeness_addendum.md`:
 
 ### 4.1 Domains Coverage
 
-| Addendum Domain | Title | Type | Assignment Mapping / Scope Resolution |
+| Addendum Domain | Title | Type | Assignment Mapping & Scope Resolution |
 | :---: | :--- | :---: | :--- |
-| **01** | Product contract & scope | CORE | Handled in **M0** (`FC-001`) and **M10** (`FC-038`). Explicit scope truth enforced. |
-| **02** | Auth & user account lifecycle | CORE | Covered in **M1** (`FC-002`, `FC-007`). Credentials auth, signup, session revocation. |
+| **01** | Product contract & scope | CORE | Handled in **M0** (`FC-001`) and **M10** (`FC-038`). Honest scope truth enforced. |
+| **02** | Auth & user account lifecycle | CORE | Covered in **M1** (`FC-002`, `FC-007`). Credentials auth, self-service registration. |
 | **03** | Organizations & membership | CORE | Covered in **M1** (`FC-003`, `FC-004`, `FC-005`, `FC-006`). Org onboarding, switching, roles. |
 | **04** | Projects, tasks & collaboration | CORE | Covered in **M2** (`FC-008`, `FC-009`, `FC-010`, `FC-011`). CRUD, assignment, comments. |
 | **05** | Workflow design & publishing | CORE | Covered in **M3** (`FC-012` to `FC-016`). Canvas UX, validation, draft/publish lifecycle. |
@@ -199,45 +244,138 @@ Mapping all **19 Domains**, **10 Customer Journeys**, and **8 Release Gates** fr
 | **07** | Workflow run monitoring | CORE | Covered in **M6** (`FC-024`, `FC-025`, `FC-026`). Run list, step inspection, retry/cancel. |
 | **08** | AI assistant & approval UX | CONDITIONAL | Covered in **M7** (`FC-027`, `FC-028`, `FC-029`). Unified chat, proposals, approvals. |
 | **09** | Files & semantic search | CONDITIONAL | Covered in **M8** (`FC-030`). UploadThing attachment lifecycle, vector cleanup. |
-| **10** | Notifications & communications | CORE | Covered in **M1** (`FC-006`) and **M8** (`FC-032`). Resend email delivery, Pusher feeds. |
+| **10** | Notifications & communications | CORE | Covered in **M1** (`FC-006`) and **M8** (`FC-032`). Resend email delivery, in-app notifications. |
 | **11** | Billing & subscription lifecycle| CONDITIONAL | **RESOLVED N/A FOR V1** (`FC-033`). Decommissioned in M9; free developer preview mode. |
 | **12** | Navigation & interface completion| CORE | Covered in **M9** (`FC-034`, `FC-035`). Dead route removal, casing fix, empty states. |
-| **13** | Security & tenant boundaries | CORE | Built into acceptance criteria of all assignments (`getOrgAccess`, SSRF defense). |
-| **14** | Distributed systems correctness | CORE | Engine foundation closed (F-01 to F-04); verified in **M4** & **M6**. |
-| **15** | QA & regression suite | CORE | Handled in **M10** (`FC-037`). E2E journey tests, 1,978-test regression gate. |
-| **16** | Performance & capacity | CORE | Verified in **M10** (`FC-037`) and monitored in **M11** (`FC-041`). |
+| **13** | Security & tenant boundaries | CORE | Built into all assignments: 3-Tier Security Matrix + SSRF defense on `http.request`. |
+| **14** | Distributed systems correctness | CORE | Engine foundation closed (F-01 to F-04); verified in **M4**, **M5**, and **M6**. |
+| **15** | QA & regression suite | CORE | Handled dynamically in **M10** (`FC-037`). Dynamic Gate G4 across all test layers. |
+| **16** | Performance & capacity | CORE | Verified in **M10** (`FC-037`) on local/self-hosted demo; monitored in **M11** (`FC-041`). |
 | **17** | Operations & observability | CORE | Separated cleanly into **M11** (`FC-039`, `FC-040`, `FC-041`, `FC-042`). |
-| **18** | Docs, trust & support | CORE | Covered in **M10** (`FC-038`). Architecture docs, user guide, known issues. |
+| **18** | Docs, trust & support | CORE | Covered in **M10** (`FC-038`). Architecture docs, user guide, truthful catalog. |
 | **19** | Demo & portfolio evidence | CORE | Covered in **M10** (`FC-036`, `FC-038`). Clean seed, 3-minute video demo script. |
 
 ### 4.2 End-to-End Customer & Operator Journeys
 
-| Journey | Description | Assigned Milestone | Verification Path |
+| Journey | Description | Assigned Milestone | Verification Path & Success Criteria |
 | :---: | :--- | :---: | :--- |
-| **J1** | **New Customer Onboarding** | **M1** (`FC-002`, `FC-003`) | Signup at `/signup` &rarr; name org at `/onboarding` &rarr; land on dashboard as ADMIN. |
-| **J2** | **Team Collaboration** | **M1** (`FC-005`, `FC-006`) | Admin invites colleague &rarr; Resend email delivered &rarr; invitee accepts token &rarr; joins team. |
-| **J3** | **Core Work Management** | **M2** (`FC-008`, `FC-009`) | Create project &rarr; create task &rarr; update status &rarr; add comment &rarr; upload file. |
-| **J4** | **First Automation Execution** | **M3**, **M4**, **M5** | Author workflow &rarr; publish &rarr; create task &rarr; workflow fires automatically &rarr; action executes. |
-| **J5** | **Failure & Operator Recovery** | **M5**, **M6** | Action fails &rarr; saga backward compensation triggers &rarr; operator inspects run &rarr; clicks Retry. |
-| **J6** | **AI Workflow & Tool Approval** | **M7** (`FC-027`, `FC-028`) | Prompt AI to build workflow &rarr; review DAG preview &rarr; approve proposal &rarr; materialized on canvas. |
-| **J7** | **Search Freshness & Deletion** | **M8** (`FC-030`) | Upload file &rarr; verify vector indexing &rarr; delete file &rarr; verify vector tombstoned from RAG. |
-| **J8** | **Billing Lifecycle** | *N/A (Excluded)* | Explicitly disabled. User encounters no broken purchase flows. |
-| **J9** | **Platform Incident Recovery** | **M11** (`FC-042`) | Sweeper drains stalled outbox; Redis locks prevent split-brain execution during outage. |
-| **J10**| **Clean Release Deployment** | **M10**, **M11** | Fresh clone &rarr; `prisma migrate` &rarr; seed `forge-demo` &rarr; full smoke suite passes. |
+| **J1** | **New Customer Onboarding (4 Paths)** | **M1** (`FC-002`, `FC-003`) | Visitor &rarr; `/signup` &rarr; Authenticated Session &rarr; `/onboarding` &rarr; Org Created &rarr; Dashboard. Covers Paths A, B, C, D. |
+| **J2** | **Team Collaboration & RBAC** | **M1** (`FC-005`, `FC-006`) | Admin invites colleague &rarr; Resend email received &rarr; Invitee accepts token &rarr; Joins with designated role (`MEMBER`/`MANAGER`). |
+| **J3** | **Core Work Management** | **M2** (`FC-008` to `FC-011`) | Create project &rarr; create task &rarr; transition status &rarr; add comment &rarr; upload attachment &rarr; search tasks. |
+| **J4** | **Visual Workflow Authoring & Publishing** | **M3** (`FC-012` to `FC-016`) | Author DAG on canvas &rarr; configure properties &rarr; validate error-free &rarr; publish immutable version &rarr; run manual preview test. |
+| **J5** | **Reactive Event Automation & Actions** | **M4**, **M5** (`FC-017` to `FC-023`) | Trigger domain CDC event &rarr; dispatcher matches active workflow &rarr; actions execute &rarr; visible side effects in UI. |
+| **J6** | **Run Center Diagnostics & Operator Controls**| **M6** (`FC-024` to `FC-026`) | Operator opens `/runs` &rarr; selects execution &rarr; inspects step timeline & inputs/outputs &rarr; retries failed step or cancels run. |
+| **J7** | **AI Assistant Workspace & Tool Proposals** | **M7** (`FC-027` to `FC-029`) | Conversational chat &rarr; RAG retrieval &rarr; assistant proposes workflow modification &rarr; user reviews diff &rarr; approves into canvas. |
+| **J8** | **Asset Lifecycle & Vector Tombstoning** | **M8** (`FC-030` to `FC-032`) | Upload file attachment &rarr; verify Pinecone vector indexing &rarr; delete file &rarr; verify vector tombstoned from RAG context. *(Note: Commercial billing resolved in free developer preview via FC-033).* |
+| **J9A**| **Product Engine Recovery & Idempotence** | **M6** (`FC-026`), **M10** (`FC-037`)| Engine crash/worker restart during active execution &rarr; outbox redrives pending events &rarr; Redis locks prevent split-brain &rarr; resumes without data duplication. |
+| **J9B**| **Platform Infrastructure Incident Recovery** | **M11** (`FC-041`, `FC-042`) | Cloud infrastructure outage &rarr; PagerDuty alert &rarr; engineer executes DR runbook &rarr; DB replica failover & QStash DLQ redrive verified. |
+| **J10A**| **Product Demonstration Walkthrough** | **M10** (`FC-036`, `FC-037`) | Single-command setup &rarr; `prisma db seed:demo` &rarr; `forge-demo` boots &rarr; 3-5 minute scripted walkthrough proves complete product. |
+| **J10B**| **Production Cloud Deployment & Verification**| **M11** (`FC-039`, `FC-040`) | Cloud infrastructure provision &rarr; CI/CD pipeline deploy &rarr; DNS/SSL active &rarr; managed DB migrations & smoke tests clean. |
 
-### 4.3 Release Acceptance Gates (G0 — G7)
+### 4.3 Multi-Path Onboarding Journey (J1) State Machine
 
-- [ ] **G0 (Scope Truth):** Public feature inventory matches code exactly. Broken Razorpay buttons removed. Dead routes (`/onboarding`, `/select-org`, `/runs`) eliminated.
-- [ ] **G1 (Core Journeys):** Journeys J1 through J7 pass without developer intervention or SQL patching.
-- [ ] **G2 (Data Integrity):** Outbox commits atomically with step runs; saga compensation receipts persist; zero duplicate side-effects.
-- [ ] **G3 (Security & Isolation):** `getOrgAccess` protects all mutations; Pusher channels authenticated; SSRF blocked on HTTP actions.
-- [ ] **G4 (Build & Tests):** Production Next.js build clean; `tsc --noEmit` clean; 1,978 tests passing.
-- [ ] **G5 (Reliability & Ops):** Sweeper reclaims stalled leases; operator interventions resolve without direct DB writes.
-- [ ] **G6 (Truthful Metrics):** Benchmark workloads and raw performance figures published honestly.
-- [ ] **G7 (Release Sign-off):** Zero open P0 defects; documentation complete; demo environment validated.
+Journey J1 is a unified customer journey covering four distinct authentication and organization states:
+
+```mermaid
+flowchart TD
+    START(["User Enters Application"]) --> CHECK_AUTH{"Has Authenticated Session?"}
+    
+    CHECK_AUTH -- No --> HAS_INVITE{"Has Invite Token in URL?"}
+    HAS_INVITE -- Yes --> SIGNUP_INVITE["/signup?inviteToken=... (Sign Up / In with Invite)"]
+    HAS_INVITE -- No --> SIGNUP_DIRECT["/signup (Direct Self-Service Registration)"]
+    
+    SIGNUP_DIRECT --> COMMIT_USER["Commit User (Bcrypt Password) -> Establish Session"]
+    SIGNUP_INVITE --> COMMIT_USER
+    
+    CHECK_AUTH -- Yes --> ROUTER["/router (Session Dispatcher)"]
+    COMMIT_USER --> ROUTER
+    
+    ROUTER --> ORG_COUNT{"Check Organization Memberships"}
+    
+    ORG_COUNT -- "0 Memberships (Path A: New Founder)" --> ONBOARDING["/onboarding (Create Organization)"]
+    ONBOARDING --> COMMIT_ORG["Commit Org + Member(ADMIN) in Atomic Transaction"]
+    COMMIT_ORG --> DASHBOARD["/org/[slug]/dashboard (Populated Dashboard)"]
+    
+    ORG_COUNT -- "0 Memberships + Valid Token (Path B: Invitee)" --> ACCEPT_INVITE["/invite/[token] (Accept Invitation)"]
+    ACCEPT_INVITE --> JOIN_ORG["Add Membership(role) -> Skip Org Creation"]
+    JOIN_ORG --> DASHBOARD
+    
+    ORG_COUNT -- "0 Memberships + No Invite (Path C: Unassigned User)" --> ONBOARDING
+    
+    ORG_COUNT -- ">= 1 Membership (Path D: Returning Multi-Org)" --> MULTI_ORG{"Has Last Org Cookie?"}
+    MULTI_ORG -- Yes --> DASHBOARD
+    MULTI_ORG -- No (Ambiguous) --> SELECT_ORG["/select-org (Organization Selector)"]
+    SELECT_ORG --> DASHBOARD
+```
+
+- **Path A (New Founder / Self-Service):** Visitor lands on `/signup` &rarr; fills Name, Email, Password &rarr; User record committed with hashed password &rarr; router detects 0 memberships &rarr; redirects to `/onboarding` &rarr; user inputs Organization Name (e.g., "Acme Corp") &rarr; atomic transaction creates `Organization` + `Membership(role: ADMIN)` &rarr; user lands on `/org/acme-corp/dashboard` with starter tasks.
+- **Path B (Invited Team Member):** User receives Resend email link `/invite/[token]` &rarr; if new user, completes `/signup` with pre-filled token; if existing user, logs in &rarr; router detects invitation token &rarr; lands on invite acceptance view &rarr; joins existing organization with designated role (`MEMBER` or `MANAGER`) &rarr; skips organization creation &rarr; lands directly on `/org/[slug]/dashboard`.
+- **Path C (Unassigned Existing User):** Authenticated user with 0 memberships (e.g. removed from prior team) &rarr; router redirects to `/onboarding` &rarr; user creates a new organization or enters a team invitation code.
+- **Path D (Returning Multi-Org User):** Returning user signs in &rarr; router detects &ge; 1 memberships &rarr; restores active organization from cookie or redirects to `/select-org` &rarr; lands on dashboard. **User NEVER sees `/onboarding`.**
+
+### 4.4 The 3 Real-World Automation Scenarios
+
+Forge proves reactive workflow execution across three concrete, end-to-end business scenarios:
+
+```mermaid
+flowchart TD
+    subgraph S1["Scenario 1: Automatic Task Triage & Assignment"]
+        E1["task.created (Priority: URGENT)"] --> F1{"Filter: Urgent?"}
+        F1 -- Yes --> A1["Action: task.update (Assign Tech Lead & Status: IN_PROGRESS)"]
+        A1 --> A2["Action: email.send (Dispatch Resend Alert to Lead)"]
+    end
+
+    subgraph S2["Scenario 2: Automated Progress Digest & Report Generation"]
+        E2["Manual / Event Trigger: project.digest_requested"] --> A3["Action: report.generate (Compile Real Markdown Table & Upload)"]
+        A3 --> A4["Action: comment.create (Post Digest Table to Discussion)"]
+        A4 --> A5["Action: email.send (Dispatch Summary to Project Lead)"]
+    end
+
+    subgraph S3["Scenario 3: Task Escalation with Compensating Action (Saga Rollback)"]
+        E3["task.updated (Status: BLOCKED)"] --> A6["Step 1: task.update (Set Status: ESCALATED)"]
+        A6 --> A7["Step 2: http.request (Send Webhook to External Incident API)"]
+        A7 -- Simulated 500 Failure --> ROLLBACK["Saga Engine Triggers Backward Compensation"]
+        ROLLBACK --> C1["Compensate Step 1: task.update (Revert Status to BLOCKED)"]
+        C1 --> C2["Compensate Audit: comment.create (Post Compensation Note on Task)"]
+    end
+```
+
+#### Detailed Scenario Specifications
+
+| Parameter | Scenario 1: Automatic Task Triage | Scenario 2: Automated Progress Digest | Scenario 3: Task Escalation & Saga Rollback |
+| :--- | :--- | :--- | :--- |
+| **User Problem** | Urgent bug reports sit unassigned in backlog, causing SLA breaches. | Leads waste hours compiling task metrics into status reports. | Failed external escalations leave internal tasks in corrupted/misaligned states. |
+| **Trigger & Payload** | Domain CDC `task.created` with `{ taskId: "...", priority: "URGENT", title: "DB connection leak", projectId: "..." }` | Manual UI trigger or domain event `project.digest_requested` with `{ projectId: "...", requestedBy: "..." }` | Domain CDC `task.updated` with `{ taskId: "...", status: "BLOCKED", priority: "CRITICAL" }` |
+| **Workflow Definition** | `task.created` &rarr; Condition (`priority == "URGENT"`) &rarr; `task.update` &rarr; `email.send` | `project.digest_requested` &rarr; `report.generate` &rarr; `comment.create` &rarr; `email.send` | `task.updated` &rarr; `task.update` (`status: ESCALATED`) &rarr; `http.request` (external API) &rarr; Saga Rollback |
+| **Registered Actions** | `task.update`, `email.send` | `report.generate`, `comment.create`, `email.send` | `task.update` (forward), `http.request` (fails), `task.update` (compensation), `comment.create` (audit) |
+| **Report Output Details**| N/A | Generates real, structured Markdown document with summary statistics table, task breakdown, and UploadThing URL. **Never an empty mock.** | N/A |
+| **Execution Side Effects**| Task row in Postgres updated (`assigneeId`, `status`); Email sent via Resend; Run recorded. | Markdown report stored in UploadThing; Comment row written to Postgres; Stakeholder emailed. | Task status restored to `BLOCKED`; compensation receipt in `ExecutionAuditLog`; tombstone comment posted. |
+| **User-Visible UI Result**| Task board shows task in "In Progress" with Lead avatar; recipient receives email; Run Center shows green run. | Project comments display formatted Markdown digest with download link; stakeholder receives email. | Task board shows task remains in "Blocked"; comment explains failed escalation; Run Center shows `COMPENSATED`. |
+| **Verification Method** | Test emits urgent task event, asserts DB mutation, asserts Resend mock payload, verifies Run UI. | Test triggers digest, asserts valid Markdown artifact content, asserts Comment record in DB and UI. | Test simulates 500 error on HTTP step, asserts task status reverted to `BLOCKED`, asserts Run status `COMPENSATED`. |
+
+### 4.5 Release Acceptance Gates (G0 — G7)
+
+- [ ] **G0 (Scope Truth & Honest UI Gate):** Public feature catalog and sidebar navigation match code reality 100%. Broken Razorpay buttons removed (`FC-033`). Dead routes (`/onboarding`, `/select-org`, `/runs`) eliminated. Zero phantom features or non-functional CTAs.
+- [ ] **G1 (First-Mile & Core Journeys Gate):** Customer Journeys J1 (all 4 onboarding paths), J2 (team invites), J3 (projects/tasks), J4 (canvas publishing), J5 (reactive triggers), J6 (run center), and J7 (AI assistant) execute end-to-end without developer assistance or manual SQL.
+- [ ] **G2 (Data Integrity & Outbox Atomicity Gate):** Transactional outbox commits atomically with step runs; distributed Redis locks enforce serial advancement; saga backward compensation executes deterministically upon step failure with zero orphaned side effects.
+- [ ] **G3 (Security, 3-Tier Multi-Tenant Boundary & SSRF Gate):** Every server action and API route passes the 3-Tier Security Matrix:
+  1. *Unauthorized:* 401 Unauthorized / redirect.
+  2. *Cross-Tenant:* User in Org A attempting to access Org B resources is rejected with 403 Forbidden / 404 Not Found (zero data leakage).
+  3. *Insufficient-Role:* `MEMBER` attempting admin mutations rejected with 403.
+  *SSRF Defense:* Outbound HTTP actions blocked from accessing loopback (`127.0.0.1`), link-local metadata (`169.254.169.254`), and private subnets (RFC 1918).
+- [ ] **G4 (Dynamic Multi-Layer Quality & Verification Gate):** Successful execution of the full dynamic verification suite on current git HEAD. *(Note: Fixed test-count metrics like the historical 1,978 figure are eliminated in favor of real dynamic commands).*
+  - `npx vitest run` / `npm test`: 100% passing unit & integration tests.
+  - `npx tsc --noEmit`: 0 TypeScript compiler errors.
+  - `npm run lint`: Clean lint execution.
+  - `npx prisma migrate status`: Database schema strictly aligned with migration history.
+  - `npm run build`: Production Next.js build clean with 0 build errors.
+  - Playwright E2E: Automated browser journey verification passing.
+  - *Dynamic Artifact Requirement:* Verification report recorded with tested Commit SHA, execution timestamp (UTC), runtime environment (Node, OS, PostgreSQL), exact command lines, exit codes, and dynamic test totals.
+- [ ] **G5 (Engine Reliability & UI Intervention Gate):** Workflows survive simulated worker restart; stalled leases are reclaimed by engine sweeper; operators resolve failures directly via UI ("Retry Step" / "Cancel Run") without database access.
+- [ ] **G6 (Truthful Performance & Benchmark Gate):** Workflow dispatch p95 latency, canvas rendering responsiveness, and step execution metrics measured on local/self-hosted deployment and published honestly.
+- [ ] **G7 (Product Release Sign-off Gate):** Zero open P0 defects; user documentation and quickstart verified; seeded demo environment (`forge-demo`) launches cleanly; **ZERO product code remaining to write before M11 entry.**
 
 ---
-
 ## 5. Milestone Execution Roadmap
 
 ```mermaid
@@ -262,10 +400,11 @@ flowchart TD
     M6 --> M9
     M8 --> M9
 
-    M9 --> M10{"M10: End-to-End Product Acceptance Gate"}:::gate
+    M9 --> M10_EXIT{"M10: End-to-End Product Acceptance Gate\n(Product 100% Complete & Verified)"}:::gate
     
-    subgraph POST_PRODUCT["POST-PRODUCT COMPLETION PHASE"]
-        M10 --> M11["M11: DevOps, Cloud Hosting & Platform Observability"]:::infra
+    subgraph POST_PRODUCT["POST-PRODUCT COMPLETION PHASE (DevOps, Cloud & Ops Only)"]
+        M10_EXIT --> M11_ENTRY{"M11 Entry Gate\n(Zero Product Code Remaining)"}:::infra
+        M11_ENTRY --> M11["M11: DevOps, Cloud Hosting & Platform Observability"]:::infra
     end
 ```
 
@@ -277,7 +416,7 @@ flowchart TD
 
 #### FC-001 | M0 | Scope Contract, Tracker Authority & Document Consolidation
 - **Milestone:** M0
-- **Capability:** Single authoritative documentation and backlog source.
+- **Capability:** Single authoritative completion tracker and historical document retirement.
 - **Current Evidence:** Redundant overlapping trackers in `docs/architecture/workflows/` (4,375-line tracker) and `docs/architecture/agent/roadmap.md`.
 - **Missing Behavior:** Single actionable backlog reflecting true source state.
 - **Required Outcome:** Consolidate active planning into `forge/docs/product/PRODUCT_COMPLETION_TRACKER.md`. Archive historical documents into `forge/docs/archive/`. Update all root README links.
@@ -293,32 +432,36 @@ flowchart TD
 
 #### FC-002 | M1 | Self-Service User Registration (`/signup`)
 - **Milestone:** M1
-- **Capability:** Self-service account creation for new users.
+- **Capability:** Self-service account creation for new users, unlocking Journey J1.
 - **Current Evidence:** `src/app/login/login-form.tsx:106` renders an inert `<button>Create account</button>`. No `/signup` route exists.
-- **Missing Behavior:** Public signup page with form validation, email uniqueness check, and secure password hashing.
+- **Missing Behavior:** Public signup page with form validation, email uniqueness check, secure bcrypt password hashing, and seamless onboarding dispatch.
 - **Required Outcome:** Create `src/app/signup/page.tsx` and server action `registerUserAction`. Wire "Create account" button on `/login` to `/signup`.
 - **Dependencies:** FC-001
 - **Files Involved:** `src/app/signup/page.tsx`, `src/app/login/login-form.tsx`, `src/app/actions/user/registerUser.ts`
 - **Acceptance Criteria:**
   - Submitting `/signup` creates a new `User` record with bcrypt-hashed password.
-  - Duplicate email displays clear error alert.
-  - Successful registration signs in the user or redirects to login with prefilled email.
-- **Tests & Verification:** Integration test submitting registration action with valid/invalid/duplicate emails; browser test navigating `/login` &rarr; `/signup` &rarr; register &rarr; sign in.
+  - Duplicate email displays clear, friendly error alert.
+  - Successful registration establishes authenticated session and automatically dispatches caller:
+    - Path A (No invite): Dispatched to `/onboarding`.
+    - Path B (With `inviteToken` param): Dispatched to `/invite/[token]` to accept invitation.
+  - Password inputs validated for minimum length (&ge; 8 chars).
+- **Tests & Verification:** Integration test submitting registration action with valid/invalid/duplicate emails; browser test navigating `/login` &rarr; `/signup` &rarr; register &rarr; verify automatic redirect to `/onboarding`.
 - **Status:** `NOT_STARTED`
 
 #### FC-003 | M1 | First-Time Organization Onboarding Flow (`/onboarding`)
 - **Milestone:** M1
 - **Capability:** Initial organization creation for users with 0 memberships.
 - **Current Evidence:** `src/app/router/page.tsx:33` redirects users with 0 memberships to `/onboarding`, which produces a 404 error. `db.organization.create` is never called in runtime application code.
-- **Missing Behavior:** Onboarding screen allowing user to input organization name, generate unique slug, and commit initial `Organization` + `Membership(ADMIN)`.
+- **Missing Behavior:** Onboarding screen allowing user to input organization name, generate unique URL-safe slug, and commit initial `Organization` + `Membership(ADMIN)`.
 - **Required Outcome:** Create `src/app/onboarding/page.tsx` and server action `createOrganizationAction`.
 - **Dependencies:** FC-002
 - **Files Involved:** `src/app/onboarding/page.tsx`, `src/app/router/page.tsx`, `src/app/actions/settings/createOrg.ts`
 - **Acceptance Criteria:**
   - Fresh user landing on `/router` is redirected to `/onboarding`.
-  - Creating organization generates URL-safe unique slug (e.g. `acme-corp`).
-  - Creates `Organization` and assigns caller as `ADMIN` in a single transaction.
-  - Redirects to `/org/${slug}/dashboard`.
+  - Creating organization generates unique URL-safe slug (e.g. `acme-corp`).
+  - Commits `Organization` and assigns caller as `ADMIN` in a single atomic database transaction.
+  - Redirects caller directly to `/org/${slug}/dashboard` with initial starter task.
+  - Verification of 3-Tier Security: Unauthenticated access to `/onboarding` redirects to `/login`.
 - **Tests & Verification:** Integration test verifying atomic transaction; E2E test verifying fresh user completes onboarding without manual DB setup.
 - **Status:** `NOT_STARTED`
 
@@ -333,7 +476,7 @@ flowchart TD
 - **Acceptance Criteria:**
   - `/select-org` lists all organizations the user belongs to with their roles.
   - Header dropdown displays current organization and allows instant switching to other organizations.
-  - Switching organizations updates trusted tenant context without session reset.
+  - **Tenant Boundary Security:** Switching organizations verifies user membership in target organization before updating session context; attempting to switch to an un-joined organization is rejected with 403.
 - **Tests & Verification:** Create test user in two organizations; verify navigation via selector and header switcher updates URL and visible data.
 - **Status:** `NOT_STARTED`
 
@@ -348,8 +491,9 @@ flowchart TD
 - **Acceptance Criteria:**
   - Admin can update member role between `ADMIN`, `MANAGER`, `MEMBER`.
   - Admin cannot remove themselves if they are the sole administrator.
-  - Removed user immediately loses access to organization routes (`getOrgAccess` returns null).
-- **Tests & Verification:** Role mutation test suite verifying RBAC enforcement and last-admin refusal.
+  - Removed user immediately loses access to organization routes (session checks return 403).
+  - **RBAC Role Enforcement:** Non-admins attempting to change roles or remove members are rejected with 403 Forbidden.
+- **Tests & Verification:** Role mutation test suite verifying RBAC enforcement, cross-tenant rejection, and last-admin refusal.
 - **Status:** `NOT_STARTED`
 
 #### FC-006 | M1 | Reliable Email Delivery for Invitations via Resend
@@ -357,28 +501,29 @@ flowchart TD
 - **Capability:** Automated email delivery of team invitation links.
 - **Current Evidence:** `createInvitation.ts:62` creates invitation token but does not dispatch email. README line 383 notes invitation links must be copied manually.
 - **Missing Behavior:** Triggering Resend email dispatch upon invitation creation.
-- **Required Outcome:** Wire `createInvitation` to dispatch an invitation email containing the acceptance URL via `executeSendEmail` or worker queue.
+- **Required Outcome:** Wire `createInvitation` to dispatch an invitation email containing the acceptance URL via Resend API.
 - **Dependencies:** FC-003
-- **Files Involved:** `src/app/actions/Invitations/createInvitation.ts`, `src/lib/emails/core-service.ts`
+- **Files Involved:** `src/app/actions/user/createInvitation.ts`, `src/lib/email/resend.ts`
 - **Acceptance Criteria:**
-  - Inviting a member sends an email via Resend to the recipient address.
-  - Recipient clicking the link lands on `/invite/[token]` and can accept membership.
-  - UI provides "Copy Link" fallback button.
-- **Tests & Verification:** Integration test asserting email service invocation with invite link parameters.
+  - Inviting a member creates invitation token and sends an email via Resend with link `/invite/[token]`.
+  - Recipient clicking link lands on invitation acceptance view.
+  - If email fails to send, clear error feedback is surfaced, but token is not orphaned.
+- **Tests & Verification:** Integration test verifying email dispatch with mock Resend sink; end-to-end invite acceptance flow.
 - **Status:** `NOT_STARTED`
 
 #### FC-007 | M1 | User Profile & Account Settings Completeness
 - **Milestone:** M1
-- **Capability:** User profile editing and password change.
-- **Current Evidence:** `src/app/org/[orgId]/user/profile/page.tsx` renders `ProfileForm`, but password change and profile photo management are incomplete.
-- **Missing Behavior:** Password update flow and user preference management.
-- **Required Outcome:** Complete `ProfileForm` with name update, password change (verifying current password), and account details.
+- **Capability:** Self-service profile updates and password changes.
+- **Current Evidence:** Profile settings page is partially wired; password update server action missing.
+- **Missing Behavior:** Full profile name, avatar, and password update forms with validation.
+- **Required Outcome:** Create `updateUserProfileAction` and `updatePasswordAction`; wire into settings page.
 - **Dependencies:** FC-002
-- **Files Involved:** `src/app/org/[orgId]/user/profile/page.tsx`, `src/app/actions/user/updateUserProfile.ts`
+- **Files Involved:** `src/app/org/[orgId]/settings/profile/page.tsx`, `src/app/actions/user/profileActions.ts`
 - **Acceptance Criteria:**
-  - User can update their display name.
-  - User can change password with current password verification.
-- **Tests & Verification:** Unit and integration tests covering password updates and hash verification.
+  - User can update display name and avatar URL.
+  - User can update password with current password verification.
+  - Form validation prevents empty names or insecure passwords.
+- **Tests & Verification:** Unit tests for password validation and profile update actions.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -387,62 +532,65 @@ flowchart TD
 
 #### FC-008 | M2 | Project Lifecycle: Edit, Archive & Delete
 - **Milestone:** M2
-- **Capability:** Full project lifecycle management.
-- **Current Evidence:** `src/app/org/[orgId]/projects/action.ts` only implements `createProject`. Projects cannot be edited or deleted from UI.
-- **Missing Behavior:** Project settings modal, rename/description editing, and safe cascading deletion.
-- **Required Outcome:** Implement `updateProject` and `deleteProject` server actions (utilizing `deleteProjectTransactionally` for vector and task cleanup); add project settings menu to projects page.
+- **Capability:** Complete project settings, renaming, archiving, and deletion.
+- **Current Evidence:** Projects can be created, but editing metadata, archiving, or deletion lack confirmation modals and complete server action wiring.
+- **Missing Behavior:** Project settings modal with name/description edit, archive toggle, and destructive delete with cascade confirmation.
+- **Required Outcome:** Implement `updateProject`, `archiveProject`, and `deleteProject` server actions; wire settings UI.
 - **Dependencies:** FC-003
-- **Files Involved:** `src/app/org/[orgId]/projects/page.tsx`, `src/app/org/[orgId]/projects/action.ts`, `src/lib/deletion/project-deletion.ts`
+- **Files Involved:** `src/app/actions/projects/projectActions.ts`, `src/features/projects/components/ProjectSettingsModal.tsx`
 - **Acceptance Criteria:**
-  - Manager or Admin can rename project and update description.
-  - Deleting a project triggers transactional cascade and vector cleanup outbox.
-  - UI revalidates and reflects changes immediately.
-- **Tests & Verification:** Test suite creating project with tasks, deleting project, and asserting clean database and outbox state.
+  - Admin/Manager can edit project name and description.
+  - Archiving project moves it to archived view; active workflows ignore archived project tasks.
+  - Deleting project requires explicit name confirmation and cleans up tasks, comments, and attachments.
+  - **Tenant Isolation:** Caller can only update/delete projects belonging to their active organization. Negative test verifies Org A user cannot delete Org B project.
+- **Tests & Verification:** Integration test verifying CRUD lifecycle, cascade deletion, and cross-tenant rejection.
 - **Status:** `NOT_STARTED`
 
 #### FC-009 | M2 | Interactive Task Lifecycle & Status Transitions
 - **Milestone:** M2
-- **Capability:** Comprehensive task detail and inline status management.
-- **Current Evidence:** `src/app/org/[orgId]/projects/[projectId]/tasks/[taskId]/page.tsx` renders static fields without interactive status transitions or assignee select.
-- **Missing Behavior:** Inline status dropdown (`TODO`, `IN_PROGRESS`, `DONE`), priority picker, and team member assignee selector.
-- **Required Outcome:** Build interactive `TaskDetailView` with live updates via canonical `updateTaskInOrg`.
+- **Capability:** Interactive drag-and-drop / dropdown task status transitions with domain event emission.
+- **Current Evidence:** Task editing exists, but status transitions lack optimistic UI updates and robust CDC event emission.
+- **Missing Behavior:** Smooth status transitions across `TODO`, `IN_PROGRESS`, `BLOCKED`, `COMPLETED` with domain event emission.
+- **Required Outcome:** Enhance `updateTaskInOrg` action to emit domain CDC events (`task.updated`, `task.completed`); add optimistic board updates.
 - **Dependencies:** FC-005, FC-008
-- **Files Involved:** `src/app/org/[orgId]/projects/[projectId]/tasks/[taskId]/page.tsx`, `src/lib/tasks/update-task.ts`, `src/features/organizations/components/TaskDetailView.tsx`
+- **Files Involved:** `src/app/actions/Tasks/updateTaskInOrg.ts`, `src/features/tasks/components/TaskBoard.tsx`, `src/lib/workflow/event-bus/task-events.ts`
 - **Acceptance Criteria:**
-  - User can change task status directly from detail view or task board.
-  - Assignee selector lists all confirmed organization members.
-  - Updates emit domain CDC events (`TASK_UPDATED`) for downstream automations.
-- **Tests & Verification:** End-to-end browser test creating task, transitioning status to `DONE`, and verifying persisted state.
+  - Dragging a task or selecting status updates Postgres immediately.
+  - Moving task to `COMPLETED` sets `completedAt` timestamp and emits `task.completed` event.
+  - Updating task priority or assignee emits `task.updated` CDC event.
+  - **Tenant Boundary:** Server action enforces `task.organizationId === session.orgId`. Negative test asserts cross-tenant mutation returns 403.
+- **Tests & Verification:** Browser test moving tasks across columns; unit test asserting CDC event dispatch upon status change.
 - **Status:** `NOT_STARTED`
 
 #### FC-010 | M2 | Task Comments & Collaboration Feed
 - **Milestone:** M2
-- **Capability:** Threaded task discussion and activity comments.
-- **Current Evidence:** `createComments.ts` exists, but comment feed in task view lacks real-time Pusher updates and markdown rendering.
-- **Missing Behavior:** Polished discussion thread with timestamps, user avatars, and real-time updates.
-- **Required Outcome:** Wire comment submission form in task detail view with optimistic UI updates.
+- **Capability:** Real-time collaboration feed on tasks with markdown support.
+- **Current Evidence:** `createComments.ts` exists, but task detail view does not display live comment list or author metadata.
+- **Missing Behavior:** Interactive comment feed with author avatars, timestamps, and delete controls for author/admin.
+- **Required Outcome:** Wire comment list component in `TaskDetailDrawer.tsx`; implement `deleteComment` action.
 - **Dependencies:** FC-009
-- **Files Involved:** `src/app/actions/comments/createComments.ts`, `src/features/organizations/components/TaskComments.tsx`
+- **Files Involved:** `src/features/tasks/components/TaskDetailDrawer.tsx`, `src/app/actions/Tasks/createComments.ts`, `src/app/actions/Tasks/deleteComment.ts`
 - **Acceptance Criteria:**
-  - User can submit comments on a task.
-  - Comments display author name, avatar, and relative timestamp.
-  - Tenant boundary enforced (cannot comment on other tenant's task).
-- **Tests & Verification:** Integration test verifying comment creation and tenant predicate checks.
+  - Submitting comment immediately displays it in task activity feed.
+  - Displays author name, avatar, and relative timestamp.
+  - Author or Admin can delete comment.
+  - **Tenant Boundary:** Comment queries and mutations strictly scoped to active organization.
+- **Tests & Verification:** Integration test posting and reading comments; cross-tenant comment attempt returns 403.
 - **Status:** `NOT_STARTED`
 
 #### FC-011 | M2 | Task Filtering, Debounced Search & Pagination Polish
 - **Milestone:** M2
-- **Capability:** Fast task discovery via search and filters.
-- **Current Evidence:** `src/app/org/[orgId]/Tasks/page.tsx` uses uppercase `/Tasks` and lacks client-side search debouncing.
-- **Missing Behavior:** Consistent lowercase `/tasks` routing, debounced text search, and clean empty states.
-- **Required Outcome:** Standardize routing to `/org/[orgId]/tasks`; add 300ms debounced search bar; add filter pills for priority and assignee.
+- **Capability:** Responsive search, assignee filtering, and priority filtering across task views.
+- **Current Evidence:** Task list renders all tasks without debounced search or URL query synchronization.
+- **Missing Behavior:** URL-synchronized search query, assignee filter, and priority pills with debouncing.
+- **Required Outcome:** Add `TaskFilters.tsx` component with `useDebounce`; synchronize query params (`?search=...&priority=...`).
 - **Dependencies:** FC-009
-- **Files Involved:** `src/app/org/[orgId]/Tasks/page.tsx`, `src/features/organizations/components/Taskbox.tsx`
+- **Files Involved:** `src/features/tasks/components/TaskFilters.tsx`, `src/app/org/[orgId]/tasks/page.tsx`
 - **Acceptance Criteria:**
-  - Both `/tasks` and legacy `/Tasks` resolve correctly.
-  - Typing in search box filters tasks by title and description without page reload.
-  - Clean empty state displayed when search matches 0 tasks.
-- **Tests & Verification:** Browser test verifying search filtering across 10 tasks.
+  - Typing in search box filters tasks by title and description with 300ms debounce.
+  - Selecting priority or assignee filters board instantaneously.
+  - Refreshing page preserves active filter parameters from URL.
+- **Tests & Verification:** Browser test typing search terms and verifying filtered card count.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -451,76 +599,78 @@ flowchart TD
 
 #### FC-012 | M3 | Canvas Authoring UX, Workflow Naming & Toast Notifications
 - **Milestone:** M3
-- **Capability:** Professional visual workflow authoring experience.
-- **Current Evidence:** `WorkflowCanvas.tsx:181-195` uses browser `alert()` popups. Workflow name is hardcoded to `"My First Automation"`.
-- **Missing Behavior:** Editable workflow name in header, toast notifications for save/error states, and zoom/pan controls.
-- **Required Outcome:** Add inline workflow title and description input to canvas header; replace `alert()` with modern toast notifications (`sonner`); add canvas minimap/controls.
+- **Capability:** Smooth visual workflow authoring with custom workflow naming and feedback.
+- **Current Evidence:** Workflow canvas loads, but workflow title editing is disconnected and save notifications lack clear feedback.
+- **Missing Behavior:** Editable workflow header title/description and instant toast alerts on save/error.
+- **Required Outcome:** Wire `WorkflowEditorHeader.tsx` to update workflow name and description; add Sonner toast triggers.
 - **Dependencies:** FC-008
-- **Files Involved:** `src/features/organizations/components/workflow/WorkflowCanvas.tsx`, `src/app/actions/workflows/workflow.ts`
+- **Files Involved:** `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`, `src/features/organizations/components/workflow/WorkflowCanvas.tsx`
 - **Acceptance Criteria:**
-  - User can name a workflow (e.g. "Lead Qualification Pipeline") before saving.
-  - Save success displays non-intrusive toast and persists user-authored name.
-  - Browser `alert()` dialogs completely removed from workflow builder.
-- **Tests & Verification:** Browser test creating workflow, renaming title, saving, and verifying title persisted on workflows list page.
+  - Clicking workflow title in canvas header enables inline editing and persists name change.
+  - Saving workflow shows green toast on success or descriptive error toast on failure.
+  - Canvas zoom/pan controls and mini-map operate smoothly without layout shifts.
+  - **Tenant Boundary:** Canvas only loads workflows belonging to caller's active organization.
+- **Tests & Verification:** Browser test creating a workflow, renaming it, and verifying persistence.
 - **Status:** `NOT_STARTED`
 
 #### FC-013 | M3 | Node Property Configuration Drawer & Variable Auto-Mapping
 - **Milestone:** M3
-- **Capability:** Contextual node configuration with upstream variable insertion.
-- **Current Evidence:** `PropertiesPanel.tsx` allows manual string typing, but offers no variable selector to bind upstream outputs (e.g. `{{trigger.outputs.taskId}}`).
-- **Missing Behavior:** "Insert Variable" dropdown button next to input fields listing referenceable upstream step outputs.
-- **Required Outcome:** Enhance `PropertiesPanel.tsx` with token picker populated from `getAvailableUpstreamOutputs()`.
+- **Capability:** Complete node configuration drawer with upstream variable auto-mapping.
+- **Current Evidence:** Clicking a node opens a basic drawer, but schema-driven input widgets and upstream output variable pickers (`{{steps.step1.output}}`) are missing.
+- **Missing Behavior:** Property drawer rendering custom input fields based on action capability schemas, with dropdown variable interpolation.
+- **Required Outcome:** Build `NodePropertyDrawer.tsx` rendering input forms according to `action-capabilities.ts`; add upstream variable picker.
 - **Dependencies:** FC-012
-- **Files Involved:** `src/features/organizations/components/workflow/PropertiesPanel.tsx`, `src/lib/workflow/graph-ui/utils.ts`
+- **Files Involved:** `src/features/organizations/components/workflow/NodePropertyDrawer.tsx`, `src/lib/workflow-types/action-capabilities.ts`
 - **Acceptance Criteria:**
-  - Clicking "Insert Variable" shows available outputs from connected upstream nodes.
-  - Inserting a variable formats correct `{{nodeId.outputs.field}}` template syntax.
-  - Missing required inputs flag node with amber warning ring on canvas.
-- **Tests & Verification:** Canvas UI test connecting Trigger to Action and asserting variable token insertion.
+  - Clicking any node opens drawer with all required and optional action parameters.
+  - Text fields offer variable insertion button listing outputs of all topological upstream nodes.
+  - Form validation warns if required fields are omitted.
+- **Tests & Verification:** Unit test verifying variable resolution syntax; browser test configuring node inputs.
 - **Status:** `NOT_STARTED`
 
 #### FC-014 | M3 | Graph Validation & Actionable Error Diagnostics
 - **Milestone:** M3
-- **Capability:** Actionable pre-save validation for DAGs.
-- **Current Evidence:** `compileWorkflow()` throws `WorkflowValidationError`, but errors are not highlighted on specific canvas nodes.
-- **Missing Behavior:** Inline visual error indicators pinpointing disconnected nodes, missing required inputs, or cycles.
-- **Required Outcome:** Project compilation errors onto node data (`node.data.validationError`); display actionable error badges on offending nodes.
+- **Capability:** Real-time DAG validation with visual badge highlights on problematic nodes.
+- **Current Evidence:** Basic cycle detection exists, but disconnected nodes, missing required inputs, and multiple trigger errors do not surface clearly on canvas.
+- **Missing Behavior:** Pre-publish validation scanner highlighting orphaned nodes, missing fields, or cyclic loops with clickable error markers.
+- **Required Outcome:** Implement `validateWorkflowGraph` utility; add visual error badges on node headers and error banner in header.
 - **Dependencies:** FC-013
-- **Files Involved:** `src/features/organizations/components/workflow/WorkflowCanvas.tsx`, `src/lib/workflow/graph-ui/compiler.ts`
+- **Files Involved:** `src/lib/workflow/validation/graphValidator.ts`, `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`
 - **Acceptance Criteria:**
-  - Attempting to save invalid graph highlights exact offending nodes in red.
-  - Error banner describes specific fix required (e.g. "Action 'Create Task' is missing required field 'title'").
-- **Tests & Verification:** Compiler unit tests verifying issue codes; canvas test asserting visual error display.
+  - Canvas flags disconnected nodes with warning badge.
+  - Canvas flags nodes with missing required inputs with red error icon.
+  - Publishing is blocked if graph contains cycles, lacks a trigger, or has invalid nodes.
+- **Tests & Verification:** Test suite feeding cyclic, disconnected, and incomplete graphs, asserting exact validation error messages.
 - **Status:** `NOT_STARTED`
 
 #### FC-015 | M3 | Draft vs. Published State Management & Active Lifecycle
 - **Milestone:** M3
-- **Capability:** Explicit publish/unpublish workflow lifecycle.
-- **Current Evidence:** `src/app/actions/workflows/workflow.ts:80` sets `isActive = !!eventId`. Workflows are automatically activated if any trigger is set.
-- **Missing Behavior:** Explicit "Publish" / "Unpublish" toggle with validation gate.
-- **Required Outcome:** Add Draft / Published state machine; workflows in Draft state cannot be ignited by event triggers.
+- **Capability:** Clear separation between editable drafts and immutable published workflow versions.
+- **Current Evidence:** Workflows only have a single editable row; editing a published workflow immediately impacts running executions.
+- **Missing Behavior:** Explicit "Publish" action that creates an immutable published snapshot while preserving draft editing.
+- **Required Outcome:** Enhance `Workflow` model logic with `isPublished`, `publishedAt`, and `draftData`; update canvas publish controls.
 - **Dependencies:** FC-014
-- **Files Involved:** `src/app/actions/workflows/workflow.ts`, `src/features/organizations/components/workflow/WorkflowCanvas.tsx`
+- **Files Involved:** `src/app/actions/workflows/workflowLifecycleActions.ts`, `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`
 - **Acceptance Criteria:**
-  - Saving a draft does not activate event dispatch.
-  - Clicking "Publish" runs full graph validation; activates workflow only if 100% valid.
-  - Active workflows display green badge on workflows list page.
-- **Tests & Verification:** State transition test verifying events ignore draft workflows and execute published workflows.
+  - User can save draft changes without affecting active trigger execution.
+  - Clicking "Publish" validates graph, freezes current configuration, and activates trigger.
+  - User can toggle workflow active/inactive with instant execution suspension.
+- **Tests & Verification:** Integration test verifying draft mutations do not alter published execution until explicit publish call.
 - **Status:** `NOT_STARTED`
 
 #### FC-016 | M3 | Manual Test-Run Drawer & Trigger Output Preview
 - **Milestone:** M3
-- **Capability:** Safe test execution directly from workflow builder.
-- **Current Evidence:** API route `/api/workflow/test/[workflowId]/test-run` exists, but has no UI entry point in `WorkflowCanvas`.
-- **Missing Behavior:** "Test Run" button in canvas opening slide-over drawer with editable test payload.
-- **Required Outcome:** Add "Test Run" button in canvas header; open test drawer allowing user to customize mock trigger data; execute test run and link to live execution viewer.
+- **Capability:** Simulating workflow execution from canvas with custom mock trigger payloads.
+- **Current Evidence:** No mechanism exists to test workflows manually without creating actual database tasks.
+- **Missing Behavior:** "Test Run" button opening drawer to provide mock event payload, initiate dry run, and view step outputs.
+- **Required Outcome:** Create `WorkflowTestRunModal.tsx` and server action `executeWorkflowTestRun`.
 - **Dependencies:** FC-015
-- **Files Involved:** `src/features/organizations/components/workflow/WorkflowCanvas.tsx`, `src/features/organizations/components/workflow/TestRunDrawer.tsx`
+- **Files Involved:** `src/features/organizations/components/workflow/WorkflowTestRunModal.tsx`, `src/app/actions/workflows/testRunActions.ts`
 - **Acceptance Criteria:**
-  - Clicking "Test Run" opens drawer with prefilled sample payload.
-  - Executing test creates `WorkflowRun` and displays link to run detail page.
-  - Rate limits enforced on test runs.
-- **Tests & Verification:** Browser test triggering test run from canvas and verifying redirect to run detail viewer.
+  - Clicking "Test Run" opens modal with pre-populated JSON payload matching trigger type.
+  - Submitting test run executes workflow in sandbox context and returns step-by-step output timeline.
+  - Displays formatted outputs and highlights any failing nodes.
+- **Tests & Verification:** Browser test running manual test run and verifying execution log output.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -529,110 +679,118 @@ flowchart TD
 
 #### FC-017 | M4 | Real Domain Event-to-Workflow Dispatch Engine
 - **Milestone:** M4
-- **Capability:** Reactive event-driven workflow execution.
-- **Current Evidence:** `startWorkflow()` is never called by event consumers. `src/app/api/worker/route.ts` lacks handlers routing domain CDC events to workflows.
-- **Missing Behavior:** Background worker handler querying active workflows matching event type and starting execution runs.
-- **Required Outcome:** Implement `dispatchWorkflowsForEvent(orgId, eventType, payload)`; add worker handler in `/api/worker` processing `WORKFLOW_EVENT_TRIGGERED`.
+- **Capability:** Real transactional outbox consumer matching domain events to active workflows.
+- **Current Evidence:** Outbox pattern implemented in foundational engine, but not wired to dispatch live task mutations to workflow runs.
+- **Missing Behavior:** Background worker or immediate queue consumer querying published workflows matching event type and starting runs.
+- **Required Outcome:** Implement `dispatchDomainEvent` worker handler connecting outbox events to `WorkflowEngine.startWorkflow`.
 - **Dependencies:** FC-015
-- **Files Involved:** `src/lib/workflow/execution/event-dispatcher.ts`, `src/app/api/worker/route.ts`, `src/lib/events/router.ts`
+- **Files Involved:** `src/lib/workflow/worker/event-dispatcher.ts`, `src/lib/workflow/engine/workflow-engine.ts`
 - **Acceptance Criteria:**
-  - Creating a task in the UI immediately executes any published workflow configured with trigger `task.created`.
-  - Trigger payload (`taskId`, `projectId`, `title`, `priority`) populated into `WorkflowRun.context`.
-  - Inactive/draft workflows are never triggered.
-- **Tests & Verification:** Integration test emitting `TASK_CREATED` event and asserting corresponding `WorkflowRun` and `StepRun` records created.
+  - Emitting an outbox event queries all active published workflows matching event type.
+  - **Strict Multi-Tenant Isolation:** Dispatcher strictly matches workflows belonging to the event's `organizationId`. Workflows of other organizations are never invoked.
+  - Enqueues workflow execution with event payload mapped to trigger outputs.
+- **Tests & Verification:** Integration test emitting domain event and verifying creation of `WorkflowRun` record.
 - **Status:** `NOT_STARTED`
 
 #### FC-018 | M4 | Task Domain Event Producers (`task.created`, `task.updated`, `task.completed`)
 - **Milestone:** M4
-- **Capability:** Comprehensive domain event publishing on task mutations.
-- **Current Evidence:** `createTaskInOrg` emits `TASK_CREATED`. `updateTaskInOrg` emits vector sync outbox, but lacks general `TASK_UPDATED` and `TASK_COMPLETED` trigger dispatch.
-- **Missing Behavior:** Emitting trigger events when task status or priority changes.
-- **Required Outcome:** Update `updateTaskInOrg` to dispatch `TASK_UPDATED` (and `TASK_COMPLETED` when status transitions to `DONE`) via event bus.
+- **Capability:** Complete domain CDC instrumentation across all task mutations.
+- **Current Evidence:** Event schemas defined in `task-events.ts`, but not emitted by `createTask.ts` or task status change handlers.
+- **Missing Behavior:** Wrapping all task mutations in database transactions that atomically write to `OutboxEvent`.
+- **Required Outcome:** Instrument `createTask.ts`, `updateTaskInOrg.ts`, and task deletion with transactional outbox writes.
 - **Dependencies:** FC-017
-- **Files Involved:** `src/lib/tasks/update-task.ts`, `src/lib/events/event-bus.ts`
+- **Files Involved:** `src/app/actions/Tasks/createTask.ts`, `src/app/actions/Tasks/updateTaskInOrg.ts`, `src/lib/workflow/event-bus/task-events.ts`
 - **Acceptance Criteria:**
-  - Transitioning task to `DONE` fires `task.completed` event.
-  - Changing task priority fires `task.updated` event.
-  - Events include previous and new values for conditional filtering.
-- **Tests & Verification:** Integration tests verifying event dispatch on task update mutations.
+  - Creating a task commits `Task` + `OutboxEvent(task.created)` in single atomic transaction.
+  - Changing status to completed commits `Task` + `OutboxEvent(task.completed)`.
+  - If task creation fails, outbox event is rolled back.
+- **Tests & Verification:** Database transaction test verifying atomic presence of both task and outbox event rows.
 - **Status:** `NOT_STARTED`
 
 #### FC-019 | M4 | Trigger Filtering, Variable Propagation & Storm Protection
 - **Milestone:** M4
-- **Capability:** Event filter rules and recursive loop prevention.
-- **Current Evidence:** No trigger filtering in canvas. Workflow actions creating tasks can potentially trigger infinite event loops.
-- **Missing Behavior:** Trigger filter configuration (e.g. "Only trigger if priority == HIGH") and execution depth guard.
-- **Required Outcome:** Add trigger filter predicates in `TriggerNodeData`; add recursion counter in `WorkflowRun` context rejecting depth > 2.
+- **Capability:** Fine-grained event payload filters and recursion loop prevention.
+- **Current Evidence:** Workflows fire on all events of a given type without attribute filtering; self-triggering loops possible.
+- **Missing Behavior:** Trigger condition configuration (e.g. only fire if `priority == "URGENT"`) and loop depth counter.
+- **Required Outcome:** Add trigger filter evaluation in `event-dispatcher.ts`; inject execution trace depth header (`x-forge-depth > 5` aborts).
 - **Dependencies:** FC-018
-- **Files Involved:** `src/lib/workflow/execution/event-dispatcher.ts`, `src/features/organizations/components/workflow/nodes/TriggerNode.tsx`
+- **Files Involved:** `src/lib/workflow/worker/event-dispatcher.ts`, `src/lib/workflow/engine/workflow-engine.ts`
 - **Acceptance Criteria:**
-  - Workflow with filter "Priority == HIGH" ignores LOW priority task creations.
-  - A workflow action creating a task cannot trigger an infinite recursive chain.
-- **Tests & Verification:** Test suite injecting recursive workflow execution and asserting termination at depth limit.
+  - Trigger only advances if event payload matches configured filter rules.
+  - Cascading automated task updates do not trigger infinite recursive workflow execution.
+- **Tests & Verification:** Unit tests for payload filtering; recursion test asserting automated abort at depth 5.
 - **Status:** `NOT_STARTED`
-
 ---
 
 ### Milestone M5: Actions and Integrations
 
 #### FC-020 | M5 | Reconcile & Register Native Actions (`send-email`, `generate-report`, `conditions`)
 - **Milestone:** M5
-- **Capability:** Exposure of existing core actions in registry and canvas.
-- **Current Evidence:** `src/lib/workflow/actions/core/send-email.ts`, `generate-report.ts`, and `conditions.ts` exist with full execution logic, but are unregistered in `action-registry.ts` and omitted from `AVAILABLE_ACTIONS`.
-- **Missing Behavior:** Action capability schemas, registry version pinning (`@1.0.0`), and canvas presentation definitions.
+- **Capability:** Exposure of existing core actions in registry and visual canvas.
+- **Current Evidence:** `send-email.ts`, `generate-report.ts`, and `conditions.ts` exist with full execution logic, but are omitted from `action-registry.ts` and `AVAILABLE_ACTIONS`.
+- **Missing Behavior:** Action capability schemas, registry version pinning (`@1.0.0`), and canvas palette definitions.
 - **Required Outcome:** Register `email.send`, `report.generate`, and `logic.condition` in `action-registry.ts` and `action-capabilities.ts`; configure widgets in `registry.ts`.
 - **Dependencies:** FC-013
 - **Files Involved:** `src/lib/workflow-types/action-registry.ts`, `src/lib/workflow-types/action-capabilities.ts`, `src/lib/workflow-types/registry.ts`
 - **Acceptance Criteria:**
-  - All 4 native actions appear in canvas sidebar and property dropdowns.
+  - All native actions appear in canvas sidebar palette and property drawer dropdowns.
   - Workflows containing `email.send` successfully dispatch emails via Resend.
-  - Workflows containing `report.generate` upload file to UploadThing and return download URL.
+  - Workflows containing `report.generate` upload structured Markdown report to UploadThing and return download URL.
 - **Tests & Verification:** Unit tests for action registration; integration tests executing diamond workflow with email and report steps.
 - **Status:** `NOT_STARTED`
 
 #### FC-021 | M5 | Implement & Register `task.update` & `comment.create` with Saga Compensation
 - **Milestone:** M5
 - **Capability:** Workflow actions for task updates and commenting with rollback semantics.
-- **Current Evidence:** UI has `updateTaskInOrg` and `createComments`, but no workflow actions wrap them.
+- **Current Evidence:** UI has `updateTaskInOrg` and `createComments`, but no workflow action wrappers exist for them.
 - **Missing Behavior:** Workflow action implementations for `task.update` and `comment.create` with compensation functions.
-- **Required Outcome:** Create `src/lib/workflow/actions/core/update-task.ts` and `src/lib/workflow/actions/core/create-comment.ts`; define schemas; register in action registry.
+- **Required Outcome:** Create `src/lib/workflow/actions/core/update-task.ts` and `src/lib/workflow/actions/core/create-comment.ts`; register in action registry.
 - **Dependencies:** FC-020
 - **Files Involved:** `src/lib/workflow/actions/core/update-task.ts`, `src/lib/workflow/actions/core/create-comment.ts`, `src/lib/workflow-types/action-registry.ts`
 - **Acceptance Criteria:**
   - Workflow can update task status and priority based on upstream outputs.
-  - Workflow can post automated comment on task.
-  - Downstream failure triggers compensation (reverting task status to previous value).
+  - Workflow can post automated comments on tasks.
+  - Downstream failure triggers backward saga compensation: `task.update` restores previous status from snapshot; `comment.create` appends tombstone comment.
+  - **Tenant Boundary:** Actions verify target task/comment belongs to workflow's active organization.
 - **Tests & Verification:** Integration test verifying forward execution and backward saga rollback restoring previous task status.
 - **Status:** `NOT_STARTED`
 
 #### FC-022 | M5 | Implement & Register SSRF-Safe `http.request` Action
 - **Milestone:** M5
-- **Capability:** Outgoing webhook action with private network defense.
+- **Capability:** Outgoing webhook action with comprehensive private network and cloud metadata defense.
 - **Current Evidence:** No external HTTP request action exists.
-- **Missing Behavior:** Outgoing HTTP request node with method, headers, JSON body, timeout, and SSRF airgap.
-- **Required Outcome:** Implement `src/lib/workflow/actions/core/http-request.ts` with DNS pre-lookup blocking private IPs (`127.0.0.1`, `10.*`, `192.168.*`, `169.254.*`).
+- **Missing Behavior:** Outbound HTTP request node with method, headers, JSON body, timeout, and SSRF airgap.
+- **Required Outcome:** Implement `src/lib/workflow/actions/core/http-request.ts` with strict SSRF defense specifications:
+  - Pre-resolve DNS, validate resolved IP, and pin socket to validated IP.
+  - Block loopback (`127.0.0.0/8`, `::1`), cloud metadata (`169.254.169.254`), RFC 1918 subnets (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), IPv6 ULA, and carrier NAT.
+  - Max 3 redirects; destination IP re-validated on every hop; scheme downgrades rejected.
+  - Max connect timeout 5s, read timeout 10s, max response body size 1 MB.
+  - Redact sensitive headers in logs; mask internal socket errors from UI.
 - **Dependencies:** FC-020
 - **Files Involved:** `src/lib/workflow/actions/core/http-request.ts`, `src/lib/security/ssrf.ts`
 - **Acceptance Criteria:**
-  - Sends authenticated HTTP POST/GET requests to external URLs and captures response.
+  - Sends authenticated HTTP POST/GET requests to external URLs and captures JSON response.
   - Requests to loopback or private cloud metadata endpoints fail immediately with security error.
-  - Classified as Irreversible / External in compensation taxonomy.
-- **Tests & Verification:** Security test verifying SSRF rejection on `169.254.169.254` and `localhost`; integration test to mock webhook sink.
+  - Classified as Irreversible in compensation taxonomy (audit receipt logged).
+- **Tests & Verification:** Security penetration tests verifying rejection of `169.254.169.254`, `localhost`, `10.0.0.1`, and DNS rebinding simulations; integration test dispatching to mock webhook sink.
 - **Status:** `NOT_STARTED`
 
 #### FC-023 | M5 | End-to-End Verification of 3 Real Automation Scenarios
 - **Milestone:** M5
-- **Capability:** Proven real-world business automations.
+- **Capability:** Proven real-world business automations across 3 fully specified scenarios.
 - **Current Evidence:** Only single isolated `task.create` has been demonstrated.
-- **Missing Behavior:** End-to-end multi-step workflow verification across 3 practical scenarios.
-- **Required Outcome:** Validate three complete scenarios:
-  1. *Scenario 1 (Auto-Triage):* Task Created &rarr; Condition (Priority == HIGH) &rarr; Send Email Notification.
-  2. *Scenario 2 (Digest & Report):* Trigger &rarr; Generate Progress Report &rarr; Upload Attachment &rarr; Post Task Comment.
-  3. *Scenario 3 (Escalation & Reversal):* Task Created &rarr; Update Task Status &rarr; Intentional Failure &rarr; Saga Rollback restores original status.
+- **Missing Behavior:** End-to-end multi-step workflow verification across 3 practical business scenarios.
+- **Required Outcome:** Validate three complete scenarios as defined in Section 4.4:
+  1. *Scenario 1 (Auto-Triage):* `task.created` (Urgent) &rarr; Filter &rarr; `task.update` (Assign Lead & Status) &rarr; `email.send` via Resend.
+  2. *Scenario 2 (Progress Digest):* Manual/Event Trigger &rarr; `report.generate` (writes real structured Markdown table artifact & uploads) &rarr; `comment.create` &rarr; `email.send`.
+  3. *Scenario 3 (Escalation & Rollback):* `task.updated` (Blocked) &rarr; `task.update` (`status: ESCALATED`) &rarr; `http.request` fails with 500 &rarr; Backward Saga Rollback restores `BLOCKED` status &rarr; `comment.create` posts audit note.
 - **Dependencies:** FC-017, FC-020, FC-021
 - **Files Involved:** `src/tests/workflow/automation-scenarios.test.ts`
-- **Acceptance Criteria:** All 3 scenarios pass deterministically with persisted database verification.
-- **Tests & Verification:** Dedicated automated scenario integration test suite.
+- **Acceptance Criteria:**
+  - All 3 scenarios pass deterministically with real database and storage mutations.
+  - Report generator produces real structured Markdown table (not empty or mock string).
+  - Scenario 3 verifies backward compensation restoring task state and logging audit record.
+- **Tests & Verification:** Dedicated automated scenario integration test suite executing all 3 flows end-to-end.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -649,8 +807,9 @@ flowchart TD
 - **Files Involved:** `src/app/org/[orgId]/runs/page.tsx`, `src/features/organizations/components/Sidebar.tsx`, `src/features/organizations/components/RunsTable.tsx`
 - **Acceptance Criteria:**
   - Clicking "Runs" in sidebar navigates to `/org/[orgId]/runs`.
-  - Displays paginated table: Workflow Name, Run ID, Trigger Source, Status (`RUNNING`, `COMPLETED`, `FAILED`, `ROLLED_BACK`), Duration, Timestamp.
+  - Displays paginated table: Workflow Name, Run ID, Trigger Source, Status (`RUNNING`, `COMPLETED`, `FAILED`, `COMPENSATED`), Duration, Timestamp.
   - Clicking any row opens `/org/[orgId]/runs/[runId]`.
+  - **Tenant Boundary:** Queries strictly filter by `organizationId === session.orgId`.
 - **Tests & Verification:** Browser test navigating from sidebar to runs list and clicking into a run.
 - **Status:** `NOT_STARTED`
 
@@ -666,22 +825,23 @@ flowchart TD
   - Clicking any node opens inspector drawer.
   - Displays exact resolved input payload, output result, and execution start/end timestamps.
   - Failed steps display highlighted error message and classification.
+  - **Tenant Boundary:** Verifies run belongs to caller's active organization before displaying data.
 - **Tests & Verification:** Browser test opening completed and failed runs, clicking steps, and asserting JSON inspection display.
 - **Status:** `NOT_STARTED`
 
 #### FC-026 | M6 | Operator Controls: Retry Failed Step & Cancel Run
 - **Milestone:** M6
-- **Capability:** Operator intervention controls directly in the UI.
+- **Capability:** Operator intervention controls directly in the UI without database queries (Journey J9A).
 - **Current Evidence:** Operators have no UI controls to retry failed runs or cancel runaway runs.
-- **Missing Behavior:** "Retry Run" and "Cancel Run" action buttons with backend execution handlers.
+- **Missing Behavior:** "Retry Step" and "Cancel Run" action buttons with backend execution handlers.
 - **Required Outcome:** Add action buttons to `WorkflowRunDashboard`; implement `retryWorkflowRun` and `cancelWorkflowRun` server actions.
 - **Dependencies:** FC-025
 - **Files Involved:** `src/features/organizations/components/workflow/WorkflowRunDashboard.tsx`, `src/app/actions/workflows/operatorActions.ts`
 - **Acceptance Criteria:**
-  - Clicking "Retry Run" on a `FAILED` or `REQUIRES_INTERVENTION` run resets step status and re-enqueues execution.
-  - Clicking "Cancel Run" on a `RUNNING` run aborts in-flight deliveries and records cancellation.
-  - Operators can resolve workflow failures without manual database editing.
-- **Tests & Verification:** Test suite injecting failure, asserting FAILED state, triggering operator retry, and asserting COMPLETED state.
+  - Clicking "Retry Step" on a `FAILED` or `REQUIRES_INTERVENTION` run resets step status and resumes execution from failed step using saved context.
+  - Clicking "Cancel Run" on a `RUNNING` run aborts in-flight execution and records cancellation.
+  - **RBAC & Isolation:** Only ADMIN and MANAGER roles in the run's organization can trigger retry or cancellation.
+- **Tests & Verification:** Test suite injecting failure, asserting FAILED state, triggering operator retry via action, and asserting COMPLETED state.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -690,47 +850,47 @@ flowchart TD
 
 #### FC-027 | M7 | Unified Conversational AI Assistant Workspace (`/ai`)
 - **Milestone:** M7
-- **Capability:** Cohesive conversational workspace blending RAG with agent task tools.
-- **Current Evidence:** `/org/[orgId]/ai/page.tsx` stacks two completely disjoint components (`ChatWorkspace` and `WorkflowProposalPanel`) with separate interfaces and no shared context.
-- **Missing Behavior:** Unified chat interface capable of answering project questions and proposing task/workflow operations in one conversation stream.
-- **Required Outcome:** Redesign `/org/[orgId]/ai` into a unified chat timeline supporting streaming text, tool proposal cards, and clarification prompts.
+- **Capability:** Central conversational project assistant with RAG context awareness.
+- **Current Evidence:** Chat UI exists in `/ai`, but lacks integration with project tasks, docs, and workflows.
+- **Missing Behavior:** Assistant workspace capable of answering project questions by retrieving organization tasks, workflows, and documents.
+- **Required Outcome:** Enhance `agentRuntime.ts` with Pinecone vector retrieval scoped strictly to caller's organization.
 - **Dependencies:** FC-009, FC-012
-- **Files Involved:** `src/app/org/[orgId]/ai/page.tsx`, `src/features/organizations/components/ai/UnifiedChatWorkspace.tsx`
+- **Files Involved:** `src/app/org/[orgId]/ai/page.tsx`, `src/lib/agent/runtime.ts`, `src/lib/vector/pinecone.ts`
 - **Acceptance Criteria:**
-  - User can chat with assistant about project status and receive vector-grounded answers.
-  - User can ask assistant to create tasks or workflows in the same conversational stream.
-  - Streaming responses render smoothly with markdown support.
-- **Tests & Verification:** Browser test conducting conversation involving both informational questions and action requests.
+  - User can ask questions about tasks and workflows in their organization and receive grounded answers.
+  - **Tenant Boundary Security:** Pinecone vector queries MUST filter by `organizationId === session.orgId`. User in Org A asking project questions CANNOT retrieve documents from Org B.
+- **Tests & Verification:** Automated test asking questions about Org B data while authenticated to Org A; asserts zero Org B records returned.
 - **Status:** `NOT_STARTED`
 
 #### FC-028 | M7 | Inline Tool Proposal Review, Human Approval & Clarification UX
 - **Milestone:** M7
-- **Capability:** Strict human-in-the-loop approval gate within conversational flow.
-- **Current Evidence:** `ProposalReviewCard.tsx` and `ClarificationRequestCard.tsx` exist, but are isolated within the standalone proposal panel.
-- **Missing Behavior:** Inline embedding of tool proposals, human approval/decline buttons, and clarification questions directly in chat messages.
-- **Required Outcome:** Embed proposal cards and clarification forms inside the unified chat stream; enforce approval before executing state-mutating actions.
+- **Capability:** Human-in-the-loop review and approval for AI-proposed mutations.
+- **Current Evidence:** Agent proposes tools, but user has no structured diff card to approve or reject actions.
+- **Missing Behavior:** Inline proposal cards displaying proposed task updates or workflow creation with "Approve" and "Reject" buttons.
+- **Required Outcome:** Build `ToolProposalCard.tsx`; implement proposal approval handler executing mutations only upon explicit user click.
 - **Dependencies:** FC-027
-- **Files Involved:** `src/features/organizations/components/ai/UnifiedChatWorkspace.tsx`, `src/features/organizations/components/ai/ProposalReviewCard.tsx`
+- **Files Involved:** `src/features/ai/components/ToolProposalCard.tsx`, `src/lib/agent/toolExecution.ts`
 - **Acceptance Criteria:**
-  - When AI suggests task creation or workflow generation, an approval card appears inline.
-  - User can click "Approve" (executing write) or "Decline" (cancelling write).
-  - Clarification requests prompt user for missing parameters before proceeding.
-  - Invariant strictly held: Model never executes write mutations without explicit user approval.
-- **Tests & Verification:** Integration test verifying proposal creation, approval, and execution handoff.
+  - AI requests to create tasks or build workflows render as structured proposal cards.
+  - Clicking "Approve" executes tool and updates UI; clicking "Reject" dismisses proposal.
+  - AI cannot mutate database records without explicit user approval.
+- **Tests & Verification:** Browser test prompting AI to create a task, verifying proposal card renders, and clicking Approve.
 - **Status:** `NOT_STARTED`
 
 #### FC-029 | M7 | Agent Session History & Recovery Drawer
 - **Milestone:** M7
-- **Capability:** Historical conversation browsing and session resumption.
-- **Current Evidence:** `WorkflowProposalPanel.tsx:23` stores a single session ID in local storage. Past conversations cannot be listed or reopened.
-- **Missing Behavior:** Session history sidebar listing past conversations with timestamps and recovery.
-- **Required Outcome:** Add collapsible sidebar in `/ai` querying user's `AgentSession` records; clicking a session restores transcript and proposal outcomes.
+- **Capability:** Persistent conversational threads with session switching.
+- **Current Evidence:** Reloading `/ai` resets conversation; past chat history is lost.
+- **Missing Behavior:** Sidebar drawer listing past AI chat sessions with new session creation.
+- **Required Outcome:** Persist chat sessions in `AgentSession` model; render session list in `/ai`.
 - **Dependencies:** FC-027
-- **Files Involved:** `src/features/organizations/components/ai/UnifiedChatWorkspace.tsx`, `src/app/actions/ai/sessionActions.ts`
+- **Files Involved:** `src/app/org/[orgId]/ai/page.tsx`, `src/app/actions/ai/sessionActions.ts`
 - **Acceptance Criteria:**
-  - User can start a "New Chat" or switch to a past session.
-  - Past sessions reload full transcript, tool approvals, and outcomes.
-- **Tests & Verification:** Test asserting session persistence, list querying, and state restoration.
+  - Past conversations saved and listed in session history sidebar.
+  - Clicking past session reloads message history and tool proposals.
+  - User can delete chat sessions.
+  - **Tenant Boundary:** Sessions strictly filtered by `organizationId`.
+- **Tests & Verification:** Integration test verifying session persistence and reload across browser refreshes.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -739,46 +899,49 @@ flowchart TD
 
 #### FC-030 | M8 | Attachment Deletion UX with Asynchronous Vector Tombstoning
 - **Milestone:** M8
-- **Capability:** Complete attachment lifecycle with vector index consistency.
-- **Current Evidence:** Backend `deleteAttachmentTransactionally` exists, but task detail view lacks an interactive delete button.
-- **Missing Behavior:** Delete attachment button on task detail view with confirmation dialog.
-- **Required Outcome:** Add delete action to attachment list in task detail view; wire to server action verifying permissions and triggering transactional domain deletion outbox.
+- **Capability:** Complete file attachment lifecycle with vector database cleanup (Journey J8).
+- **Current Evidence:** Uploading files to UploadThing works, but deletion controls are missing and deleted files remain in vector search.
+- **Missing Behavior:** File deletion button triggering UploadThing deletion and Pinecone vector tombstoning.
+- **Required Outcome:** Create `deleteAttachmentAction` deleting file from storage and emitting `file.deleted` for vector cleanup.
 - **Dependencies:** FC-009
-- **Files Involved:** `src/features/organizations/components/TaskDetailView.tsx`, `src/app/actions/Tasks/attachments.ts`, `src/lib/deletion/attachment-deletion.ts`
+- **Files Involved:** `src/app/actions/files/deleteFile.ts`, `src/lib/vector/pinecone.ts`
 - **Acceptance Criteria:**
-  - User can delete an attachment from a task.
-  - Enqueues `DomainOutboxEvent` for asynchronous UploadThing file removal and Pinecone vector tombstoning.
-  - Deleted file content is immediately excluded from future RAG queries.
-- **Tests & Verification:** Integration test asserting attachment deletion, vector tombstone creation, and RAG retrieval exclusion.
+  - User can delete attachment from task detail view.
+  - Deletes file from UploadThing storage.
+  - Vector index removes corresponding embeddings, preventing deleted file from appearing in RAG search.
+  - **Tenant Boundary:** User can only delete files belonging to their active organization.
+- **Tests & Verification:** Integration test uploading file, querying vector search, deleting file, and asserting vector search returns null.
 - **Status:** `NOT_STARTED`
 
 #### FC-031 | M8 | Organization Execution Audit Log Viewer (`/audit`)
 - **Milestone:** M8
-- **Capability:** Real system audit log viewer for workflow and security events.
-- **Current Evidence:** `src/app/org/[orgId]/audit/page.tsx` mounts `AuditStreamingView` (code pastebin prompt), completely ignoring the database's `ExecutionAuditLog` table.
-- **Missing Behavior:** Filterable data table displaying actual system execution logs, compensation receipts, and security events.
-- **Required Outcome:** Rebuild `/audit` page as a system log viewer querying `ExecutionAuditLog` scoped to the organization.
+- **Capability:** Filterable audit log viewer displaying system actions and workflow compensations.
+- **Current Evidence:** `src/app/org/[orgId]/audit/page.tsx` renders a code pastebin prompt instead of displaying `ExecutionAuditLog` table.
+- **Missing Behavior:** Audit table displaying timestamp, actor, event type, entity ID, and status (`SUCCESS`, `COMPENSATED`, `SECURITY_BLOCKED`).
+- **Required Outcome:** Rebuild `src/app/org/[orgId]/audit/page.tsx` to query and display `ExecutionAuditLog` records.
 - **Dependencies:** FC-024
-- **Files Involved:** `src/app/org/[orgId]/audit/page.tsx`, `src/features/organizations/components/AuditLogTable.tsx`
+- **Files Involved:** `src/app/org/[orgId]/audit/page.tsx`, `src/features/audit/components/AuditLogTable.tsx`
 - **Acceptance Criteria:**
-  - Displays timestamped execution logs: Run ID, Step ID, Event Type, Severity (`INFO`, `WARN`, `ERROR`), Latency, and Compensation Receipts.
-  - Filterable by severity and workflow.
-  - Code pastebin prompt completely removed from `/audit`.
-- **Tests & Verification:** Browser test running workflow with compensation and verifying audit log entry appears in `/audit`.
+  - Displays paginated audit log table with date, actor, event, and status.
+  - Displays saga compensation events and security rejection records.
+  - Filterable by actor and event category.
+  - **Tenant Boundary:** Displays ONLY audit logs belonging to caller's active organization.
+- **Tests & Verification:** Browser test navigating to `/audit` and verifying presence of audit rows.
 - **Status:** `NOT_STARTED`
 
 #### FC-032 | M8 | In-App Notification Feed & Delivery Preferences
 - **Milestone:** M8
-- **Capability:** User notification center for invitations, task assignments, and workflow failures.
-- **Current Evidence:** Header renders placeholder notification dot (`src/app/org/[orgId]/layout.tsx:47`). Pusher events fire, but no persistent notification drawer exists.
-- **Missing Behavior:** Notification popover in top header displaying recent alerts with read/unread tracking.
-- **Required Outcome:** Build `NotificationBell` component in header showing recent activity; persist notifications in database.
+- **Capability:** In-app notification bell and popover for task assignments and workflow completions.
+- **Current Evidence:** Header renders a notification bell icon, but clicking it does nothing.
+- **Missing Behavior:** Notification popover listing unread notifications with "mark as read" controls.
+- **Required Outcome:** Build `NotificationPopover.tsx`; implement `getNotifications` and `markNotificationRead` server actions.
 - **Dependencies:** FC-006, FC-026
-- **Files Involved:** `src/app/org/[orgId]/layout.tsx`, `src/features/organizations/components/NotificationBell.tsx`
+- **Files Involved:** `src/features/organizations/components/NotificationPopover.tsx`, `src/app/actions/notifications/notificationActions.ts`
 - **Acceptance Criteria:**
-  - User receives in-app notification when assigned to a task or when an invited user joins.
-  - Notifications display unread badge; clicking marks as read.
-- **Tests & Verification:** Browser test triggering assignment and asserting notification receipt.
+  - Task assignment or workflow failure generates an in-app notification.
+  - Clicking bell opens popover with unread items and unread count badge.
+  - User can mark individual notifications or all as read.
+- **Tests & Verification:** Integration test creating notification and asserting popover rendering.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -787,46 +950,46 @@ flowchart TD
 
 #### FC-033 | M9 | Decommission Broken Razorpay Checkout & Reset Commercial UX
 - **Milestone:** M9
-- **Capability:** Clean removal of incomplete commercial flows to satisfy Gate G0 (Scope Truth).
-- **Current Evidence:** `src/app/org/[orgId]/Tasks/page.tsx:7` renders `UpgradeButton` which opens an unfinished Razorpay subscription checkout.
-- **Missing Behavior:** Clean free-tier experience with no dead payment buttons.
-- **Required Outcome:** Remove `UpgradeButton` from `/Tasks`; return 501 Not Implemented on `/api/razerpay/*`; display "Developer Edition (Unlimited)" badge in settings.
+- **Capability:** Complete removal of dead billing buttons and deceptive upgrade CTAs.
+- **Current Evidence:** `Tasks/page.tsx` renders `UpgradeButton` pointing to broken Razorpay modal; sidebar hints at commercial limits.
+- **Missing Behavior:** Honest free "Developer Edition / Team Preview" mode with zero dead-end upgrade buttons.
+- **Required Outcome:** Remove `UpgradeButton` from `Tasks/page.tsx`; remove broken billing modals; update sidebar to display "Team Preview" badge.
 - **Dependencies:** FC-001
-- **Files Involved:** `src/app/org/[orgId]/Tasks/page.tsx`, `src/app/api/razerpay/create-order/route.ts`, `src/app/org/[orgId]/settings/page.tsx`
+- **Files Involved:** `src/app/org/[orgId]/Tasks/page.tsx`, `src/features/organizations/components/Sidebar.tsx`
 - **Acceptance Criteria:**
-  - Zero broken payment buttons or checkout dialogs appear in the application.
-  - Settings page honestly communicates tier status as free development preview.
-- **Tests & Verification:** Code audit and browser walkthrough verifying complete absence of dead checkout flows.
+  - Zero dead "Upgrade" buttons or broken Razorpay modals exist in the application.
+  - Users have full access to all v1 features without artificial payment barriers.
+  - Verified under Gate G0 (Scope Truth).
+- **Tests & Verification:** Grep codebase for `UpgradeButton` and verify 0 user-facing occurrences; browser audit of all navigation views.
 - **Status:** `NOT_STARTED`
 
 #### FC-034 | M9 | Navigation Audit, Dead-End Elimination & Route Normalization
 - **Milestone:** M9
-- **Capability:** Flawless top-level navigation without 404s or casing bugs.
-- **Current Evidence:** Sidebar uses uppercase `/Tasks` instead of `/tasks`. No link exists for Runs. Dead routes exist for `/onboarding` and `/select-org`.
-- **Missing Behavior:** Normalized lowercase URLs and complete sidebar navigation.
-- **Required Outcome:** Standardize all routes to lowercase (`/tasks`); add "Runs" to sidebar; verify every link in `Sidebar.tsx` resolves to an active page.
+- **Capability:** Seamless sidebar navigation without 404 links or uppercase URL quirks.
+- **Current Evidence:** Sidebar links to non-existent `/runs`; route `/Tasks` has uppercase casing quirk; dead settings links exist.
+- **Missing Behavior:** Normalized lowercase routes (`/tasks`) and 100% resolution of every sidebar link.
+- **Required Outcome:** Normalize route `/Tasks` to `/tasks` (with redirect for backwards compatibility); update sidebar links; audit all routes.
 - **Dependencies:** FC-004, FC-024, FC-031
-- **Files Involved:** `src/features/organizations/components/Sidebar.tsx`, `src/app/org/[orgId]/Tasks/`
+- **Files Involved:** `src/features/organizations/components/Sidebar.tsx`, `src/app/org/[orgId]/tasks/page.tsx`
 - **Acceptance Criteria:**
-  - Every sidebar link (Dashboard, Tasks, Projects, Workflows, Runs, AI Assistant, Members, Settings, Audit Logs) resolves cleanly.
-  - Active route highlighted correctly in sidebar.
-  - Zero dead navigation links across entire product surface.
-- **Tests & Verification:** Automated crawler asserting HTTP 200 on every reachable internal link.
+  - Every link in sidebar (Projects, Tasks, Workflows, Runs, AI, Audit, Members, Settings) resolves to a 200 OK page.
+  - Zero 404 errors encountered during full sidebar navigation traversal.
+- **Tests & Verification:** Automated crawler visiting every sidebar href and asserting HTTP 200 response.
 - **Status:** `NOT_STARTED`
 
 #### FC-035 | M9 | Component State Completeness: Loading, Empty, Error & 404
 - **Milestone:** M9
-- **Capability:** Polished asynchronous states and graceful error boundaries.
-- **Current Evidence:** Several pages lack skeleton loaders or helpful empty states when zero items exist.
-- **Missing Behavior:** Consistent loading skeletons, clear empty state illustrations, and user-friendly error boundaries.
-- **Required Outcome:** Add `loading.tsx` and `error.tsx` across core routes (`projects`, `tasks`, `workflows`, `runs`); build empty states with "Create your first..." CTA buttons.
+- **Capability:** High-fidelity UI states across all primary application views.
+- **Current Evidence:** Many pages lack skeleton loaders, empty state cards, or localized error boundaries.
+- **Missing Behavior:** Consistent skeleton loaders, helpful empty state illustrations, and actionable error states.
+- **Required Outcome:** Add `loading.tsx` and `error.tsx` across core routes; enhance empty states with clear "Create" CTAs.
 - **Dependencies:** FC-034
-- **Files Involved:** `src/app/org/[orgId]/projects/loading.tsx`, `src/app/org/[orgId]/workflows/loading.tsx`, `src/app/org/[orgId]/runs/loading.tsx`
+- **Files Involved:** `src/app/org/[orgId]/tasks/loading.tsx`, `src/app/org/[orgId]/projects/loading.tsx`, `src/components/ui/EmptyState.tsx`
 - **Acceptance Criteria:**
-  - Every data table shows skeleton loader during server fetches.
-  - Empty tables display friendly illustration and direct CTA button.
-  - Unhandled server errors render recoverable error screen with retry button.
-- **Tests & Verification:** Visual audit of empty organization state and error injection tests.
+  - Loading states render smooth skeleton placeholders without layout shifts.
+  - Empty lists (no tasks, no workflows, no runs) render friendly illustration and action button.
+  - Unhandled errors render localized error boundary with "Try Again" button.
+- **Tests & Verification:** Browser visual check verifying empty and loading states.
 - **Status:** `NOT_STARTED`
 
 ---
@@ -835,31 +998,33 @@ flowchart TD
 
 #### FC-036 | M10 | Seeded Demonstration Organization (`forge-demo`) & Demo Script
 - **Milestone:** M10
-- **Capability:** Deterministic demo environment and structured product walkthrough.
-- **Current Evidence:** `prisma/seed.ts` creates empty orgs without starter workflows or varied tasks.
-- **Missing Behavior:** Comprehensive seed populating ready-to-demo data and a structured 3-minute video walkthrough script.
-- **Required Outcome:** Enhance `prisma/seed.ts` to create `forge-demo` containing 2 projects, 8 diverse tasks, 2 pre-configured workflows, and seeded run history; author `docs/demo-script.md`.
+- **Capability:** Deterministic demo environment and structured 3-5 minute product walkthrough (Journey J10A).
+- **Current Evidence:** `prisma/seed.ts` creates empty organizations without workflows, varied tasks, or run history.
+- **Missing Behavior:** Comprehensive seed populating ready-to-demo organization and a scripted product walkthrough.
+- **Required Outcome:** Enhance `prisma/seed.ts` to create `forge-demo` containing 2 projects, 8 diverse tasks, 2 pre-configured workflows, and seeded run history; author `forge/docs/demo-script.md`.
 - **Dependencies:** FC-023, FC-024, FC-027
 - **Files Involved:** `prisma/seed.ts`, `forge/docs/demo-script.md`
 - **Acceptance Criteria:**
-  - Running `npx prisma db seed` creates `demo@forge.com` user and `forge-demo` org.
+  - Running `npx prisma db seed` creates `demo@forge.com` user and `forge-demo` organization.
   - Evaluator logging in immediately sees populated dashboard, active automations, and run history.
-  - Demo script provides uncut 3-to-5 minute step-by-step walkthrough.
-- **Tests & Verification:** Clean machine installation &rarr; run seed &rarr; follow demo script verbatim &rarr; 100% success.
+  - Demo script provides an uncut 3-to-5 minute step-by-step walkthrough covering onboarding, tasks, visual workflow creation, reactive trigger execution, run diagnostics, and AI assistant interaction.
+- **Tests & Verification:** Clean machine setup &rarr; run seed &rarr; follow demo script verbatim &rarr; 100% success without manual SQL or workarounds.
 - **Status:** `NOT_STARTED`
 
-#### FC-037 | M10 | Full Customer Journey Acceptance Matrix (J1–J7) & Gate Closure (G0–G7)
+#### FC-037 | M10 | Full Customer Journey Acceptance Matrix (J1–J8, J9A, J10A) & Dynamic Gate Closure (G0–G7)
 - **Milestone:** M10
-- **Capability:** Rigorous formal product acceptance testing.
-- **Current Evidence:** Unit tests pass (1,978 tests), but full end-to-end journey tests covering live user flows have not been executed.
-- **Missing Behavior:** Automated browser-level acceptance suite executing Journeys J1 through J7.
-- **Required Outcome:** Author and run `src/tests/e2e/product-acceptance.test.ts` verifying all core customer journeys against real services.
+- **Capability:** Rigorous formal product acceptance testing and dynamic gate verification.
+- **Current Evidence:** Historical 1,978-test count is a static metric; full end-to-end customer journeys lack formal automated verification.
+- **Missing Behavior:** Automated browser-level acceptance suite executing core product journeys (J1 through J8, J9A, J10A) and formal sign-off on Gates G0 through G7.
+- **Required Outcome:** Execute dynamic verification suite; author `src/tests/e2e/product-acceptance.test.ts`; record dynamic verification report.
 - **Dependencies:** FC-002 through FC-035
-- **Files Involved:** `src/tests/e2e/product-acceptance.test.ts`, `forge/docs/product/acceptance-report.md`
+- **Files Involved:** `src/tests/e2e/product-acceptance.test.ts`, `forge/docs/product/verification-record.md`
 - **Acceptance Criteria:**
-  - Journeys J1 (Signup), J2 (Invite), J3 (Tasks), J4 (Automation), J5 (Rollback), J6 (AI), and J7 (Search) pass with zero errors.
-  - All 8 Release Gates (G0–G7) formally closed with attached logs.
-- **Tests & Verification:** Automated Playwright/Jest E2E acceptance run against staging database.
+  - Journeys J1 (Signup paths A-D), J2 (Invite), J3 (Tasks), J4 (Workflows), J5 (Triggers), J6 (Runs), J7 (AI), J8 (Files), J9A (Engine Recovery), and J10A (Demo Walkthrough) pass with zero errors.
+  - **Dynamic Gate G4 Verified:** Full test suite clean, `tsc --noEmit` clean (0 errors), lint clean, migrations valid, production build successful, Playwright E2E passing.
+  - Verification artifact recorded with tested Commit SHA, execution timestamp (UTC), runtime environment, exact command lines, exit codes, and dynamic test totals.
+  - **ZERO remaining product code to write before M11 entry.**
+- **Tests & Verification:** Automated Playwright/Vitest acceptance run against staging database with logged execution outputs.
 - **Status:** `NOT_STARTED`
 
 #### FC-038 | M10 | Release 1 Product Documentation, Quickstart & Truthful Feature Catalog
@@ -867,23 +1032,77 @@ flowchart TD
 - **Capability:** Authoritative public documentation reflecting the completed product.
 - **Current Evidence:** Root README contains historical claims and old tracker citations.
 - **Missing Behavior:** Finalized user-facing product guide, quickstart manual, and honest feature status table.
-- **Required Outcome:** Update root `README.md` and author `docs/user-guide.md` documenting workflow authoring, trigger configurations, and AI assistant capabilities.
+- **Required Outcome:** Update root `README.md` and author `forge/docs/user-guide.md` documenting workflow authoring, trigger configurations, and AI assistant capabilities.
 - **Dependencies:** FC-036, FC-037
-- **Files Involved:** `README.md`, `forge/docs/user-guide.md`
+- **Files Involved:** `README.md`, `forge/README.md`, `forge/docs/user-guide.md`
 - **Acceptance Criteria:**
   - README accurately describes all working features with zero misleading claims.
   - Step-by-step quickstart guide tested on fresh machine.
+  - Feature catalog reflects code reality with 100% honesty.
 - **Tests & Verification:** Peer review of documentation against running product.
 - **Status:** `NOT_STARTED`
-
 ---
 
 ## 7. The Final Phase: DevOps, Cloud & Platform Observability (M11)
 
-> [!IMPORTANT]
-> **Product Complete Exit Gate & M11 Entry Gate:**  
-> **Milestone M11 commences ONLY AFTER Milestone M10 is fully closed.**  
-> Forge must be 100% complete, demonstrable, and verified as a software product before cloud hosting and infrastructure engineering begin. M11 does NOT contain user-facing feature work.
+### 7.1 Unambiguous M10 Exit Gate & M11 Entry Gate Specifications
+
+The boundary between Product Completion (M0–M10) and Platform Operations (M11) is absolute:
+
+```mermaid
+flowchart TD
+    subgraph PRODUCT_PHASE["Milestones M0 – M10: Product Completion Phase"]
+        M0_M9["Milestones M0 – M9 Complete"] --> M10_VERIF["Milestone M10 Acceptance & Dynamic Gate G4 Verified"]
+        M10_VERIF --> M10_EXIT_GATE{"M10 PRODUCT COMPLETE EXIT GATE\n✓ All product journeys (J1–J8, J9A, J10A) pass\n✓ Dynamic Gate G4 clean (tsc, lint, tests, build, E2E)\n✓ Clean seed demo (forge-demo) succeeds under 5 mins\n✓ Zero broken links, fake CTAs, or dead routes (G0)\n✓ ZERO lines of product/feature code remaining"}
+    end
+
+    subgraph CLOUD_PHASE["Milestone M11: DevOps, Cloud Hosting & Platform Observability Phase"]
+        M10_EXIT_GATE -- Formal Sign-off --> M11_ENTRY_GATE{"M11 ENTRY GATE\n✓ Strictly platform infrastructure, deployment & ops\n✓ ZERO UI components or user routes permitted\n✓ ZERO product-level feature changes permitted"}
+        M11_ENTRY_GATE --> FC039["FC-039: Cloud Architecture & Managed Infra"]
+        FC039 --> FC040["FC-040: Production CI/CD & Migration Safety"]
+        FC039 --> FC041["FC-041: Centralized Platform Telemetry"]
+        FC040 --> FC042["FC-042: Disaster Recovery & DR Runbooks"]
+        FC041 --> FC042
+    end
+```
+
+#### M10 Product Complete Exit Gate Criteria
+1. **Milestones M0 through M9 100% Done:** Every assignment from `FC-001` through `FC-035` is completed and verified against code.
+2. **All Core Product Journeys Verified:** Automated tests prove Journeys J1 (Signup paths A-D), J2 (Invites), J3 (Tasks), J4 (Workflows), J5 (Triggers), J6 (Runs), J7 (AI), J8 (Files), J9A (Engine Recovery), and J10A (Demo Walkthrough) execute cleanly.
+3. **Dynamic Gate G4 Passed:** Clean execution of `tsc --noEmit` (0 errors), lint, test suite, migrations, production build, and Playwright E2E. Formal verification report logged with exact commit SHA.
+4. **Gate G0 Scope Truth Verified:** Zero dead-end links, zero fake buttons, zero broken billing CTAs.
+5. **Deterministic Demo Validated:** `npx prisma db seed:demo` boots `forge-demo` and the 3-5 minute demo walkthrough script executes flawlessly.
+6. **ZERO Product Feature Work Remaining:** No unfinished user journeys, UI components, or application routes.
+
+#### M11 Platform Infrastructure Entry Gate Criteria
+1. **Formal M10 Exit Sign-off:** M11 commences ONLY after M10 Exit Gate is certified.
+2. **Strict Scope Enforcement:** M11 work is strictly restricted to:
+   - Cloud hosting and runtime provisioning (Vercel Enterprise / AWS ECS Fargate).
+   - Managed cloud databases, Upstash Redis clusters, QStash message queues, and production storage.
+   - Production CI/CD pipelines (GitHub Actions).
+   - Centralized observability (OpenTelemetry, Datadog/Axiom, Sentry) and alerting (PagerDuty/Slack).
+   - Backup snapshots, disaster recovery drills, and operational runbooks.
+3. **Prohibited in M11:** Creating new React components, modifying user navigation, adding API endpoints for product features, or changing business logic. Any such task is rejected back to M0–M10.
+
+### 7.2 Product Engine Recovery (M6/M10) vs Platform Infrastructure Recovery (M11)
+
+Workflow run recovery is a user-facing product capability, while cluster resilience and failover belong to platform operations:
+
+```mermaid
+flowchart TD
+    subgraph ENGINE_REC["Product Engine Recovery (Milestones M6 & M10 / Journey J9A)"]
+        direction TB
+        E_ERR["Step Execution Failure (Network timeout / third-party 500)"] --> E_UI["Run Inspector Drawer (/runs/[id])"]
+        E_UI --> E_OP["Operator Actions directly in UI:\n- Click 'Retry Step' (Resumes from failed step with saved context)\n- Click 'Cancel Run' (Gracefully aborts in-flight execution)"]
+        E_OP --> E_IDEM["Engine Mechanics:\n- Transactional Outbox Redrive\n- Redis Distributed Lock Release\n- Step Idempotency Key De-duplication\n- Backward Saga Compensation Rollback"]
+    end
+
+    subgraph INFRA_REC["Platform Infrastructure Incident Recovery (Milestone M11 / Journey J9B)"]
+        direction TB
+        I_OUT["Cloud Platform Outage (DB failover / Redis split-brain / host crash)"] --> I_ALERT["Platform Observability & PagerDuty Alert"]
+        I_ALERT --> I_RUNBOOK["Platform Engineer Executes DR Runbook:\n- Managed PostgreSQL Replica Promotion (PITR)\n- QStash Dead-Letter Queue Redrive\n- Container Auto-Healing / Pod Restart\n- Distributed Tracing Latency Triage"]
+    end
+```
 
 ### Milestone M11: DevOps, Cloud and Platform Observability
 
@@ -896,7 +1115,7 @@ flowchart TD
   - Configure distributed Upstash Redis cluster with TLS.
   - Configure production QStash message bus and topic routing.
   - Configure production Pinecone vector index and UploadThing storage buckets.
-- **Dependencies:** M10 Exit Gate
+- **Dependencies:** M10 Product Complete Exit Gate
 - **Status:** `NOT_STARTED`
 
 #### FC-040 | M11 | Production CI/CD Automation & Migration Safety
@@ -923,7 +1142,7 @@ flowchart TD
 
 #### FC-042 | M11 | Disaster Recovery, Backup Verification & Operational Runbooks
 - **Milestone:** M11
-- **Capability:** Enterprise reliability, backup restoration drills, and operational runbooks.
+- **Capability:** Enterprise reliability, backup restoration drills, and operational runbooks (Journey J9B).
 - **Scope:**
   - Automated daily PostgreSQL snapshots with tested point-in-time recovery (PITR).
   - Disaster recovery drill documenting RTO (<30 mins) and RPO (<5 mins).
@@ -932,7 +1151,6 @@ flowchart TD
 - **Status:** `NOT_STARTED`
 
 ---
-
 ## 8. Status & Traceability Master Matrix
 
 | ID | Milestone | Capability / Assignment Title | Priority | Size | Status | Blockers / Prereqs |
@@ -973,18 +1191,207 @@ flowchart TD
 | **FC-034** | **M9** | Navigation Audit, Dead-End Elimination & Route Normalization | P0 | S | `NOT_STARTED` | FC-004, FC-024, FC-031 |
 | **FC-035** | **M9** | Component State Completeness: Loading, Empty, Error & 404 | P1 | M | `NOT_STARTED` | FC-034 |
 | **FC-036** | **M10** | Seeded Demonstration Organization (`forge-demo`) & Demo Script | P0 | M | `NOT_STARTED` | FC-023, FC-024, FC-027 |
-| **FC-037** | **M10** | Full Customer Journey Acceptance Matrix (J1–J7) & Gate Closure | P0 | L | `NOT_STARTED` | FC-002 through FC-035 |
+| **FC-037** | **M10** | Full Customer Journey Acceptance Matrix (J1–J8, J9A, J10A) & Dynamic Gate Closure | P0 | L | `NOT_STARTED` | FC-002 through FC-035 |
 | **FC-038** | **M10** | Release 1 Product Documentation, Quickstart & Feature Catalog | P0 | S | `NOT_STARTED` | FC-036, FC-037 |
-| **FC-039** | **M11** | Production Cloud Architecture, Managed Infrastructure & Parity | P1 | XL | `NOT_STARTED` | M10 Complete Gate |
+| **FC-039** | **M11** | Production Cloud Architecture, Managed Infrastructure & Parity | P1 | XL | `NOT_STARTED` | M10 Exit Gate |
 | **FC-040** | **M11** | Production CI/CD Automation & Migration Safety | P1 | L | `NOT_STARTED` | FC-039 |
 | **FC-041** | **M11** | Centralized Platform Telemetry, Distributed Tracing & Alerting | P1 | L | `NOT_STARTED` | FC-039 |
 | **FC-042** | **M11** | Disaster Recovery, Backup Verification & Operational Runbooks | P1 | M | `NOT_STARTED` | FC-040, FC-041 |
+
+### 8.1 Dependency Integrity Audit & Critical Path Analysis
+
+An automated audit confirms the structural integrity of the 42 assignments:
+1. **Identifier Uniqueness:** Exactly 42 assignments (`FC-001` through `FC-042`), with 0 duplicate identifiers.
+2. **DAG Property (Acyclic):** Every dependency reference points to an existing assignment with a lower identifier (`dep < id`). Zero circular dependency loops exist.
+3. **Milestone Boundary Discipline:** Zero assignments in Milestones M0 through M10 depend on any assignment in Milestone M11. The flow is strictly unidirectional into the M10 Exit Gate.
+4. **Critical Path Traced:**
+   ```text
+   FC-001 (M0: Tracker Authority)
+     │
+     ▼
+   FC-002 (M1: Registration /signup)
+     │
+     ▼
+   FC-003 (M1: Org Onboarding /onboarding)
+     │
+     ▼
+   FC-008 (M2: Project Lifecycle)
+     │
+     ▼
+   FC-012 (M3: Canvas Authoring)
+     │
+     ▼
+   FC-013 (M3: Property Drawer)
+     │
+     ▼
+   FC-014 (M3: Graph Validation)
+     │
+     ▼
+   FC-015 (M3: Draft vs Published)
+     │
+     ▼
+   FC-017 (M4: Dispatch Engine)
+     │
+     ▼
+   FC-018 (M4: Task Event Producers)
+     │
+     ▼
+   FC-020 (M5: Native Actions)
+     │
+     ▼
+   FC-021 (M5: Task Update & Saga Compensation)
+     │
+     ▼
+   FC-023 (M5: 3 Automation Scenarios)
+     │
+     ▼
+   FC-024 (M6: Run History /runs)
+     │
+     ▼
+   FC-025 (M6: Step Inspector)
+     │
+     ▼
+   FC-026 (M6: Operator Retry/Cancel Controls)
+     │
+     ▼
+   FC-036 (M10: Seeded Demo forge-demo & Script)
+     │
+     ▼
+   FC-037 (M10: Dynamic Gate G4 & Full Journey Verification)
+     │
+     ▼
+   FC-038 (M10: Release 1 Product Documentation)
+     │
+     ▼
+   [M10 PRODUCT COMPLETE EXIT GATE]
+   ```
+
+### 8.2 Visual Dependency Graph
+
+```mermaid
+flowchart TD
+    classDef done fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff;
+    classDef crit fill:#1e3a8a,stroke:#3b82f6,stroke-width:3px,color:#fff;
+    classDef norm fill:#1e293b,stroke:#64748b,stroke-width:1px,color:#cbd5e1;
+    classDef gate fill:#047857,stroke:#10b981,stroke-width:3px,color:#fff;
+    classDef infra fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fff;
+
+    FC001["FC-001: Tracker Authority"]:::done --> FC002["FC-002: Registration /signup"]:::crit
+    FC001 --> FC033["FC-033: Decommission Razorpay"]:::norm
+    
+    FC002 --> FC003["FC-003: Org Onboarding"]:::crit
+    FC002 --> FC007["FC-007: Profile & Settings"]:::norm
+    
+    FC003 --> FC004["FC-004: Org Switcher"]:::norm
+    FC003 --> FC005["FC-005: Member RBAC"]:::norm
+    FC003 --> FC006["FC-006: Resend Invites"]:::norm
+    FC003 --> FC008["FC-008: Project Lifecycle"]:::crit
+    
+    FC004 --> FC034["FC-034: Navigation Audit"]:::norm
+    FC005 --> FC009["FC-009: Task Status Transitions"]:::norm
+    FC008 --> FC009
+    FC008 --> FC012["FC-012: Canvas Authoring"]:::crit
+    
+    FC009 --> FC010["FC-010: Task Comments"]:::norm
+    FC009 --> FC011["FC-011: Task Filters/Search"]:::norm
+    FC009 --> FC027["FC-027: AI Assistant /ai"]:::norm
+    FC009 --> FC030["FC-030: File Vector Tombstone"]:::norm
+    
+    FC012 --> FC013["FC-013: Node Property Drawer"]:::crit
+    FC012 --> FC027
+    
+    FC013 --> FC014["FC-014: Graph Validation"]:::crit
+    FC013 --> FC020["FC-020: Register Native Actions"]:::crit
+    
+    FC014 --> FC015["FC-015: Draft vs Published"]:::crit
+    FC015 --> FC016["FC-016: Test-Run Drawer"]:::norm
+    FC015 --> FC017["FC-017: Event Dispatch Engine"]:::crit
+    
+    FC017 --> FC018["FC-018: Task CDC Producers"]:::crit
+    FC017 --> FC023["FC-023: 3 Automation Scenarios"]:::crit
+    FC017 --> FC024["FC-024: Run History /runs"]:::crit
+    
+    FC018 --> FC019["FC-019: Trigger Filters & Storm Def"]:::norm
+    
+    FC020 --> FC021["FC-021: Task Update & Saga Comp"]:::crit
+    FC020 --> FC022["FC-022: SSRF-Safe HTTP Action"]:::norm
+    FC020 --> FC023
+    FC021 --> FC023
+    
+    FC024 --> FC025["FC-025: Step Inspector Drawer"]:::crit
+    FC024 --> FC031["FC-031: Audit Log Viewer"]:::norm
+    FC024 --> FC034
+    FC024 --> FC036["FC-036: Seed Demo forge-demo"]:::norm
+    
+    FC025 --> FC026["FC-026: Operator Controls Retry/Cancel"]:::crit
+    
+    FC006 --> FC032["FC-032: Notification Feed"]:::norm
+    FC026 --> FC032
+    
+    FC027 --> FC028["FC-028: Tool Proposal Cards"]:::norm
+    FC027 --> FC029["FC-029: Chat Session Drawer"]:::norm
+    FC027 --> FC036
+    
+    FC031 --> FC034
+    FC034 --> FC035["FC-035: Loading/Empty/Error UI"]:::norm
+    
+    FC023 --> FC036
+    FC036 --> FC038["FC-038: Product Documentation"]:::crit
+    
+    FC035 --> FC037["FC-037: Dynamic Gate G4 & Full Journeys"]:::crit
+    FC026 --> FC037
+    FC037 --> FC038
+    
+    FC038 --> M10_EXIT{"M10 PRODUCT COMPLETE EXIT GATE\n(Product Complete & Verified)"}:::gate
+    
+    subgraph POST_PRODUCT_INFRA["Milestone M11: DevOps, Cloud Hosting & Platform Ops"]
+        M10_EXIT --> FC039["FC-039: Cloud Architecture & Managed Infra"]:::infra
+        FC039 --> FC040["FC-040: Production CI/CD & Migration Safety"]:::infra
+        FC039 --> FC041["FC-041: Platform Telemetry & Alerting"]:::infra
+        FC040 --> FC042["FC-042: Disaster Recovery & DR Runbooks"]:::infra
+        FC041 --> FC042
+    end
+```
 
 ---
 
 ## 9. Next Action: The First Implementation Task
 
-The first assignment to execute is:
+The very first implementation task to execute is:
+
 ### **`FC-002` — Self-Service User Registration (`/signup`)**
-- **Direct Blocker:** Blocks `FC-003` (Organization Onboarding Flow).
-- **Rationale:** No user can create an organization, build a workflow, or trigger an automation without first having an identity. Delivering `FC-002` followed immediately by `FC-003` unlocks the critical path for the entire product lifecycle without relying on local seed credentials.
+
+```text
+Assignment ID:       FC-002
+Milestone:           M1 (Identity, Accounts and Organizations)
+Priority:            P0 (Critical Blocker)
+Estimated Effort:    Small (1-2 days)
+Direct Dependency:   FC-001 (DONE)
+Directly Unblocks:   FC-003 (First-Time Organization Onboarding Flow)
+Key Source Files:    src/app/signup/page.tsx
+                     src/app/login/login-form.tsx
+                     src/app/actions/user/registerUser.ts
+```
+
+#### Detailed Execution Scope:
+1. **Build Signup View (`src/app/signup/page.tsx`):**  
+   - Modern, high-conversion registration form matching existing Forge dark theme.
+   - Form fields: Full Name, Email Address, Password, Confirm Password.
+   - Support optional `?inviteToken=...` query parameter to preserve invitation acceptance context.
+2. **Wire Server Action (`src/app/actions/user/registerUser.ts`):**  
+   - Validate input schemas using Zod (email format, password &ge; 8 characters).
+   - Check email uniqueness in Postgres `User` table; return user-friendly error if email already registered.
+   - Hash password securely using `bcryptjs` (salt rounds &ge; 10).
+   - Commit `User` record to database.
+   - Automatically sign in caller via NextAuth credentials or return success token for immediate sign-in.
+3. **Dispatch Router Logic (`src/app/router/page.tsx`):**  
+   - Path A (New Founder without invite): User has 0 memberships &rarr; automatically redirected to `/onboarding` (`FC-003`).
+   - Path B (Invited Member): User has `inviteToken` &rarr; automatically redirected to `/invite/[token]` to join team.
+4. **Update Login Screen (`src/app/login/login-form.tsx`):**  
+   - Convert the inert `<button>Create account</button>` at line 106 into a Next.js `<Link href="/signup">` component.
+   - Remove dead Google sign-in button pending schema extension.
+
+#### Verification Criteria:
+- Automated test submitting valid registration commits user with bcrypt hash.
+- Automated test submitting duplicate email returns friendly error message.
+- Browser test navigating `/login` &rarr; click "Create account" &rarr; fill `/signup` &rarr; automatically arrives on `/onboarding`.
