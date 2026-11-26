@@ -1,43 +1,44 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
   LogIn,
   Volume2,
   VolumeX,
+  Play,
+  Pause,
   ChevronRight,
+  ChevronLeft,
   ArrowUpRight,
 } from "lucide-react";
 
-// --- System Movement Chapters ---
-interface SystemMovement {
+// --- System Chapters (Kind 50 / Bizarro Narrative Architecture) ---
+interface SystemChapter {
   id: string;
   index: string;
   title: string;
   subtitle: string;
   detail: string;
-  spec: {
-    primitive: string;
-    guarantee: string;
-    isolation: string;
-  };
+  quote: string;
+  metrics: { label: string; value: string }[];
   code: string;
 }
 
-const MOVEMENTS: SystemMovement[] = [
+const CHAPTERS: SystemChapter[] = [
   {
     id: "identity",
     index: "01",
     title: "Tenant sanctuary & mutex",
     subtitle: "PostgreSQL row lock serialization",
     detail: "Complete account onboarding, active organization context switching, and strict last-administrator safeguards enforced via database row-level mutex transactions.",
-    spec: {
-      primitive: "SELECT FOR UPDATE",
-      guarantee: "Sole Admin Invariant",
-      isolation: "Read committed",
-    },
+    quote: "A team should never be left without an anchor. Row locks guarantee exactly one admin always remains.",
+    metrics: [
+      { label: "Primitive", value: "SELECT FOR UPDATE" },
+      { label: "Isolation", value: "Read committed" },
+      { label: "Guarantee", value: "Sole admin invariant" },
+    ],
     code: `await db.$transaction(async (tx) => {
   await tx.$executeRaw\`SELECT id FROM "Organization" WHERE id = \${orgId} FOR UPDATE\`;
   const admins = await tx.membership.count({ where: { organizationId: orgId, role: "ADMIN" } });
@@ -51,11 +52,12 @@ const MOVEMENTS: SystemMovement[] = [
     title: "Transactional event outbox",
     subtitle: "Atomic domain CDC persistence",
     detail: "Domain events (task.created, task.updated) are written to PostgreSQL inside the same atomic transaction as the mutation. Distributed Redis leases prevent split-brain workers.",
-    spec: {
-      primitive: "Dual-write elimination",
-      guarantee: "At-least-once delivery",
-      isolation: "Postgres + Redis lease",
-    },
+    quote: "No ghost events. If the database rolls back, the event was never born.",
+    metrics: [
+      { label: "Outbox pattern", value: "Dual-write elimination" },
+      { label: "Delivery", value: "At-least-once" },
+      { label: "Lock mechanism", value: "Redis lease mutex" },
+    ],
     code: `await db.$transaction([
   db.task.update({ where: { id: taskId }, data: { status: "IN_PROGRESS" } }),
   db.outboxEvent.create({ data: { type: "task.updated", payload: { taskId, orgId } } })
@@ -67,11 +69,12 @@ const MOVEMENTS: SystemMovement[] = [
     title: "Deterministic saga engine",
     subtitle: "Reverse rollback compensation",
     detail: "Workflows execute as deterministic directed acyclic graphs. When an external step times out or fails, registered backward compensation routines trigger in reverse order.",
-    spec: {
-      primitive: "Saga backward unwind",
-      guarantee: "Zero orphaned state",
-      isolation: "Deterministic DAG",
-    },
+    quote: "When distributed steps break in the night, the engine walks back its footprints clean.",
+    metrics: [
+      { label: "Topology", value: "Deterministic DAG" },
+      { label: "Rollback", value: "Reverse saga chain" },
+      { label: "Side effects", value: "Zero orphaned state" },
+    ],
     code: `try {
   await executeStep(step, context);
 } catch (error) {
@@ -88,11 +91,12 @@ const MOVEMENTS: SystemMovement[] = [
     title: "Midnight autonomous agent",
     subtitle: "Inline human approval boundary",
     detail: "A conversational assistant that reasons over organization context and proposes structural DAG adjustments. High-impact operations present reviewable diff cards for human sign-off.",
-    spec: {
-      primitive: "Tool execution gateway",
-      guarantee: "Human-in-the-loop",
-      isolation: "Scoped vector sandbox",
-    },
+    quote: "Intelligence that asks before it cuts. Critical migrations require human touch.",
+    metrics: [
+      { label: "Execution model", value: "Tool proposal gateway" },
+      { label: "Safety tier", value: "Human-in-the-loop" },
+      { label: "Memory", value: "Scoped vector sandbox" },
+    ],
     code: `const proposal = await agent.planModification({ prompt, currentWorkflow });
 if (proposal.criticality === "HIGH") {
   return renderApprovalCard({ proposal, requiresSignature: true });
@@ -104,11 +108,12 @@ if (proposal.criticality === "HIGH") {
     title: "Whispered notification fabric",
     subtitle: "Cryptographic 24-hour tokens",
     detail: "Team member invitation lifecycles, transactional alerts, and delivery feedback backed by Resend API infrastructure with recipient boundary verification.",
-    spec: {
-      primitive: "crypto.randomUUID()",
-      guarantee: "Single-tenant scope",
-      isolation: "24-hour auto-expire",
-    },
+    quote: "Invitations that respect borders. Tokens expire like milk at dawn.",
+    metrics: [
+      { label: "Token entropy", value: "crypto.randomUUID()" },
+      { label: "TTL lifespan", value: "24-hour auto-expire" },
+      { label: "Scope", value: "Single-tenant boundary" },
+    ],
     code: `const token = crypto.randomUUID();
 await db.invitation.create({
   data: { email, token, expiresAt: new Date(Date.now() + 86400000), organizationId }
@@ -120,11 +125,12 @@ await db.invitation.create({
     title: "Semantic vector lifecycle",
     subtitle: "Pinecone indexing & deterministic tombstones",
     detail: "Project attachments upload to UploadThing, parse into semantic markdown chunks, generate embeddings, and ensure clean vector tombstoning on document deletion.",
-    spec: {
-      primitive: "Cosine hybrid index",
-      guarantee: "Tombstone on delete",
-      isolation: "Partitioned RAG",
-    },
+    quote: "A system that forgets on command. Deleting a document wipes its ghost from vector space.",
+    metrics: [
+      { label: "Search index", value: "Cosine hybrid vector" },
+      { label: "Chunking", value: "Semantic boundary" },
+      { label: "Tombstoning", value: "Synchronous delete" },
+    ],
     code: `await pinecone.index.deleteMany({
   filter: { organizationId: { $eq: orgId }, documentId: { $eq: fileId } }
 });`,
@@ -139,6 +145,8 @@ interface DagNode {
   category: string;
   signature: string;
   compensation: string;
+  x: number;
+  y: number;
 }
 
 const DAG_NODES: DagNode[] = [
@@ -149,6 +157,8 @@ const DAG_NODES: DagNode[] = [
     category: "Domain CDC trigger",
     signature: "{ taskId: UUID, priority: 'URGENT', organizationId: UUID }",
     compensation: "None (Event source invariant)",
+    x: 12,
+    y: 35,
   },
   {
     id: "filter",
@@ -157,6 +167,8 @@ const DAG_NODES: DagNode[] = [
     category: "Isolated logic gate",
     signature: "payload.priority === 'URGENT' -> [true branch]",
     compensation: "None (Stateless evaluation)",
+    x: 37,
+    y: 35,
   },
   {
     id: "mutation",
@@ -165,6 +177,8 @@ const DAG_NODES: DagNode[] = [
     category: "Transactional mutation",
     signature: "UPDATE \"Task\" SET assigneeId = $leadId WHERE id = $taskId",
     compensation: "UPDATE \"Task\" SET assigneeId = NULL WHERE id = $taskId",
+    x: 63,
+    y: 35,
   },
   {
     id: "delivery",
@@ -173,6 +187,8 @@ const DAG_NODES: DagNode[] = [
     category: "External provider",
     signature: "resend.emails.send({ to: lead.email, template: 'urgent_triage' })",
     compensation: "AuditLog.append({ event: 'NOTIFICATION_DISPATCH_RECORDED' })",
+    x: 88,
+    y: 35,
   },
 ];
 
@@ -208,25 +224,30 @@ export default function Home() {
   const [ambientAudioActive, setAmbientAudioActive] = useState(false);
   const [tapeWarmth, setTapeWarmth] = useState<"33" | "45">("33");
   const [selectedDagIndex, setSelectedDagIndex] = useState(0);
-  const [selectedMovement, setSelectedMovement] = useState<string>("identity");
+  const [activeChapterIndex, setActiveChapterIndex] = useState(0);
   const [currentTimeUTC, setCurrentTimeUTC] = useState<string>("");
   const [isLoaded, setIsLoaded] = useState(false);
+  const [tapeCounter, setTapeCounter] = useState(14);
+  const [isHoveringCassette, setIsHoveringCassette] = useState(false);
 
-  // Buttery Lerped Mouse Spotlight Coordinates
-  const targetMousePos = useRef({ x: -1000, y: -1000 });
-  const [smoothMousePos, setSmoothMousePos] = useState({ x: -1000, y: -1000 });
+  // Buttery Lerped Mouse Coordinates for Spotlight & Cassette 3D Tilt
+  const targetMousePos = useRef({ x: 0, y: 0 });
+  const [smoothMousePos, setSmoothMousePos] = useState({ x: 0, y: 0 });
+  const [cassetteTilt, setCassetteTilt] = useState({ rotX: 0, rotY: 0 });
 
   // Web Audio & Canvas Spectrum Refs
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cassetteCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const filterNodeRef = useRef<BiquadFilterNode | null>(null);
   const decayingBarsRef = useRef<number[]>(new Array(18).fill(2));
+  const spoolAngleRef = useRef(0);
 
-  // Staggered entry animation on initial mount
+  // Staggered entry animation on mount
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoaded(true), 50);
+    const timer = setTimeout(() => setIsLoaded(true), 40);
     return () => clearTimeout(timer);
   }, []);
 
@@ -243,7 +264,16 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  // Smooth lerp mouse tracking loop
+  // Tape Counter Clock
+  useEffect(() => {
+    if (!ambientAudioActive) return;
+    const interval = setInterval(() => {
+      setTapeCounter((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [ambientAudioActive]);
+
+  // Smooth lerp mouse tracking loop for spotlight and 3D perspective
   useEffect(() => {
     let animId: number;
     const lerpLoop = () => {
@@ -256,6 +286,19 @@ export default function Home() {
           y: prev.y + dy * 0.08,
         };
       });
+
+      // Compute smooth cassette 3D tilt
+      if (typeof window !== "undefined") {
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        const rotY = ((targetMousePos.current.x - cx) / cx) * 12;
+        const rotX = -((targetMousePos.current.y - cy) / cy) * 12;
+        setCassetteTilt((prev) => ({
+          rotX: prev.rotX + (rotX - prev.rotX) * 0.06,
+          rotY: prev.rotY + (rotY - prev.rotY) * 0.06,
+        }));
+      }
+
       animId = requestAnimationFrame(lerpLoop);
     };
     animId = requestAnimationFrame(lerpLoop);
@@ -266,8 +309,188 @@ export default function Home() {
     targetMousePos.current = { x: e.clientX, y: e.clientY };
   };
 
+  // --- Bizarro-Inspired 3D Interactive Cassette Canvas Renderer ---
+  useEffect(() => {
+    const canvas = cassetteCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animId: number;
+
+    const renderCassette = () => {
+      animId = requestAnimationFrame(renderCassette);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Rotate spools if audio is active
+      if (ambientAudioActive) {
+        spoolAngleRef.current += tapeWarmth === "33" ? 0.035 : 0.055;
+      }
+
+      const w = canvas.width;
+      const h = canvas.height;
+      const centerX = w / 2;
+      const centerY = h / 2;
+
+      // Outer Cassette Shell
+      ctx.save();
+      ctx.translate(centerX, centerY);
+
+      // Shell body
+      ctx.fillStyle = "#0c0c10";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(-170, -110, 340, 220, 8);
+      ctx.fill();
+      ctx.stroke();
+
+      // Inner Label Area
+      ctx.fillStyle = "#14141c";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.beginPath();
+      ctx.roundRect(-145, -90, 290, 180, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      // Top label brand line
+      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.font = "bold 10px monospace";
+      ctx.letterSpacing = "2px";
+      ctx.fillText("FORGE // NOCTURNE C-90", -130, -70);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.4)";
+      ctx.font = "9px monospace";
+      ctx.fillText(tapeWarmth === "33" ? "SIDE A · 33⅓ RPM" : "SIDE A · 45 RPM", 40, -70);
+
+      // Center Tape Window cutout
+      ctx.fillStyle = "#08080b";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+      ctx.beginPath();
+      ctx.roundRect(-100, -35, 200, 70, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      // Connecting Magnetic Tape ribbon
+      ctx.strokeStyle = "#40342b";
+      ctx.lineWidth = 12;
+      ctx.beginPath();
+      ctx.moveTo(-50, 0);
+      ctx.lineTo(50, 0);
+      ctx.stroke();
+
+      // Left & Right Spools
+      const drawSpool = (x: number, angle: number, radius: number) => {
+        ctx.save();
+        ctx.translate(x, 0);
+
+        // Wound tape spool radius
+        ctx.fillStyle = "#33261f";
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // White plastic wheel
+        ctx.fillStyle = "#ededed";
+        ctx.beginPath();
+        ctx.arc(0, 0, 16, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Spool teeth
+        ctx.rotate(angle);
+        ctx.strokeStyle = "#08080b";
+        ctx.lineWidth = 2.5;
+        for (let i = 0; i < 6; i++) {
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(0, -14);
+          ctx.stroke();
+          ctx.rotate((Math.PI * 2) / 6);
+        }
+
+        // Center hub hole
+        ctx.fillStyle = "#08080b";
+        ctx.beginPath();
+        ctx.arc(0, 0, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      };
+
+      // Spool A (fuller) and Spool B (filling)
+      drawSpool(-50, spoolAngleRef.current, 28);
+      drawSpool(50, spoolAngleRef.current, 22);
+
+      // Bottom screws & guide pins
+      ctx.fillStyle = "#262630";
+      ctx.beginPath();
+      ctx.arc(-150, 90, 3, 0, Math.PI * 2);
+      ctx.arc(150, 90, 3, 0, Math.PI * 2);
+      ctx.arc(-150, -90, 3, 0, Math.PI * 2);
+      ctx.arc(150, -90, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Bottom Trapezoid head-window
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+      ctx.beginPath();
+      ctx.moveTo(-75, 90);
+      ctx.lineTo(-55, 110);
+      ctx.lineTo(55, 110);
+      ctx.lineTo(75, 90);
+      ctx.stroke();
+
+      ctx.restore();
+    };
+
+    renderCassette();
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [ambientAudioActive, tapeWarmth]);
+
+  // Real Audio Spectrum Visualizer with Analog Inertia
+  const renderSpectrum = useCallback(() => {
+    if (!canvasRef.current || !analyserRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const analyser = analyserRef.current;
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const draw = () => {
+      animationFrameRef.current = requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const barWidth = 3;
+      const gap = 2;
+      let x = 0;
+
+      for (let i = 0; i < 18; i++) {
+        const val = dataArray[i] || 0;
+        const targetHeight = Math.max(2, (val / 255) * canvas.height * 0.88);
+
+        const current = decayingBarsRef.current[i] || 2;
+        const updated = current < targetHeight ? targetHeight : current * 0.91;
+        decayingBarsRef.current[i] = updated;
+
+        ctx.fillStyle = "rgba(228, 228, 231, 0.75)";
+        ctx.fillRect(x, canvas.height - updated, barWidth, updated);
+
+        x += barWidth + gap;
+      }
+    };
+
+    draw();
+  }, []);
+
   // Web Audio Vinyl & Tape Hiss Generator
-  const toggleAmbientAudio = () => {
+  const toggleAmbientAudio = useCallback(() => {
     if (typeof window === "undefined") return;
 
     if (ambientAudioActive) {
@@ -324,7 +547,7 @@ export default function Home() {
     } catch {
       setAmbientAudioActive(false);
     }
-  };
+  }, [ambientAudioActive, tapeWarmth, renderSpectrum]);
 
   const toggleTapeSpeed = () => {
     const next = tapeWarmth === "33" ? "45" : "33";
@@ -335,46 +558,6 @@ export default function Home() {
         audioCtxRef.current.currentTime
       );
     }
-  };
-
-  // Real Audio Spectrum Visualizer with Analog Inertia
-  const renderSpectrum = () => {
-    if (!canvasRef.current || !analyserRef.current) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const analyser = analyserRef.current;
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-
-    const draw = () => {
-      animationFrameRef.current = requestAnimationFrame(draw);
-      analyser.getByteFrequencyData(dataArray);
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const barWidth = 3;
-      const gap = 2;
-      let x = 0;
-
-      for (let i = 0; i < 18; i++) {
-        const val = dataArray[i] || 0;
-        const targetHeight = Math.max(2, (val / 255) * canvas.height * 0.88);
-
-        // Gentle VU meter decay
-        const current = decayingBarsRef.current[i] || 2;
-        const updated = current < targetHeight ? targetHeight : current * 0.91;
-        decayingBarsRef.current[i] = updated;
-
-        ctx.fillStyle = "rgba(228, 228, 231, 0.75)";
-        ctx.fillRect(x, canvas.height - updated, barWidth, updated);
-
-        x += barWidth + gap;
-      }
-    };
-
-    draw();
   };
 
   useEffect(() => {
@@ -392,8 +575,7 @@ export default function Home() {
     };
   }, []);
 
-  const activeMovementData =
-    MOVEMENTS.find((m) => m.id === selectedMovement) || MOVEMENTS[0];
+  const activeChapter = CHAPTERS[activeChapterIndex] || CHAPTERS[0];
 
   return (
     <div
@@ -424,12 +606,11 @@ export default function Home() {
       />
 
       {/* ========================================================= */}
-      {/* 1. TOP NAV: Museum-Grade Editorial Precision              */}
+      {/* 1. TOP NAV: Museum-Grade Precision Navigation             */}
       {/* ========================================================= */}
       <header className="fixed top-0 left-0 right-0 z-50 border-b border-white/[0.08] bg-[#070709]/80 backdrop-blur-xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           
-          {/* Brand & Reference Index */}
           <div className="flex items-center gap-6">
             <Link href="/" className="group flex items-center gap-3">
               <span className="w-6 h-6 border border-zinc-700 bg-zinc-950 flex items-center justify-center font-mono text-xs font-bold text-zinc-300 group-hover:border-white group-hover:text-white transition-colors duration-300">
@@ -449,7 +630,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Center: Tactile Vinyl / Cassette Tape Deck Console */}
+          {/* Sound Deck Quick Control in Nav */}
           <div className="hidden sm:flex items-center gap-2 border border-white/[0.08] bg-zinc-950/80 px-3 py-1.5 transition-colors duration-300 hover:border-zinc-700">
             <button
               onClick={toggleAmbientAudio}
@@ -461,7 +642,7 @@ export default function Home() {
               {ambientAudioActive ? (
                 <Volume2 className="w-3.5 h-3.5 text-zinc-100 transition-transform duration-300" />
               ) : (
-                <VolumeX className="w-3.5 h-3.5 text-zinc-500" />
+                <VolumeX className="w-3.5 h-3.5" />
               )}
               <span>
                 {ambientAudioActive ? `Tape hiss: ${tapeWarmth} RPM` : "Tape hiss: Muted"}
@@ -487,7 +668,7 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Action CTAs: Crisp Rectangular Geometry with Hover Lift */}
+          {/* Action CTAs */}
           <div className="flex items-center gap-3">
             <Link
               href="/login"
@@ -507,15 +688,14 @@ export default function Home() {
       </header>
 
       {/* ========================================================= */}
-      {/* 2. HERO SECTION: Monumental Editorial Masterpiece         */}
+      {/* 2. HERO SECTION: Kind 50 / Bizarro Narrative Architecture */}
       {/* ========================================================= */}
       <section
-        className={`relative z-10 pt-36 pb-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6 transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        className={`relative z-10 pt-32 pb-20 border-b border-white/[0.08] max-w-7xl mx-auto px-6 transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           isLoaded ? "opacity-100 translate-y-0" : "opacity-0 translate-y-6"
         }`}
       >
-        {/* Top Monospace Section Matrix Header */}
-        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-14 text-xs font-mono tracking-wider text-zinc-500">
+        <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-12 text-xs font-mono tracking-wider text-zinc-500">
           <div className="flex items-center gap-2">
             <span className="text-zinc-300 font-semibold">[ 001 ]</span>
             <span>Nocturne system contract</span>
@@ -525,30 +705,28 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Arresting Monumental Title in Sentence Case */}
-        <div className="max-w-5xl">
-          <h1 className="text-5xl sm:text-7xl md:text-8xl lg:text-9xl font-light tracking-[-0.035em] leading-[0.94] text-zinc-100">
-            Orchestration <br />
-            <span className="font-serif italic font-normal tracking-tight text-zinc-400 text-4xl sm:text-6xl md:text-7xl lg:text-8xl block mt-3">
-              in slow motion.
-            </span>
-          </h1>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+          
+          {/* Left Column: Monumental Headline in Sentence Case */}
+          <div className="lg:col-span-7">
+            <h1 className="text-5xl sm:text-7xl md:text-8xl lg:text-9xl font-light tracking-[-0.035em] leading-[0.94] text-zinc-100">
+              Orchestration <br />
+              <span className="font-serif italic font-normal tracking-tight text-zinc-400 text-4xl sm:text-6xl md:text-7xl lg:text-8xl block mt-3">
+                in slow motion.
+              </span>
+            </h1>
 
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 mt-14 pt-10 border-t border-white/[0.08]">
-            <div className="md:col-span-8">
-              <p className="text-lg sm:text-xl md:text-2xl text-zinc-300 font-light leading-relaxed">
-                A multi-tenant, event-driven engine where workflows, teams, and autonomous agents operate with quiet, deterministic certainty.
-              </p>
-              <p className="mt-4 text-xs sm:text-sm font-mono text-zinc-400 leading-relaxed tracking-wide">
-                Built for the midnight deployment. Every CDC trigger writes to a transactional outbox. Every distributed failure executes an atomic reverse compensation.
-              </p>
-            </div>
+            <p className="text-lg sm:text-xl text-zinc-300 font-light leading-relaxed mt-10 max-w-xl">
+              A multi-tenant, event-driven engine where workflows, teams, and autonomous agents operate with quiet, deterministic certainty.
+            </p>
+            <p className="mt-4 text-xs sm:text-sm font-mono text-zinc-400 leading-relaxed max-w-lg">
+              Built for the midnight deployment. Every CDC trigger writes to a transactional outbox. Every distributed failure executes an atomic reverse compensation.
+            </p>
 
-            {/* Structured CTAs with Coordinates */}
-            <div className="md:col-span-4 flex flex-col justify-end space-y-3">
+            <div className="flex flex-col sm:flex-row items-center gap-4 mt-10">
               <Link
                 href="/signup"
-                className="w-full py-4 px-6 bg-zinc-100 hover:bg-white text-zinc-950 font-mono text-xs font-bold tracking-wider flex items-center justify-between transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(255,255,255,0.14)] group"
+                className="w-full sm:w-auto py-4 px-8 bg-zinc-100 hover:bg-white text-zinc-950 font-mono text-xs font-bold tracking-wider flex items-center justify-center gap-3 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(255,255,255,0.14)] group"
               >
                 <span>Create workspace</span>
                 <ArrowRight className="w-4 h-4 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:translate-x-1" />
@@ -556,11 +734,77 @@ export default function Home() {
 
               <Link
                 href="/login"
-                className="w-full py-3.5 px-6 border border-white/[0.12] hover:border-white/40 bg-zinc-950/40 text-zinc-300 hover:text-white font-mono text-xs tracking-wider flex items-center justify-between transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5"
+                className="w-full sm:w-auto py-4 px-8 border border-white/[0.12] hover:border-white/40 bg-zinc-950/40 text-zinc-300 hover:text-white font-mono text-xs tracking-wider flex items-center justify-center gap-2 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5"
               >
                 <span>Resume session</span>
-                <LogIn className="w-4 h-4 text-zinc-500 group-hover:text-zinc-300 transition-colors" />
+                <LogIn className="w-4 h-4 text-zinc-500" />
               </Link>
+            </div>
+          </div>
+
+          {/* Right Column: Bizarro-Style 3D Isometric Interactive Cassette Deck */}
+          <div className="lg:col-span-5 flex flex-col items-center justify-center">
+            <div
+              onMouseEnter={() => setIsHoveringCassette(true)}
+              onMouseLeave={() => setIsHoveringCassette(false)}
+              style={{
+                perspective: "1000px",
+              }}
+              className="relative w-full max-w-[380px] p-6 border border-white/[0.08] bg-zinc-950/70 backdrop-blur-md shadow-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] hover:border-zinc-500"
+            >
+              <div
+                style={{
+                  transform: `rotateX(${cassetteTilt.rotX}deg) rotateY(${cassetteTilt.rotY}deg)`,
+                  transformStyle: "preserve-3d",
+                  transition: isHoveringCassette ? "none" : "transform 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
+                }}
+                className="relative flex flex-col items-center"
+              >
+                {/* 3D Cassette Canvas */}
+                <canvas
+                  ref={cassetteCanvasRef}
+                  width={360}
+                  height={240}
+                  className="w-full h-auto cursor-pointer"
+                  onClick={toggleAmbientAudio}
+                  title="Click to spin tape & play ambient warmth"
+                />
+
+                {/* Cassette Deck Transport Controls */}
+                <div className="w-full mt-4 pt-4 border-t border-white/[0.08] flex items-center justify-between text-xs font-mono">
+                  <div className="flex items-center gap-2 text-zinc-400">
+                    <button
+                      onClick={toggleAmbientAudio}
+                      className="p-2 border border-white/[0.1] hover:border-white/40 text-zinc-200 transition-colors"
+                      title={ambientAudioActive ? "Pause tape" : "Play tape"}
+                    >
+                      {ambientAudioActive ? (
+                        <Pause className="w-3.5 h-3.5" />
+                      ) : (
+                        <Play className="w-3.5 h-3.5 text-zinc-200" />
+                      )}
+                    </button>
+
+                    <button
+                      onClick={toggleTapeSpeed}
+                      className="px-2 py-1.5 border border-white/[0.1] hover:border-white/40 text-[10px] text-zinc-400 hover:text-white uppercase transition-colors"
+                    >
+                      {tapeWarmth} RPM
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="text-zinc-500 text-[10px]">Tape counter</span>
+                    <span className="px-2 py-0.5 bg-black border border-zinc-800 text-zinc-200 text-xs tracking-widest font-mono">
+                      00:{tapeCounter < 10 ? `0${tapeCounter}` : tapeCounter}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="w-full mt-2 text-center text-[10px] font-mono text-zinc-600">
+                  {ambientAudioActive ? "Spinning spools · Analog tape hiss active" : "Click cassette body to play ambient sound"}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -618,14 +862,177 @@ export default function Home() {
       </section>
 
       {/* ========================================================= */}
-      {/* 3. INTERACTIVE DAG SCHEMATIC CONSOLE                      */}
+      {/* 3. KINETIC CONTINUOUS MARQUEE (Kind 50 / Bizarro Style)   */}
+      {/* ========================================================= */}
+      <section className="relative z-10 border-b border-white/[0.08] bg-black py-4 overflow-hidden select-none">
+        <div className="flex w-max animate-[marquee_35s_linear_infinite] hover:[animation-play-state:paused] space-x-12 text-xs font-mono text-zinc-400">
+          <span>Multi-tenant isolation</span>
+          <span className="text-zinc-600">·</span>
+          <span>PostgreSQL row mutex</span>
+          <span className="text-zinc-600">·</span>
+          <span>Transactional outbox</span>
+          <span className="text-zinc-600">·</span>
+          <span>Saga backward rollback</span>
+          <span className="text-zinc-600">·</span>
+          <span>Pinecone vector tombstones</span>
+          <span className="text-zinc-600">·</span>
+          <span>Resend delivery fabric</span>
+          <span className="text-zinc-600">·</span>
+          <span>Deterministic DAG state</span>
+          <span className="text-zinc-600">·</span>
+          <span>Zero orphaned artifacts</span>
+          <span className="text-zinc-600">·</span>
+          <span>Multi-tenant isolation</span>
+          <span className="text-zinc-600">·</span>
+          <span>PostgreSQL row mutex</span>
+          <span className="text-zinc-600">·</span>
+          <span>Transactional outbox</span>
+          <span className="text-zinc-600">·</span>
+          <span>Saga backward rollback</span>
+          <span className="text-zinc-600">·</span>
+          <span>Pinecone vector tombstones</span>
+        </div>
+      </section>
+
+      {/* ========================================================= */}
+      {/* 4. KIND 50-STYLE INTERACTIVE CHAPTER STORY DECK           */}
       {/* ========================================================= */}
       <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
         
         <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-white/[0.08] pb-6 mb-12">
           <div>
             <span className="text-xs font-mono tracking-wider text-zinc-500 block mb-1">
-              [ 002 // Schematic ]
+              [ 002 // Movement index ]
+            </span>
+            <h2 className="text-3xl sm:text-5xl font-light tracking-tight text-zinc-100">
+              The Kind 50 narrative chapters
+            </h2>
+          </div>
+
+          <div className="flex items-center gap-3 mt-4 sm:mt-0 font-mono text-xs">
+            <span className="text-zinc-400">
+              Chapter {activeChapter.index} of {CHAPTERS.length < 10 ? `0${CHAPTERS.length}` : CHAPTERS.length}
+            </span>
+            <div className="flex gap-1 ml-3">
+              <button
+                onClick={() =>
+                  setActiveChapterIndex((prev) =>
+                    prev === 0 ? CHAPTERS.length - 1 : prev - 1
+                  )
+                }
+                className="p-2 border border-white/[0.1] hover:border-white/40 text-zinc-400 hover:text-white transition-colors"
+                title="Previous chapter"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() =>
+                  setActiveChapterIndex((prev) =>
+                    prev === CHAPTERS.length - 1 ? 0 : prev + 1
+                  )
+                }
+                className="p-2 border border-white/[0.1] hover:border-white/40 text-zinc-400 hover:text-white transition-colors"
+                title="Next chapter"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Chapter Carousel Scrub Indicator */}
+        <div className="grid grid-cols-6 gap-2 mb-8">
+          {CHAPTERS.map((chap, idx) => (
+            <button
+              key={chap.id}
+              onClick={() => setActiveChapterIndex(idx)}
+              className={`h-1.5 transition-all duration-400 ${
+                activeChapterIndex === idx
+                  ? "bg-zinc-100 shadow-[0_0_12px_rgba(255,255,255,0.4)]"
+                  : "bg-zinc-800 hover:bg-zinc-700"
+              }`}
+              title={`Jump to Chapter ${chap.index}: ${chap.title}`}
+            />
+          ))}
+        </div>
+
+        {/* Selected Chapter Master Display */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 border border-white/[0.08] bg-zinc-950/40">
+          
+          <div className="lg:col-span-7 p-8 sm:p-12 border-b lg:border-b-0 lg:border-r border-white/[0.08] flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-xs font-mono text-zinc-500 mb-6 pb-3 border-b border-white/[0.06]">
+                <span>CHAPTER [{activeChapter.index}]</span>
+                <span>{activeChapter.subtitle}</span>
+              </div>
+
+              <h3 className="text-3xl sm:text-4xl font-light text-zinc-100 mb-4 leading-tight">
+                {activeChapter.title}
+              </h3>
+
+              <blockquote className="font-serif italic text-lg sm:text-xl text-zinc-400 mb-6 border-l-2 border-zinc-700 pl-4 py-1">
+                &ldquo;{activeChapter.quote}&rdquo;
+              </blockquote>
+
+              <p className="text-sm sm:text-base text-zinc-300 font-light leading-relaxed mb-8">
+                {activeChapter.detail}
+              </p>
+
+              {/* Chapter Architectural Metrics */}
+              <div className="grid grid-cols-3 border border-zinc-800 p-4 text-xs font-mono divide-x divide-zinc-800 bg-black/40">
+                {activeChapter.metrics.map((m) => (
+                  <div key={m.label} className="px-3">
+                    <span className="text-[10px] text-zinc-500 block mb-0.5">{m.label}</span>
+                    <span className="text-zinc-200 font-medium truncate block">{m.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-8 mt-8 border-t border-white/[0.06] flex items-center justify-between">
+              <Link
+                href="/signup"
+                className="text-xs font-mono text-zinc-300 hover:text-white flex items-center gap-1.5 transition-colors group"
+              >
+                <span>Initialize this chapter</span>
+                <ChevronRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-1" />
+              </Link>
+              <span className="text-[10px] font-mono text-zinc-600">
+                AUDITED CONTRACT // CHAPTER {activeChapter.index}
+              </span>
+            </div>
+          </div>
+
+          {/* Right: Live Interactive Code Implementation */}
+          <div className="lg:col-span-5 p-8 bg-black flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-xs font-mono text-zinc-500 mb-4 pb-2 border-b border-zinc-800">
+                <span>VERIFIED SOURCE CODE</span>
+                <span>PRISMA + POSTGRESQL</span>
+              </div>
+
+              <pre className="p-4 bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs font-mono overflow-x-auto leading-relaxed">
+                {activeChapter.code}
+              </pre>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-zinc-900 text-xs font-mono text-zinc-500 flex items-center justify-between">
+              <span>Status: Verified clean</span>
+              <span>Level E3 Concurrency</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ========================================================= */}
+      {/* 5. INTERACTIVE DAG SCHEMATIC WITH KINETIC PATHS           */}
+      {/* ========================================================= */}
+      <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
+        
+        <div className="flex flex-col sm:flex-row items-start sm:items-end justify-between border-b border-white/[0.08] pb-6 mb-12">
+          <div>
+            <span className="text-xs font-mono tracking-wider text-zinc-500 block mb-1">
+              [ 003 // Schematic ]
             </span>
             <h2 className="text-3xl sm:text-4xl font-light tracking-tight text-zinc-100">
               Reactive DAG pipeline inspection
@@ -636,201 +1043,84 @@ export default function Home() {
           </span>
         </div>
 
-        {/* CAD Schematic Node Deck */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {DAG_NODES.map((node, idx) => {
-            const isSelected = selectedDagIndex === idx;
-
-            return (
-              <div
-                key={node.id}
-                onClick={() => setSelectedDagIndex(idx)}
-                className={`cursor-pointer p-6 border transition-all duration-400 ease-[cubic-bezier(0.16,1,0.3,1)] relative hover:-translate-y-1 ${
-                  isSelected
-                    ? "border-zinc-200 bg-zinc-900/90 shadow-[0_12px_35px_rgba(255,255,255,0.06)]"
-                    : "border-white/[0.08] bg-zinc-950/40 hover:border-zinc-600 hover:bg-zinc-900/30"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-4 text-xs font-mono">
-                  <span className={isSelected ? "text-zinc-100 font-bold" : "text-zinc-500"}>
-                    {node.stepNumber}
-                  </span>
-                  <span className="text-zinc-500 tracking-wider">
-                    Step 0{idx + 1}
-                  </span>
-                </div>
-
-                <h3 className={`font-mono text-base font-medium mb-1 transition-colors duration-300 ${isSelected ? "text-white" : "text-zinc-200"}`}>
-                  {node.label}
-                </h3>
-                <span className="block text-xs font-mono text-zinc-500 tracking-wider mb-4">
-                  {node.category}
-                </span>
-
-                <div className="border-t border-white/[0.08] pt-3 text-xs font-mono text-zinc-400 truncate">
-                  {node.signature}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Live Node Telemetry Ledger with Smooth Transition */}
-        <div className="mt-6 border border-white/[0.08] bg-black p-6 font-mono text-xs transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4 text-xs text-zinc-400">
-            <span>
-              Node inspector // <strong className="text-zinc-100">{DAG_NODES[selectedDagIndex].label}</strong>
-            </span>
-            <span className="text-zinc-500">
-              Status: <span className="text-zinc-200">Verified immutable</span>
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-zinc-400">
-            <div className="transition-opacity duration-300">
-              <span className="text-xs text-zinc-500 tracking-wider block mb-1">
-                Forward invocation contract
-              </span>
-              <pre className="p-3 bg-zinc-950 border border-zinc-800/80 text-zinc-200 overflow-x-auto text-xs leading-relaxed">
-                {DAG_NODES[selectedDagIndex].signature}
-              </pre>
-            </div>
-
-            <div className="transition-opacity duration-300">
-              <span className="text-xs text-zinc-500 tracking-wider block mb-1">
-                Saga backward compensation routine
-              </span>
-              <pre className="p-3 bg-zinc-950 border border-zinc-800/80 text-zinc-400 overflow-x-auto text-xs leading-relaxed">
-                {DAG_NODES[selectedDagIndex].compensation}
-              </pre>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ========================================================= */}
-      {/* 4. ARCHITECTURAL MOVEMENTS (SWISS GRID CATALOG)           */}
-      {/* ========================================================= */}
-      <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
-        
-        <div className="border-b border-white/[0.08] pb-6 mb-16 flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div>
-            <span className="text-xs font-mono tracking-wider text-zinc-500 block mb-1">
-              [ 003 // Specification ]
-            </span>
-            <h2 className="text-3xl sm:text-5xl font-light tracking-tight text-zinc-100">
-              Six architectural movements
-            </h2>
-          </div>
-          <p className="text-sm font-mono text-zinc-400 max-w-md">
-            Concrete system capabilities. Zero marketing abstraction. Every capability maps directly to audited application source.
-          </p>
-        </div>
-
-        {/* 2-Column Split: Index Navigation on Left, Live Code Inspector on Right */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 border border-white/[0.08]">
+        {/* Schematic Circuit Graph */}
+        <div className="relative border border-white/[0.08] bg-zinc-950/60 p-6 sm:p-10">
           
-          {/* Movement Index List */}
-          <div className="lg:col-span-5 divide-y divide-white/[0.08] bg-zinc-950/40">
-            {MOVEMENTS.map((movement) => {
-              const isActive = selectedMovement === movement.id;
+          {/* Subtle Circuit Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 relative z-10">
+            {DAG_NODES.map((node, idx) => {
+              const isSelected = selectedDagIndex === idx;
 
               return (
                 <div
-                  key={movement.id}
-                  onClick={() => setSelectedMovement(movement.id)}
-                  className={`p-6 cursor-pointer transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] relative ${
-                    isActive
-                      ? "bg-zinc-900/90 text-white"
-                      : "hover:bg-zinc-900/40 text-zinc-400 hover:text-zinc-200"
+                  key={node.id}
+                  onClick={() => setSelectedDagIndex(idx)}
+                  className={`cursor-pointer p-6 border transition-all duration-400 ease-[cubic-bezier(0.16,1,0.3,1)] relative hover:-translate-y-1 ${
+                    isSelected
+                      ? "border-zinc-200 bg-zinc-900/95 shadow-[0_12px_35px_rgba(255,255,255,0.08)]"
+                      : "border-white/[0.08] bg-zinc-950/40 hover:border-zinc-600 hover:bg-zinc-900/30"
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-2 font-mono text-xs">
-                    <span className={isActive ? "text-zinc-100 font-bold" : "text-zinc-500"}>
-                      [{movement.index}]
+                  <div className="flex items-center justify-between mb-4 text-xs font-mono">
+                    <span className={isSelected ? "text-zinc-100 font-bold" : "text-zinc-500"}>
+                      {node.stepNumber}
                     </span>
-                    <span className="text-xs text-zinc-500">
-                      {movement.spec.isolation}
+                    <span className="text-zinc-500 tracking-wider">
+                      Step 0{idx + 1}
                     </span>
                   </div>
 
-                  <h3 className="font-mono text-base font-semibold text-zinc-100 mb-1">
-                    {movement.title}
+                  <h3 className={`font-mono text-base font-medium mb-1 transition-colors duration-300 ${isSelected ? "text-white" : "text-zinc-200"}`}>
+                    {node.label}
                   </h3>
-                  <p className="text-xs text-zinc-400 font-mono">
-                    {movement.subtitle}
-                  </p>
+                  <span className="block text-xs font-mono text-zinc-500 tracking-wider mb-4">
+                    {node.category}
+                  </span>
+
+                  <div className="border-t border-white/[0.08] pt-3 text-xs font-mono text-zinc-400 truncate">
+                    {node.signature}
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          {/* Detailed Movement Code & Guarantees Inspector with Graceful Transition */}
-          <div className="lg:col-span-7 p-8 bg-black/60 border-t lg:border-t-0 lg:border-l border-white/[0.08] flex flex-col justify-between">
-            <div>
-              <div className="flex items-center justify-between border-b border-zinc-800 pb-4 mb-6">
-                <div>
-                  <span className="text-xs font-mono text-zinc-500 tracking-wider block">
-                    Active architectural target
-                  </span>
-                  <h4 className="text-2xl font-light text-zinc-100 font-mono mt-1">
-                    {activeMovementData.title}
-                  </h4>
-                </div>
-                <span className="text-xs font-mono px-3 py-1 border border-zinc-800 text-zinc-300">
-                  Ref: {activeMovementData.id}
-                </span>
-              </div>
-
-              <p className="text-sm sm:text-base text-zinc-300 font-light leading-relaxed mb-6">
-                {activeMovementData.detail}
-              </p>
-
-              {/* Guarantees Matrix */}
-              <div className="grid grid-cols-3 border border-zinc-800 p-4 mb-6 text-xs font-mono divide-x divide-zinc-800 bg-zinc-950/60">
-                <div className="px-3">
-                  <span className="text-xs text-zinc-500 block">Primitive</span>
-                  <span className="text-zinc-200 mt-1 block truncate">{activeMovementData.spec.primitive}</span>
-                </div>
-                <div className="px-3">
-                  <span className="text-xs text-zinc-500 block">Guarantee</span>
-                  <span className="text-zinc-200 mt-1 block truncate">{activeMovementData.spec.guarantee}</span>
-                </div>
-                <div className="px-3">
-                  <span className="text-xs text-zinc-500 block">Isolation</span>
-                  <span className="text-zinc-200 mt-1 block truncate">{activeMovementData.spec.isolation}</span>
-                </div>
-              </div>
-
-              {/* Verified Code Snippet */}
-              <div>
-                <span className="text-xs font-mono text-zinc-500 tracking-wider block mb-2">
-                  Verified runtime implementation
-                </span>
-                <pre className="p-4 bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs font-mono overflow-x-auto leading-relaxed">
-                  {activeMovementData.code}
-                </pre>
-              </div>
+          {/* Live Node Telemetry Ledger with Smooth Transition */}
+          <div className="mt-8 border border-white/[0.08] bg-black p-6 font-mono text-xs transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4 text-xs text-zinc-400">
+              <span>
+                Node inspector // <strong className="text-zinc-100">{DAG_NODES[selectedDagIndex].label}</strong>
+              </span>
+              <span className="text-zinc-500">
+                Status: <span className="text-zinc-200">Verified immutable</span>
+              </span>
             </div>
 
-            <div className="pt-6 mt-8 border-t border-zinc-900 flex items-center justify-between">
-              <Link
-                href="/signup"
-                className="text-xs font-mono tracking-wider text-zinc-400 hover:text-white flex items-center gap-1.5 transition-colors duration-300"
-              >
-                <span>Initialize capability</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
-              <span className="text-xs font-mono text-zinc-600">
-                Source: /forge/src/lib/workflow
-              </span>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-zinc-400">
+              <div className="transition-opacity duration-300">
+                <span className="text-xs text-zinc-500 tracking-wider block mb-1">
+                  Forward invocation contract
+                </span>
+                <pre className="p-3 bg-zinc-950 border border-zinc-800/80 text-zinc-200 overflow-x-auto text-xs leading-relaxed">
+                  {DAG_NODES[selectedDagIndex].signature}
+                </pre>
+              </div>
+
+              <div className="transition-opacity duration-300">
+                <span className="text-xs text-zinc-500 tracking-wider block mb-1">
+                  Saga backward compensation routine
+                </span>
+                <pre className="p-3 bg-zinc-950 border border-zinc-800/80 text-zinc-400 overflow-x-auto text-xs leading-relaxed">
+                  {DAG_NODES[selectedDagIndex].compensation}
+                </pre>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
       {/* ========================================================= */}
-      {/* 5. EDITORIAL MANIFESTO: The Late-Night Creed              */}
+      {/* 6. EDITORIAL MANIFESTO: The Late-Night Creed              */}
       {/* ========================================================= */}
       <section className="relative z-10 py-28 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
         <div className="max-w-4xl mx-auto text-center">
@@ -870,7 +1160,7 @@ export default function Home() {
       </section>
 
       {/* ========================================================= */}
-      {/* 6. FOOTER: Minimalist Architectural Colophon             */}
+      {/* 7. FOOTER: Minimalist Architectural Colophon             */}
       {/* ========================================================= */}
       <footer className="relative z-10 bg-[#040406] py-16 text-zinc-500 font-mono text-xs">
         <div className="max-w-7xl mx-auto px-6 grid grid-cols-1 md:grid-cols-12 gap-8 border-b border-white/[0.06] pb-12">
