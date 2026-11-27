@@ -61,7 +61,7 @@ export default function WorkflowRunDashboard({
 
           <div className="flex items-center justify-between rounded-xl bg-zinc-900 p-4">
             <span className="text-sm text-zinc-400">Completed</span>
-            <span className="font-semibold text-emerald-400">
+            <span className="font-semibold text-zinc-100">
               {completedCount}
             </span>
           </div>
@@ -116,7 +116,7 @@ function StatusPill({ status }: { status: string }) {
   const styles = {
     PENDING: "bg-zinc-800 text-zinc-400 border-zinc-700",
     RUNNING: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20 animate-pulse",
-    SUCCESS: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    SUCCESS: "bg-white/[0.08] text-zinc-100 border-white/20",
     FAILED: "bg-red-500/10 text-red-400 border-red-500/20",
     COMPENSATING: "bg-orange-500/10 text-orange-400 border-orange-500/20",
     COMPENSATED: "bg-blue-500/10 text-blue-400 border-blue-500/20",

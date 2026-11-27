@@ -36,10 +36,10 @@ export default function ExecutionEdge({
         <BaseEdge
           path={path}
           style={{
-            stroke: "#facc15",
-            strokeWidth: 10,
-            opacity: 0.15,
-            filter: "blur(8px)",
+            stroke: "#ffffff",
+            strokeWidth: 8,
+            opacity: 0.3,
+            filter: "blur(6px)",
           }}
         />
       )}
@@ -51,11 +51,11 @@ export default function ExecutionEdge({
         style={{
           stroke:
             data?.status === "SUCCESS"
-              ? "#10b981"
+              ? "#e4e4e7"
               : data?.status === "FAILED"
               ? "#ef4444"
               : data?.status === "RUNNING"
-              ? "#facc15"
+              ? "#ffffff"
               : "#3f3f46",
 
           strokeWidth: 2.5,
@@ -66,7 +66,7 @@ export default function ExecutionEdge({
 
       {/* moving particle */}
       {isRunning && (
-        <circle r="4" fill="#fde047">
+        <circle r="4" fill="#ffffff" filter="drop-shadow(0 0 6px rgba(255,255,255,0.9))">
           <animateMotion
             dur="1.2s"
             repeatCount="indefinite"

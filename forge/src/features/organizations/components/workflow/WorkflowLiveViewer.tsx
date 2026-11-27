@@ -80,9 +80,9 @@ function LiveCanvasArea({ runId, initialNodes, initialEdges, onNodesUpdate }: Wo
           stroke: isFailed
             ? "#ef4444"
             : isActive
-            ? "#facc15"
+            ? "#ffffff"
             : isCompleted
-            ? "#10b981"
+            ? "#e4e4e7"
             : "#3f3f46",
 
           strokeWidth: isActive ? 3 : 2,
