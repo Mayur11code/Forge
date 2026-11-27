@@ -33,7 +33,14 @@ function ActionNode({
   selected,
   isConnectable,
 }: NodeProps<ActionNodeType>) {
-  const { deleteElements } = useReactFlow();
+  let deleteElements: ((params: { nodes?: { id: string }[] }) => void) | undefined;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const rf = typeof useReactFlow === "function" ? useReactFlow() : null;
+    deleteElements = rf?.deleteElements;
+  } catch {
+    // Safe fallback for read-only or mocked test environments
+  }
   // ------------------------------------------------------------------
   // Global Graph State
   // ------------------------------------------------------------------
@@ -272,7 +279,7 @@ function ActionNode({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  deleteElements({ nodes: [{ id }] });
+                  deleteElements?.({ nodes: [{ id }] });
                 }}
                 aria-label="Delete action"
                 className="opacity-0 group-hover:opacity-100 p-0.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-all"

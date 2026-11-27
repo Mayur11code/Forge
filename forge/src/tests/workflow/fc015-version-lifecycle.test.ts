@@ -12,6 +12,10 @@ jest.mock("@/lib/prisma/db", () => {
 
 jest.mock("next/cache", () => ({ revalidatePath: jest.fn() }));
 
+jest.mock("@/lib/workflow/execution/evaluator", () => ({
+  advanceWorkflow: jest.fn().mockResolvedValue("ADVANCED"),
+}));
+
 jest.mock("@/features/organizations/getOrgAccess", () => ({
   getOrgAccess: jest.fn(),
 }));

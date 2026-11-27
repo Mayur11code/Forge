@@ -72,6 +72,11 @@ jest.mock("@xyflow/react", () => ({
   ),
   Position: { Top: "top", Bottom: "bottom" },
   Handle: () => <div data-testid="handle" />,
+  useReactFlow: () => ({
+    deleteElements: jest.fn(),
+    getNodes: () => [],
+    setNodes: jest.fn(),
+  }),
   useStore: (selector: (state: { nodes: unknown[]; edges: unknown[] }) => unknown) =>
     selector({ nodes: [], edges: [] }),
 }));
