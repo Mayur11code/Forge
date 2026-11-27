@@ -85,7 +85,9 @@ function ActionNode({
 
       // If req is 'title', also treat node label as fulfilling the title
       if (req === "title") {
-        const labelVal = data.label || (data.config as any)?.title;
+        const configRecord = data.config as Record<string, unknown> | undefined;
+        const configTitle = typeof configRecord?.title === "string" ? configRecord.title : undefined;
+        const labelVal = data.label || configTitle;
         if (
           labelVal &&
           labelVal.trim() !== "" &&

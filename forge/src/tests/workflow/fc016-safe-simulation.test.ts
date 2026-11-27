@@ -43,7 +43,7 @@ import {
 } from "@/app/actions/workflows/workflow";
 import { simulateWorkflowRunAction } from "@/app/actions/workflows/workflow-run";
 import { simulateWorkflowRun } from "@/lib/workflow/execution/simulator";
-import type { WorkflowDefinition } from "@/lib/workflow-types/workflow";
+import type { WorkflowDefinition, AppNode, AppEdge } from "@/lib/workflow-types/workflow";
 import {
   prismaDouble,
   resetStore,
@@ -445,8 +445,8 @@ describe("FC-016: simulateWorkflowRunAction Server Boundary & Side-Effect Isolat
       orgslug: ORG_A,
       target: "draft",
       triggerPayloadJson: JSON.stringify({ taskId: "t_root", projectId: VALID_PROJECT_ID }),
-      currentNodes: liveNodes as any,
-      currentEdges: liveEdges as any,
+      currentNodes: liveNodes as unknown as AppNode[],
+      currentEdges: liveEdges as unknown as AppEdge[],
     });
 
     expect(sim.success).toBe(true);

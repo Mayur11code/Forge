@@ -262,8 +262,9 @@ export async function simulateWorkflowRun(
     const resolved = resolveInputs(configured, context);
 
     // Sandbox helper: if title or projectId can be inferred from context or label, populate for smooth simulation
-    if (!resolved.projectId && context.trigger && typeof (context.trigger as any).outputs?.projectId === "string") {
-      resolved.projectId = (context.trigger as any).outputs.projectId;
+    const triggerContext = context.trigger as { outputs?: Record<string, JsonValue> } | undefined;
+    if (!resolved.projectId && typeof triggerContext?.outputs?.projectId === "string") {
+      resolved.projectId = triggerContext.outputs.projectId;
     }
     if (!resolved.title) {
       if (typeof configured.title === "string" && configured.title.trim()) {

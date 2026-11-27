@@ -26,6 +26,7 @@ import {
   toggleWorkflowActiveAction,
 } from '@/app/actions/workflows/workflow';
 import { evaluateWorkflowDiagnostics } from '@/lib/workflow/validation/diagnostics';
+import { StepExecutionStatus } from '@prisma/client';
 import TriggerNode from './nodes/TriggerNode';
 import ActionNode from './nodes/ActionNode';
 import type { AppNode, AppEdge } from '@/lib/workflow-types/workflow';
@@ -500,7 +501,7 @@ function CanvasArea({
           setNodes((nds) =>
             nds.map((n) => {
               if (n.id === step.stepId) {
-                const status =
+                const status: StepExecutionStatus =
                   step.status === 'COMPLETED'
                     ? 'SUCCESS'
                     : step.status === 'SKIPPED'
@@ -510,7 +511,7 @@ function CanvasArea({
                   ...n,
                   data: {
                     ...n.data,
-                    executionStatus: status as any,
+                    executionStatus: status,
                   },
                 } as AppNode;
               }
@@ -554,7 +555,7 @@ function CanvasArea({
               nds.map((n) => {
                 const stepResult = stepMap.get(n.id);
                 if (stepResult) {
-                  const status =
+                  const status: StepExecutionStatus =
                     stepResult.status === 'COMPLETED'
                       ? 'SUCCESS'
                       : stepResult.status === 'SKIPPED'
@@ -564,7 +565,7 @@ function CanvasArea({
                     ...n,
                     data: {
                       ...n.data,
-                      executionStatus: status as any,
+                      executionStatus: status,
                     },
                   } as AppNode;
                 }

@@ -16,6 +16,7 @@ import {
 import { evaluateWorkflowDiagnostics } from "@/lib/workflow/validation/diagnostics";
 import { compileWorkflow } from "@/lib/workflow/graph-ui/compiler";
 import type { AppEdge, AppNode, WorkflowDefinition } from "@/lib/workflow-types/workflow";
+import type { Prisma } from "@prisma/client";
 
 // I6 — TENANT SCOPE. This server action is publicly reachable (it is called from
 // the canvas Run button), so it must authenticate AND authorize before anything
@@ -225,9 +226,9 @@ export async function simulateWorkflowRunAction(
             await db.workflow.update({
               where: { id: workflow.id },
               data: {
-                uiNodes: uiNodes as any,
-                uiEdges: uiEdges as any,
-                definition: definition as any,
+                uiNodes: uiNodes as unknown as Prisma.InputJsonValue,
+                uiEdges: uiEdges as unknown as Prisma.InputJsonValue,
+                definition: definition as unknown as Prisma.InputJsonValue,
               },
             });
           } catch (syncErr) {

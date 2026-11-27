@@ -56,9 +56,11 @@ export function Sidebar({ orgId, currentOrg, orgSummaries = [] }: SidebarProps) 
   }, []);
 
   // Close mobile drawer on route change
-  useEffect(() => {
+  const [prevPathname, setPrevPathname] = useState(pathname);
+  if (prevPathname !== pathname) {
+    setPrevPathname(pathname);
     setIsMobileMenuOpen(false);
-  }, [pathname]);
+  }
 
   const navItems: NavItem[] = [
     // Core Workspace

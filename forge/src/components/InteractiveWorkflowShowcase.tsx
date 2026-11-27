@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Play, RotateCcw, AlertTriangle, CheckCircle2, Cpu, Zap, ArrowRight, ShieldCheck, Database, Layers } from "lucide-react";
+import { Play, RotateCcw, AlertTriangle, CheckCircle2 } from "lucide-react";
 
 interface NodeData {
   id: string;
@@ -12,14 +12,8 @@ interface NodeData {
   status: "idle" | "running" | "success" | "error" | "compensating";
   durationMs?: number;
   isolation: string;
-  payload: Record<string, any>;
-  output?: Record<string, any>;
-}
-
-interface EdgeData {
-  from: string;
-  to: string;
-  label?: string;
+  payload: Record<string, unknown>;
+  output?: Record<string, unknown>;
 }
 
 const INITIAL_NODES: NodeData[] = [
@@ -115,13 +109,6 @@ const INITIAL_NODES: NodeData[] = [
       deliveredAt: "2026-11-27T14:32:01Z",
     },
   },
-];
-
-const EDGES: EdgeData[] = [
-  { from: "node_trg", to: "node_act_1" },
-  { from: "node_act_1", to: "node_act_2" },
-  { from: "node_act_2", to: "node_act_3" },
-  { from: "node_act_3", to: "node_act_4" },
 ];
 
 export function InteractiveWorkflowShowcase() {

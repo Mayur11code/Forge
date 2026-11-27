@@ -109,7 +109,9 @@ export default function PropertiesPanel({
 
           // If req is 'title', also treat node label as fulfilling the title
           if (req === "title") {
-            const labelVal = nodeMatch.data.label || (nodeMatch.data.config as any)?.title;
+            const configRecord = nodeMatch.data.config as Record<string, unknown> | undefined;
+            const configTitle = typeof configRecord?.title === "string" ? configRecord.title : undefined;
+            const labelVal = nodeMatch.data.label || configTitle;
             if (
               labelVal &&
               labelVal.trim() !== "" &&
@@ -183,7 +185,7 @@ export default function PropertiesPanel({
     if (nodeMatch.type !== "action") return;
     const currentConfig = nodeMatch.data.config || {};
     const nextConfig = { ...currentConfig, [key]: value };
-    const patch: any = {
+    const patch: Partial<ActionNodeData> = {
       config: nextConfig,
       isConfigured: true,
     };
@@ -286,7 +288,7 @@ export default function PropertiesPanel({
           onChange={(e) => {
             const nextLabel = e.target.value;
             const currentConfig = nodeMatch.type === "action" ? nodeMatch.data.config || {} : {};
-            const patch: any = {
+            const patch: Partial<ActionNodeData> = {
               label: nextLabel,
             };
             // If action, keep title config in sync in real time

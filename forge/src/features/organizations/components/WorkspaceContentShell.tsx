@@ -19,14 +19,7 @@ export function WorkspaceContentShell({
   orgSummaries,
   children,
 }: WorkspaceContentShellProps) {
-  let pathname = "";
-  if (typeof usePathname === "function") {
-    try {
-      pathname = usePathname() || "";
-    } catch {
-      pathname = "";
-    }
-  }
+  const pathname = usePathname() || "";
 
   // Detect if the user is on the visual workflow canvas editor
   const isWorkflowCanvas =
