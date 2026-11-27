@@ -626,62 +626,62 @@ flowchart TD
 #### FC-013 | M3 | Node Property Configuration Drawer & Variable Auto-Mapping
 - **Milestone:** M3
 - **Capability:** Complete node configuration drawer with upstream variable auto-mapping.
-- **Current Evidence:** Clicking a node opens a basic drawer, but schema-driven input widgets and upstream output variable pickers (`{{steps.step1.output}}`) are missing.
-- **Missing Behavior:** Property drawer rendering custom input fields based on action capability schemas, with dropdown variable interpolation.
-- **Required Outcome:** Build `NodePropertyDrawer.tsx` rendering input forms according to `action-capabilities.ts`; add upstream variable picker.
+- **Current Evidence:** Upgraded `PropertiesPanel.tsx` to render schema-driven `string`, `textarea`, `number`, `boolean`, `select`, and explicit `unsupported` fields from `registry.ts` (`getFieldsForAction`, `getDefaultConfigForAction`, `validateActionNodeConfig`), with inline validation and a manual `Var` upstream variable picker emitting canonical `{{trigger.outputs.field}}` / `{{stepId.outputs.field}}` expressions; hardened `autoMapNodeVariables` against ambiguous providers.
+- **Missing Behavior:** None in automated scope; browser manual acceptance pending.
+- **Required Outcome:** Schema-driven property configuration panel with upstream variable picker and unambiguous auto-mapping.
 - **Dependencies:** FC-012
-- **Files Involved:** `src/features/organizations/components/workflow/NodePropertyDrawer.tsx`, `src/lib/workflow-types/action-capabilities.ts`
+- **Files Involved:** `src/features/organizations/components/workflow/PropertiesPanel.tsx`, `src/lib/workflow-types/registry.ts`, `src/lib/workflow/graph-ui/utils.ts`
 - **Acceptance Criteria:**
   - Clicking any node opens drawer with all required and optional action parameters.
   - Text fields offer variable insertion button listing outputs of all topological upstream nodes.
-  - Form validation warns if required fields are omitted.
-- **Tests & Verification:** Unit test verifying variable resolution syntax; browser test configuring node inputs.
-- **Status:** `NOT_STARTED`
+  - Form validation warns if required fields or variable references are invalid.
+- **Tests & Verification:** `src/tests/workflow/fc013-properties-and-variables.test.tsx`, `src/tests/workflow/action-capabilities.test.ts`, `src/tests/workflow/proposal-references.test.ts` (all passing in full `npm test` 139/139 suites). Dev-log: [2026-11-27 M3 FC-013](../dev-log/2026-11-27-m3-fc013-capability-editor-and-variable-picker.md).
+- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
 
 #### FC-014 | M3 | Graph Validation & Actionable Error Diagnostics
 - **Milestone:** M3
 - **Capability:** Real-time DAG validation with visual badge highlights on problematic nodes.
-- **Current Evidence:** Basic cycle detection exists, but disconnected nodes, missing required inputs, and multiple trigger errors do not surface clearly on canvas.
-- **Missing Behavior:** Pre-publish validation scanner highlighting orphaned nodes, missing fields, or cyclic loops with clickable error markers.
-- **Required Outcome:** Implement `validateWorkflowGraph` utility; add visual error badges on node headers and error banner in header.
+- **Current Evidence:** Implemented unified `evaluateWorkflowDiagnostics` extending `collectWorkflowDefinitionIssues` and `validateActionNodeConfig`; fixed trigger-vs-action manifest distinction in `startWorkflow` (`trigger.ts`); added live error/warning badges on `TriggerNode.tsx` and `ActionNode.tsx` and clickable diagnostics popover with `fitView` focus in `WorkflowEditorHeader.tsx` / `WorkflowCanvas.tsx`.
+- **Missing Behavior:** None in automated scope; browser manual acceptance pending.
+- **Required Outcome:** Real-time pre-publish graph diagnostics with node badges, header summary, and click-to-focus.
 - **Dependencies:** FC-013
-- **Files Involved:** `src/lib/workflow/validation/graphValidator.ts`, `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`
+- **Files Involved:** `src/lib/workflow/validation/diagnostics.ts`, `src/lib/workflow/execution/trigger.ts`, `src/features/organizations/components/workflow/nodes/TriggerNode.tsx`, `src/features/organizations/components/workflow/nodes/ActionNode.tsx`, `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`, `src/features/organizations/components/workflow/WorkflowCanvas.tsx`
 - **Acceptance Criteria:**
   - Canvas flags disconnected nodes with warning badge.
   - Canvas flags nodes with missing required inputs with red error icon.
   - Publishing is blocked if graph contains cycles, lacks a trigger, or has invalid nodes.
-- **Tests & Verification:** Test suite feeding cyclic, disconnected, and incomplete graphs, asserting exact validation error messages.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** `src/tests/workflow/fc014-diagnostics-and-trigger-manifest.test.ts`, `src/tests/workflow/dag-validation.test.ts`, `src/tests/workflow/immutable-definition.test.ts` (all passing in full `npm test` 139/139 suites). Dev-log: [2026-11-27 M3 FC-014](../dev-log/2026-11-27-m3-fc014-graph-validation-and-diagnostics.md).
+- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
 
 #### FC-015 | M3 | Draft vs. Published State Management & Active Lifecycle
 - **Milestone:** M3
 - **Capability:** Clear separation between editable drafts and immutable published workflow versions.
-- **Current Evidence:** Workflows only have a single editable row; editing a published workflow immediately impacts running executions.
-- **Missing Behavior:** Explicit "Publish" action that creates an immutable published snapshot while preserving draft editing.
-- **Required Outcome:** Enhance `Workflow` model logic with `isPublished`, `publishedAt`, and `draftData`; update canvas publish controls.
+- **Current Evidence:** Added immutable `WorkflowVersion` Prisma model, SQL migration (`20261127120000_workflow_version_lifecycle`) with composite ownership FK and `BEFORE UPDATE` immutability trigger, `draftRevision` CAS on `updateWorkflowState`, `publishWorkflowAction`, `toggleWorkflowActiveAction`, `startWorkflow` published+active gating, and Draft/`Published vN · Active`/`Paused` UI in `WorkflowEditorHeader.tsx`, `WorkflowCanvas.tsx`, and workflow pages.
+- **Missing Behavior:** Real-DB migration execution deferred pending approved disposable DB; owner manual acceptance pending.
+- **Required Outcome:** Explicit immutable `WorkflowVersion` publishing, draft isolation, and instant active/paused execution gating.
 - **Dependencies:** FC-014
-- **Files Involved:** `src/app/actions/workflows/workflowLifecycleActions.ts`, `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`
+- **Files Involved:** `prisma/schema.prisma`, `prisma/migrations/20261127120000_workflow_version_lifecycle/migration.sql`, `src/app/actions/workflows/workflow.ts`, `src/lib/workflow/execution/trigger.ts`, `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`, `src/features/organizations/components/workflow/WorkflowCanvas.tsx`, `src/app/org/[orgId]/workflows/[workflowId]/page.tsx`, `src/app/org/[orgId]/workflows/page.tsx`
 - **Acceptance Criteria:**
   - User can save draft changes without affecting active trigger execution.
   - Clicking "Publish" validates graph, freezes current configuration, and activates trigger.
   - User can toggle workflow active/inactive with instant execution suspension.
-- **Tests & Verification:** Integration test verifying draft mutations do not alter published execution until explicit publish call.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** `npx prisma validate && npx prisma generate`; `src/tests/workflow/fc015-version-lifecycle.test.ts`, `src/tests/workflow/workflow-update-scope.test.ts`, `src/tests/workflow/workflow-metadata.test.ts`, `src/tests/workflow/execution-handoff.test.ts` (all passing in full `npm test` 139/139 suites). Dev-log: [2026-11-27 M3 FC-015](../dev-log/2026-11-27-m3-fc015-published-workflow-lifecycle.md).
+- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
 
 #### FC-016 | M3 | Manual Test-Run Drawer & Trigger Output Preview
 - **Milestone:** M3
 - **Capability:** Simulating workflow execution from canvas with custom mock trigger payloads.
-- **Current Evidence:** No mechanism exists to test workflows manually without creating actual database tasks.
-- **Missing Behavior:** "Test Run" button opening drawer to provide mock event payload, initiate dry run, and view step outputs.
-- **Required Outcome:** Create `WorkflowTestRunModal.tsx` and server action `executeWorkflowTestRun`.
+- **Current Evidence:** Implemented non-mutating `simulateWorkflowRun` (`simulator.ts`) with sandbox adapters, secret redaction, output truncation, and branch skip reporting; added `simulateWorkflowRunAction` (`workflow-run.ts`) with auth, `REQUEST_WORKFLOW_TEST_RUN` rate limiting, JSON/context validation, and `draft` vs `published` targeting; built `WorkflowTestRunModal.tsx` and separated **Simulate** from **Run Live** in `WorkflowEditorHeader.tsx`.
+- **Missing Behavior:** None in automated scope; browser manual acceptance pending.
+- **Required Outcome:** Sandbox simulation modal with pre-populated trigger payload, step-by-step output preview, and zero side-effect isolation.
 - **Dependencies:** FC-015
-- **Files Involved:** `src/features/organizations/components/workflow/WorkflowTestRunModal.tsx`, `src/app/actions/workflows/testRunActions.ts`
+- **Files Involved:** `src/lib/workflow/execution/simulator.ts`, `src/app/actions/workflows/workflow-run.ts`, `src/features/organizations/components/workflow/WorkflowTestRunModal.tsx`, `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`, `src/features/organizations/components/workflow/WorkflowCanvas.tsx`, `src/features/organizations/components/workflow/RunWorkflowButton.tsx`
 - **Acceptance Criteria:**
-  - Clicking "Test Run" opens modal with pre-populated JSON payload matching trigger type.
-  - Submitting test run executes workflow in sandbox context and returns step-by-step output timeline.
-  - Displays formatted outputs and highlights any failing nodes.
-- **Tests & Verification:** Browser test running manual test run and verifying execution log output.
-- **Status:** `NOT_STARTED`
+  - Clicking "Simulate" opens modal with pre-populated JSON payload matching trigger type.
+  - Submitting simulation executes workflow in sandbox context and returns step-by-step output timeline without DB writes or live dispatch.
+  - Displays formatted redacted outputs, skipped branches, and highlights failing nodes.
+- **Tests & Verification:** `src/tests/workflow/fc016-safe-simulation.test.ts` (verifies zero calls to `task.create`, `workflowRun.create`, `workflowOutbox.create`, `startWorkflow`, `advanceWorkflow`), passing in full `npm test` 139/139 suites. Dev-log: [2026-11-27 M3 FC-016](../dev-log/2026-11-27-m3-fc016-safe-workflow-simulation.md).
+- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
 
 ---
 
@@ -1176,11 +1176,11 @@ flowchart TD
 | **FC-009** | **M2** | Interactive Task Lifecycle & Status Transitions | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-005, FC-008 |
 | **FC-010** | **M2** | Task Comments & Collaboration Feed | P1 | S | `DONE (Verified; Owner Acceptance PENDING)` | FC-009 |
 | **FC-011** | **M2** | Task Filtering, Debounced Search & Pagination Polish | P2 | S | `DONE (Verified; Owner Acceptance PENDING)` | FC-009 |
-| **FC-012** | **M3** | Canvas Authoring UX, Workflow Naming & Toast Notifications | P0 | M | `NOT_STARTED` | FC-008 |
-| **FC-013** | **M3** | Node Property Configuration Drawer & Variable Auto-Mapping | P0 | M | `NOT_STARTED` | FC-012 |
-| **FC-014** | **M3** | Graph Validation & Actionable Error Diagnostics | P0 | M | `NOT_STARTED` | FC-013 |
-| **FC-015** | **M3** | Draft vs. Published State Management & Active Lifecycle | P1 | S | `NOT_STARTED` | FC-014 |
-| **FC-016** | **M3** | Manual Test-Run Drawer & Trigger Output Preview | P1 | M | `NOT_STARTED` | FC-015 |
+| **FC-012** | **M3** | Canvas Authoring UX, Workflow Naming & Toast Notifications | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-008 |
+| **FC-013** | **M3** | Node Property Configuration Drawer & Variable Auto-Mapping | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-012 |
+| **FC-014** | **M3** | Graph Validation & Actionable Error Diagnostics | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-013 |
+| **FC-015** | **M3** | Draft vs. Published State Management & Active Lifecycle | P1 | S | `DONE (Verified; Owner Acceptance PENDING)` | FC-014 |
+| **FC-016** | **M3** | Manual Test-Run Drawer & Trigger Output Preview | P1 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-015 |
 | **FC-017** | **M4** | Real Domain Event-to-Workflow Dispatch Engine | P0 | L | `NOT_STARTED` | FC-015 |
 | **FC-018** | **M4** | Task Domain Event Producers (`task.created`, `task.updated`, `completed`) | P0 | M | `NOT_STARTED` | FC-017 |
 | **FC-019** | **M4** | Trigger Filtering, Variable Propagation & Storm Protection | P1 | M | `NOT_STARTED` | FC-018 |
