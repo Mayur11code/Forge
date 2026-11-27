@@ -50,13 +50,25 @@ export const AVAILABLE_TRIGGERS: TriggerDef[] = [
     id: 'task.created',
     label: 'On Task Created',
     description: 'Triggers when a new task is added.',
-    outputs: ['taskId', 'projectId', 'assigneeId'],
+    outputs: ['taskId', 'projectId', 'title', 'description', 'priority', 'status', 'assigneeId'],
+  },
+  {
+    id: 'task.updated',
+    label: 'On Task Updated',
+    description: 'Triggers when a task is modified.',
+    outputs: ['taskId', 'projectId', 'title', 'description', 'priority', 'status', 'assigneeId', 'previousStatus'],
+  },
+  {
+    id: 'task.completed',
+    label: 'On Task Completed',
+    description: 'Triggers when a task transitions to DONE.',
+    outputs: ['taskId', 'projectId', 'title', 'completedAt'],
   },
   {
     id: 'project.created',
     label: 'On Project Created',
     description: 'Triggers when a new project is initialized.',
-    outputs: ['projectId'],
+    outputs: ['projectId', 'name', 'description'],
   },
   {
     id: 'user.joined',

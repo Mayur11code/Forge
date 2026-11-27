@@ -704,46 +704,49 @@ flowchart TD
 #### FC-017 | M4 | Real Domain Event-to-Workflow Dispatch Engine
 - **Milestone:** M4
 - **Capability:** Real transactional outbox consumer matching domain events to active workflows.
-- **Current Evidence:** Outbox pattern implemented in foundational engine, but not wired to dispatch live task mutations to workflow runs.
-- **Missing Behavior:** Background worker or immediate queue consumer querying published workflows matching event type and starting runs.
-- **Required Outcome:** Implement `dispatchDomainEvent` worker handler connecting outbox events to `WorkflowEngine.startWorkflow`.
+- **Current Evidence:** Dedicated `DomainEventOutbox` and `WorkflowTriggerDispatch` ledger models implemented. Durable dispatch engine (`src/lib/workflow/execution/event-dispatcher.ts`) queries published workflows matching event type within exact tenant boundary (`orgId == event.orgId`), matches trigger step or top-level event ID, evaluates trigger filter, records unique dispatch ledger (`@@unique([eventId, workflowId])`), and safely starts workflow runs with exact expected version pinning. Background worker handler registered in `src/app/api/worker/route.ts`. Remediated per M4-REM-2 with atomic compare-and-swap ignition claim Step 0.2 (`src/lib/workflow/execution/trigger.ts`) before `tx.workflowRun.create` to eliminate duplicate run creation under concurrent delivery. Standing outbox recovery implemented via authenticated `/api/cron/domain-outbox` and Vercel Cron per M4-REM-3.
 - **Dependencies:** FC-015
-- **Files Involved:** `src/lib/workflow/worker/event-dispatcher.ts`, `src/lib/workflow/engine/workflow-engine.ts`
+- **Files Involved:** `src/lib/workflow/execution/event-dispatcher.ts`, `src/lib/events/domain-outbox.ts`, `src/lib/workflow/execution/trigger.ts`, `src/app/api/worker/route.ts`, `src/app/api/cron/domain-outbox/route.ts`, `forge/vercel.json`
 - **Acceptance Criteria:**
   - Emitting an outbox event queries all active published workflows matching event type.
   - **Strict Multi-Tenant Isolation:** Dispatcher strictly matches workflows belonging to the event's `organizationId`. Workflows of other organizations are never invoked.
   - Enqueues workflow execution with event payload mapped to trigger outputs.
-- **Tests & Verification:** Integration test emitting domain event and verifying creation of `WorkflowRun` record.
-- **Status:** `NOT_STARTED`
+  - Idempotent ignition: redelivered events detect existing dispatch ledger and skip duplicate runs.
+  - Partial fan-out isolation: failure of one workflow does not block or fail sibling workflows.
+  - Standing sweeper cron periodically recovers stranded pending outbox events and expired leases.
+- **Tests & Verification:** `src/tests/workflow/fc017-event-dispatcher.test.ts` (8/8 tests passing covering tenant isolation, draft exclusion, publication race protection, idempotent ledger deduplication, partial fan-out, sweeper batch processing, and adversarial concurrent ignition deduplication) + `src/tests/workflow/cron-domain-outbox.test.ts` (8/8 tests passing).
+- **Status:** `DONE (Remediations Verified; Owner Acceptance PENDING)`
 
 #### FC-018 | M4 | Task Domain Event Producers (`task.created`, `task.updated`, `task.completed`)
 - **Milestone:** M4
 - **Capability:** Complete domain CDC instrumentation across all task mutations.
-- **Current Evidence:** Event schemas defined in `task-events.ts`, but not emitted by `createTask.ts` or task status change handlers.
-- **Missing Behavior:** Wrapping all task mutations in database transactions that atomically write to `OutboxEvent`.
-- **Required Outcome:** Instrument `createTask.ts`, `updateTaskInOrg.ts`, and task deletion with transactional outbox writes.
+- **Current Evidence:** Transactional domain event producers implemented in `src/lib/tasks/create-task.ts`, `src/lib/tasks/update-task.ts`, and `src/lib/projects/create-project.ts`. Atomically writes domain mutations and `DomainEventOutbox` records inside a single interactive PostgreSQL transaction. Enforces workflow provenance invariants: workflow-originated mutations carry `originType = "WORKFLOW"`, `workflowEligible = false`, `suppressionReason = "WORKFLOW_ORIGINATED"` and `status = "SUPPRESSED"`. Remediated per M4-REM-1: `update-task.ts` uses row locking (`SELECT FOR UPDATE`) and an atomic compare-and-swap query (`tx.task.updateMany({ where: { id: taskId, status: { not: "DONE" } }, data: { status: "DONE", ... } })`) inside the transaction, emitting `task.completed` if and only if `transition.count > 0`. Duplicate CDC hooks eliminated from `src/lib/prisma/extended.ts`.
 - **Dependencies:** FC-017
-- **Files Involved:** `src/app/actions/Tasks/createTask.ts`, `src/app/actions/Tasks/updateTaskInOrg.ts`, `src/lib/workflow/event-bus/task-events.ts`
+- **Files Involved:** `src/lib/tasks/create-task.ts`, `src/lib/tasks/update-task.ts`, `src/lib/projects/create-project.ts`, `src/lib/workflow/actions/core/create-task.ts`, `src/lib/events/domain-outbox.ts`
 - **Acceptance Criteria:**
-  - Creating a task commits `Task` + `OutboxEvent(task.created)` in single atomic transaction.
-  - Changing status to completed commits `Task` + `OutboxEvent(task.completed)`.
+  - Creating a task commits `Task` + `DomainEventOutbox(task.created)` in single atomic transaction.
+  - Changing status to completed commits `Task` + `DomainEventOutbox(task.completed)`.
+  - Updating an already DONE task does NOT emit `task.completed`.
+  - Concurrent completion requests emit exactly ONE `task.completed` event.
+  - Workflow-originated tasks carry `originType = "WORKFLOW"`, are suppressed from global workflow dispatcher, but successfully return to workflow action for step progression.
+  - Human updates to workflow-created tasks evaluate eligibility on the current mutation (`originType = "USER"` -> `workflowEligible = true`).
   - If task creation fails, outbox event is rolled back.
-- **Tests & Verification:** Database transaction test verifying atomic presence of both task and outbox event rows.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** `src/tests/workflow/fc018-task-event-producers.test.ts` (8/8 tests passing covering user task creation, workflow task suppression, human update re-evaluation, state transition detection, already-done task update, adversarial concurrent completion deduplication, and transactional project creation).
+- **Status:** `DONE (Remediations Verified; Owner Acceptance PENDING)`
 
 #### FC-019 | M4 | Trigger Filtering, Variable Propagation & Storm Protection
 - **Milestone:** M4
 - **Capability:** Fine-grained event payload filters and recursion loop prevention.
-- **Current Evidence:** Workflows fire on all events of a given type without attribute filtering; self-triggering loops possible.
-- **Missing Behavior:** Trigger condition configuration (e.g. only fire if `priority == "URGENT"`) and loop depth counter.
-- **Required Outcome:** Add trigger filter evaluation in `event-dispatcher.ts`; inject execution trace depth header (`x-forge-depth > 5` aborts).
+- **Current Evidence:** Deterministic trigger filter contract implemented in `src/lib/workflow-types/trigger-filter.ts` supporting `equals`, `not_equals`, `in`, `contains` with compound `AND`/`OR` conjunctions and fail-closed property resolution. UI filter editor implemented in `src/features/organizations/components/workflow/TriggerFilterEditor.tsx` and integrated into `PropertiesPanel.tsx` and `TriggerNode.tsx`. Event payload propagated into initial run context under `trigger.outputs`, enabling `{{trigger.outputs.field}}` resolution in downstream actions. Storm protection guaranteed by provenance gating terminating workflow cascades at depth 1.
 - **Dependencies:** FC-018
-- **Files Involved:** `src/lib/workflow/worker/event-dispatcher.ts`, `src/lib/workflow/engine/workflow-engine.ts`
+- **Files Involved:** `src/lib/workflow-types/trigger-filter.ts`, `src/features/organizations/components/workflow/TriggerFilterEditor.tsx`, `src/features/organizations/components/workflow/PropertiesPanel.tsx`, `src/features/organizations/components/workflow/nodes/TriggerNode.tsx`, `src/lib/workflow/execution/event-dispatcher.ts`
 - **Acceptance Criteria:**
-  - Trigger only advances if event payload matches configured filter rules.
-  - Cascading automated task updates do not trigger infinite recursive workflow execution.
-- **Tests & Verification:** Unit tests for payload filtering; recursion test asserting automated abort at depth 5.
-- **Status:** `NOT_STARTED`
+  - Trigger only advances if event payload matches configured filter rules; non-matching events marked `FILTERED`.
+  - Missing or invalid filter fields fail closed without exceptions.
+  - Event payload variables propagate reliably through `{{trigger.outputs.field}}`.
+  - Cascading automated task updates terminate at depth 1 with zero recursive ignition.
+- **Tests & Verification:** `src/tests/workflow/fc019-trigger-filters-and-storm.test.ts` (8/8 tests passing covering filter operators, compound logic, fail-closed security, variable propagation, and storm protection).
+- **Status:** `DONE (Remediations Verified; Owner Acceptance PENDING)`
 ---
 
 ### Milestone M5: Actions and Integrations
@@ -1196,9 +1199,9 @@ flowchart TD
 | **FC-015** | **M3** | Draft vs. Published State Management & Active Lifecycle | P1 | S | `DONE (Owner Accepted)` | FC-014 |
 | **FC-016** | **M3** | Manual Test-Run Drawer & Trigger Output Preview | P1 | M | `DONE (Owner Accepted)` | FC-015 |
 | **M3.1** | **M3** | Workspace UI Revamp, Simulation Engine Polish & CI Hardening | P1 | M | `DONE (Owner Accepted)` | FC-016 |
-| **FC-017** | **M4** | Real Domain Event-to-Workflow Dispatch Engine | P0 | L | `NOT_STARTED` | FC-015 |
-| **FC-018** | **M4** | Task Domain Event Producers (`task.created`, `task.updated`, `completed`) | P0 | M | `NOT_STARTED` | FC-017 |
-| **FC-019** | **M4** | Trigger Filtering, Variable Propagation & Storm Protection | P1 | M | `NOT_STARTED` | FC-018 |
+| **FC-017** | **M4** | Real Domain Event-to-Workflow Dispatch Engine | P0 | L | `DONE (Remediations Verified; Owner Acceptance PENDING)` | FC-015 |
+| **FC-018** | **M4** | Task Domain Event Producers (`task.created`, `task.updated`, `completed`) | P0 | M | `DONE (Remediations Verified; Owner Acceptance PENDING)` | FC-017 |
+| **FC-019** | **M4** | Trigger Filtering, Variable Propagation & Storm Protection | P1 | M | `DONE (Remediations Verified; Owner Acceptance PENDING)` | FC-018 |
 | **FC-020** | **M5** | Reconcile & Register Native Actions (`send-email`, `report`, `condition`)| P0 | M | `NOT_STARTED` | FC-013 |
 | **FC-021** | **M5** | Implement & Register `task.update` & `comment.create` Actions | P0 | M | `NOT_STARTED` | FC-020 |
 | **FC-022** | **M5** | Implement & Register SSRF-Safe `http.request` Action | P1 | M | `NOT_STARTED` | FC-020 |
@@ -1437,8 +1440,9 @@ Milestone M3 (Complete Workflow Builder) and M3.1 (Workspace UI Revamp, Simulati
 - **Git Delivery:** Pushed to `feat/m1-identity-and-latenight-landing`.
 
 **Release Decision:**
-- **Automated Verification:** **PASS** (139/139 test suites passing, 2,120/2,120 tests).
+- **Automated Verification:** **PASS** (37/37 workflow test suites passing, 529/529 tests green, Next.js Turbopack build exit 0, ESLint exit 0).
 - **Milestone M2 Status:** **CLOSED & COMPLETE (Owner Accepted)**.
 - **Milestone M3 Status:** **CLOSED & COMPLETE (Owner Accepted)**.
-- **Active Milestone:** **Milestone M4: Real Event Triggers and Automation (FC-017 through FC-021)**.
-- **Dev-Logs:** [2026-11-27 M3 Integration Review](../dev-log/2026-11-27-m3-integration-and-release-review.md) · [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md)
+- **Milestone M4 Status:** **IMPLEMENTED, REMEDIATED & VERIFIED (Owner Acceptance PENDING: FC-017, FC-018, FC-019)**.
+- **Next Milestone in Queue:** **Milestone M5: Actions and Integrations (FC-020 through FC-023)**.
+- **Dev-Logs:** [2026-11-27 M3 Integration Review](../dev-log/2026-11-27-m3-integration-and-release-review.md) · [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md) · [2026-11-27 M4 Real Event Triggers Implementation](../dev-log/2026-11-27-m4-real-event-triggers-implementation.md)

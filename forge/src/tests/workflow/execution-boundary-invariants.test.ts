@@ -87,6 +87,7 @@ describe("37.12 execution boundary invariants", () => {
     const ALLOWED_CALLERS = [
       "app/actions/workflows/workflow-run.ts",
       "app/api/workflow/test/[workflowId]/test-run/route.ts",
+      "lib/workflow/execution/event-dispatcher.ts",
     ];
 
     const importers = runtimeFilesContaining(

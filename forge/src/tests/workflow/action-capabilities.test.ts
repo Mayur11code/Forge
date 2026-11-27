@@ -397,17 +397,25 @@ describe("UI projection", () => {
   it("leaves trigger presentation unchanged", () => {
     expect(AVAILABLE_TRIGGERS.map((t) => t.id)).toEqual([
       "task.created",
+      "task.updated",
+      "task.completed",
       "project.created",
       "user.joined",
     ]);
     expect(AVAILABLE_TRIGGERS.map((t) => t.label)).toEqual([
       "On Task Created",
+      "On Task Updated",
+      "On Task Completed",
       "On Project Created",
       "On User Joined",
     ]);
     expect(AVAILABLE_TRIGGERS[0].outputs).toEqual([
       "taskId",
       "projectId",
+      "title",
+      "description",
+      "priority",
+      "status",
       "assigneeId",
     ]);
   });

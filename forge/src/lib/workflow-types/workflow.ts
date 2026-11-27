@@ -3,6 +3,7 @@
 import { z } from 'zod';
 import type { Node, Edge } from '@xyflow/react';
 import { StepExecutionStatus } from '@prisma/client';
+import { TriggerFilterConfigSchema } from './trigger-filter';
 
 const ExecutionStatusSchema = z
   .enum(StepExecutionStatus)
@@ -257,7 +258,8 @@ export type WorkflowDefinition = z.infer<typeof WorkflowDefinitionSchema>;
 //frontend ui payloads
 export const TriggerNodeDataSchema = z.object({
   label: z.string(),
-  eventId: z.string().nullable(), 
+  eventId: z.string().nullable(),
+  filter: TriggerFilterConfigSchema.optional(),
   executionStatus: ExecutionStatusSchema, // This will be injected live during execution to reflect the current status of the step
 });
 

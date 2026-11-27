@@ -418,7 +418,7 @@ describe("37.15 execution integration: output propagation A → B", () => {
     expect(createTaskInOrgMock).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ title: "task_A", projectId: PROJECT_ID }),
-      { orgId: ORG_ID },
+      expect.objectContaining({ orgId: ORG_ID }),
     );
 
     // The resolved inputs are what the wrapper recorded on the step run.
@@ -434,7 +434,7 @@ describe("37.15 execution integration: output propagation A → B", () => {
     expect(createTaskInOrgMock).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
-      { orgId: ORG_ID },
+      expect.objectContaining({ orgId: ORG_ID }),
     );
 
     // The same grammar and the same context, resolved by the exported
@@ -517,7 +517,7 @@ describe("37.15 execution integration: diamond A → {B, C} → D", () => {
     expect(createTaskInOrgMock).toHaveBeenNthCalledWith(
       4,
       expect.objectContaining({ title: "task_B" }),
-      { orgId: ORG_ID },
+      expect.objectContaining({ orgId: ORG_ID }),
     );
     expect(stepRunOf(run.id, "d")?.inputs).toEqual({
       title: "task_B",

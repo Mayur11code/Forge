@@ -14,6 +14,7 @@ import { handleToolExecution } from "@/lib/ai/agent/tool-worker";
 import { handleAgentMaintenance } from "./agent-maintenance/am";
 import { handleWorkflowMaintenance } from "./workflow-maintenance/wm";
 import { handleWorkflowEvent } from "@/app/api/workflow/wf";
+import { processDomainEventOutbox } from "@/lib/workflow/execution/event-dispatcher";
 
 
 const handleFileUpload = createWorker("FILE_UPLOADED", fileWorkerHandler);
@@ -56,6 +57,15 @@ const handleAgentMaintenanceEvent = createWorker(
 const handleWorkflowMaintenanceEvent = createWorker(
   "WORKFLOW_MAINTENANCE_REQUESTED",
   handleWorkflowMaintenance,
+);
+
+// M4 (FC-017): Transactional domain event outbox processing & workflow dispatch
+const handleDomainEventOutbox = createWorker(
+  "PROCESS_DOMAIN_EVENT_OUTBOX",
+  async ({ event }) => {
+    const limit = event.data.limit ?? 50;
+    await processDomainEventOutbox(limit);
+  },
 );
 
 // The workflow engine's own two events.
@@ -160,6 +170,18 @@ export async function POST(req: NextRequest) {
       case "EXECUTE_WORKFLOW_NODE":
       case "ADVANCE_WORKFLOW":
         return await handleWorkflowEngineEvent(req);
+
+      // M4 (FC-017): Domain event outbox sweeper & direct trigger dispatching
+      case "PROCESS_DOMAIN_EVENT_OUTBOX":
+        return await handleDomainEventOutbox(req);
+
+      case "TASK_CREATED":
+      case "TASK_UPDATED":
+      case "TASK_COMPLETED":
+      case "PROJECT_CREATED": {
+        const result = await processDomainEventOutbox(50);
+        return NextResponse.json({ success: true, data: result }, { status: 200 });
+      }
 
       default: {
         // Never acknowledge work we did not do.

@@ -415,11 +415,16 @@ model Task {
   attachments Attachment[]
 comments      Comment[]
 
-
+  // Origin metadata for workflow suppression and audit (M4 FC-018 / FC-019)
+  originType               String        @default("USER") // USER, WORKFLOW, SYSTEM
+  originWorkflowId         String?
+  originWorkflowVersionId  String?
+  originWorkflowRunId      String?
 
   @@index([projectId])
   @@index([assigneeId])
   @@index([status])
+  @@index([originType])
 }
 
 
@@ -583,6 +588,7 @@ model Workflow {
   versions           WorkflowVersion[] @relation("WorkflowVersions")
 
   runs        WorkflowRun[] // Excellent addition for observability
+  triggerDispatches WorkflowTriggerDispatch[]
 
   sourceProposalId String?  @unique
   sourceProposal   AgentToolExecution? @relation("WorkflowSourceProposal", fields: [sourceProposalId], references: [id], onDelete: SetNull)
@@ -612,6 +618,7 @@ model WorkflowVersion {
   workflow       Workflow      @relation("WorkflowVersions", fields: [workflowId], references: [id], onDelete: Cascade)
   publishedFor   Workflow?     @relation("WorkflowPublishedVersion")
   runs           WorkflowRun[]
+  triggerDispatches WorkflowTriggerDispatch[]
 
   @@unique([workflowId, versionNumber])
   @@unique([id, workflowId, orgId])
@@ -660,6 +667,7 @@ model WorkflowRun {
   stepRuns        StepRun[]
   auditLogs       ExecutionAuditLog[]
   outboxEvents    WorkflowOutbox[]
+  triggerDispatch WorkflowTriggerDispatch?
 
   @@index([workflowId])
   @@index([workflowVersionId])
@@ -917,3 +925,67 @@ model VectorOutboxEvent {
   @@index([status, dispatchLeaseExpiresAt])
   @@index([orgId, entityType, entityId])
 }
+
+// ---------------------------------------------------------------------------
+// M4: REAL DOMAIN EVENT DISPATCH & WORKFLOW TRIGGER LEDGER (FC-017 / FC-018)
+// ---------------------------------------------------------------------------
+
+model DomainEventOutbox {
+  id                      String    @id @default(cuid())
+  eventId                 String    @unique
+  orgId                   String
+  eventType               String    // "task.created", "task.updated", "task.completed", "project.created"
+  entityType              String    // "TASK", "PROJECT"
+  entityId                String
+  payload                 Json
+  originType              String    @default("USER") // "USER", "WORKFLOW", "SYSTEM"
+  originWorkflowId        String?
+  originWorkflowVersionId String?
+  originWorkflowRunId     String?
+  workflowEligible        Boolean   @default(true)
+  suppressionReason       String?
+  status                  String    @default("PENDING") // PENDING, PROCESSING, PROCESSED, SUPPRESSED, DEAD_LETTER
+  attempts                Int       @default(0)
+  maxAttempts             Int       @default(5)
+  nextAttemptAt           DateTime  @default(now())
+  leaseToken              String?
+  leaseExpiresAt          DateTime?
+  lastError               String?   @db.Text
+  processedAt             DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  dispatches              WorkflowTriggerDispatch[]
+
+  @@index([workflowEligible, status, nextAttemptAt])
+  @@index([status, nextAttemptAt])
+  @@index([orgId, eventType])
+  @@index([createdAt])
+}
+
+model WorkflowTriggerDispatch {
+  id                 String             @id @default(cuid())
+  eventId            String
+  orgId              String
+  workflowId         String
+  workflowVersionId  String
+  runId              String?            @unique
+  status             String             @default("PENDING") // PENDING, PROCESSING, STARTED, FILTERED, SKIPPED, FAILED, DEAD_LETTER
+  error              String?            @db.Text
+  attempts           Int                @default(0)
+  leaseToken         String?
+  leaseExpiresAt     DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  domainEvent        DomainEventOutbox  @relation(fields: [eventId], references: [eventId], onDelete: Cascade)
+  workflow           Workflow           @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  workflowVersion    WorkflowVersion    @relation(fields: [workflowVersionId], references: [id], onDelete: Cascade)
+  workflowRun        WorkflowRun?       @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, workflowId])
+  @@index([workflowId, status])
+  @@index([orgId, status])
+  @@index([status, leaseExpiresAt])
+}
+

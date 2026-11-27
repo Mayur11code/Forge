@@ -52,10 +52,20 @@ const execute: ExecuteFunction = async (ctx) => {
       };
     }
 
-    // 3. Canonical business operation.
+    // 3. Canonical business operation with trusted workflow origin metadata.
+    // Tasks created by a workflow execution are marked with originType = "WORKFLOW",
+    // which suppresses global workflow trigger dispatch while allowing this workflow
+    // to receive the created task output and proceed to its next step normally.
     const result = await createTaskInOrg(
       { title, projectId, description, priority, assigneeId },
-      { orgId: workflow.orgId },
+      {
+        orgId: workflow.orgId,
+        origin: {
+          originType: "WORKFLOW",
+          workflowId: ctx.workflowId,
+          workflowRunId: ctx.runId,
+        },
+      },
     );
 
     if (!result.success) {

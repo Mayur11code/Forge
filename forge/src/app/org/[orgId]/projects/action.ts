@@ -7,20 +7,12 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getOrgAccess } from "@/features/organizations/getOrgAccess";
 import { notFound } from "next/navigation";
+import { createProjectInOrg, createProjectInputSchema } from "@/lib/projects/create-project";
+
 /* ----------------------------------------
    1️⃣ Zod Schema (single source of truth)
 ---------------------------------------- */
-const createProjectSchema = z.object({
-  name: z
-    .string()
-    .min(1, "Project name is required")
-    .max(100, "Project name is too long"),
-  description: z
-    .string()
-    .max(500, "Description is too long")
-    .optional()
-    .or(z.literal("")),
-});
+const createProjectSchema = createProjectInputSchema;
 
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 
@@ -35,24 +27,26 @@ export async function createProject(
   const data = createProjectSchema.parse(rawData);
 
   // 3️⃣ Auth + org + membership
-  // const { organization, membership } = await requireOrgAccess(orgSlug);
-   const access = await getOrgAccess(orgSlug);
+  const access = await getOrgAccess(orgSlug);
   if (!access) notFound();
-  
 
   // 4️⃣ RBAC (write permission)
   if (access.membership.role !== "ADMIN" && access.membership.role !== "MANAGER") {
     throw new Error("Insufficient permissions to create a project.");
   }
 
-  // 5️⃣ Create project (org-scoped, safe)
-  const project = await db.project.create({
-    data: {
-      name: data.name.trim(),
-      description: data.description?.trim() || null,
-      orgId: access.organization.id,
+  // 5️⃣ Create project via canonical business operation (transactional outbox)
+  const result = await createProjectInOrg(data, {
+    orgId: access.organization.id,
+    userId: access.userId,
+    origin: {
+      originType: "USER",
     },
   });
+
+  if (!result.success) {
+    throw new Error(result.error);
+  }
 
   // 6️⃣ Revalidate & redirect
   revalidatePath(`/org/${orgSlug}/projects`);

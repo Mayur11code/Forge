@@ -78,6 +78,10 @@ export default function TaskBox(props: TaskBoxProps) {
       updatedAt: new Date(),
       completedAt: null,
       description: "No description provided.",
+      originType: "USER",
+      originWorkflowId: null,
+      originWorkflowVersionId: null,
+      originWorkflowRunId: null,
     };
 
     startTransition(() => {

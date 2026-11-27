@@ -27,6 +27,7 @@ import type {
   AppEdge,
   AppNode,
 } from "@/lib/workflow-types/workflow";
+import TriggerFilterEditor from "./TriggerFilterEditor";
 
 type LiveNodeMatch =
   | { id: string; type: "trigger"; data: TriggerNodeData }
@@ -343,6 +344,18 @@ export default function PropertiesPanel({
             <p className="text-[11px] font-mono text-zinc-500 leading-relaxed">
               {AVAILABLE_TRIGGERS.find((t) => t.id === nodeMatch.data.eventId)?.description}
             </p>
+          )}
+
+          {nodeMatch.data.eventId && (
+            <TriggerFilterEditor
+              eventId={nodeMatch.data.eventId}
+              filter={nodeMatch.data.filter}
+              onChange={(updatedFilter) => {
+                const patch = { filter: updatedFilter };
+                updateNodeData(activeNodeId, patch);
+                onUpdateNodeData?.(activeNodeId, patch);
+              }}
+            />
           )}
         </div>
       )}

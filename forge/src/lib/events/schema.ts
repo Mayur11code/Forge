@@ -24,6 +24,8 @@ export const EventTypes = [
   "AGENT_MAINTENANCE_REQUESTED",
   "DOMAIN_CLEANUP_REQUESTED",
   "DOMAIN_MAINTENANCE_REQUESTED",
+  "PROJECT_CREATED",
+  "PROCESS_DOMAIN_EVENT_OUTBOX",
 ] as const;
 
 export type EventType = (typeof EventTypes)[number];
@@ -191,6 +193,18 @@ export const eventSchemas = {
   DOMAIN_MAINTENANCE_REQUESTED: z
     .object({
       limit: z.number().int().min(1).max(500).default(50),
+    })
+    .strict(),
+
+  PROJECT_CREATED: baseEventSchema.extend({
+    projectId: z.string(),
+    name: z.string().optional(),
+    description: z.string().nullable().optional(),
+  }),
+
+  PROCESS_DOMAIN_EVENT_OUTBOX: z
+    .object({
+      limit: z.number().int().min(1).max(100).default(50).optional(),
     })
     .strict(),
 } satisfies Record<EventType, z.ZodTypeAny>;
