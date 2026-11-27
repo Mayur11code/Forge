@@ -16,17 +16,8 @@ import {
   Check,
 } from "lucide-react";
 
-const ThreeCassetteDeck = dynamic(
-  () => import("@/components/ThreeCassetteDeck"),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="relative w-full h-[480px] border border-white/[0.08] bg-[#07070a] flex items-center justify-center font-mono text-xs text-zinc-500">
-        INITIALIZING 3D WEBGL DECK...
-      </div>
-    ),
-  }
-);
+import InteractiveWorkflowShowcase from "@/components/InteractiveWorkflowShowcase";
+import OrbitalCarousel from "@/components/OrbitalCarousel";
 
 const CustomCursor = dynamic(
   () => import("@/components/CustomCursor"),
@@ -373,12 +364,7 @@ export default function Home() {
   // Section & Animation Refs
   const heroRef = useRef<HTMLElement | null>(null);
   const targetMousePos = useRef({ x: 0, y: 0 });
-  const isDraggingWheelRef = useRef(false);
-  const wheelStartPointerX = useRef(0);
-  const wheelAngleRef = useRef(0);
-  const wheelVelocityRef = useRef(0.002);
-  const lastWheelPointerX = useRef(0);
-  const lastWheelTimestamp = useRef(0);
+  const spotlightRef = useRef<HTMLDivElement | null>(null);
 
   // Component States
   const [ambientAudioActive, setAmbientAudioActive] = useState(false);
@@ -388,15 +374,6 @@ export default function Home() {
   const [currentTimeUTC, setCurrentTimeUTC] = useState<string>("");
   const [tapeCounter, setTapeCounter] = useState(14);
   const [copiedCode, setCopiedCode] = useState(false);
-  const [activeHoverOrbitalIndex, setActiveHoverOrbitalIndex] = useState<number | null>(null);
-  const [smoothMousePos, setSmoothMousePos] = useState({ x: 0, y: 0 });
-
-  // --- KIND 50 ORBITAL WHEEL STATE ---
-  const [wheelAngle, setWheelAngle] = useState(0);
-  const [isDraggingWheel, setIsDraggingWheel] = useState(false);
-
-  // --- THREE.JS 3D CASSETTE DECK TRIGGER ---
-  const [scrambleTrigger, setScrambleTrigger] = useState(0);
 
   // --- RESTORED SYSTEM EVENTS MINI-GAME STATE ---
   const [isGameOpen, setIsGameOpen] = useState(false);
@@ -436,88 +413,31 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [ambientAudioActive]);
 
-  // Smooth mouse lerp loop
+  // Ultra-smooth 144 FPS direct DOM spotlight tracking (Zero React re-render overhead)
   useEffect(() => {
     let animId: number;
-    const lerpLoop = () => {
-      setSmoothMousePos((prev) => {
-        const dx = targetMousePos.current.x - prev.x;
-        const dy = targetMousePos.current.y - prev.y;
-        if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) return prev;
-        return {
-          x: prev.x + dx * 0.08,
-          y: prev.y + dy * 0.08,
-        };
-      });
-      animId = requestAnimationFrame(lerpLoop);
+    let currentX = typeof window !== "undefined" ? window.innerWidth / 2 : 0;
+    let currentY = typeof window !== "undefined" ? window.innerHeight / 2 : 0;
+
+    const updateSpotlight = () => {
+      const dx = targetMousePos.current.x - currentX;
+      const dy = targetMousePos.current.y - currentY;
+      if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+        currentX += dx * 0.12;
+        currentY += dy * 0.12;
+        if (spotlightRef.current) {
+          spotlightRef.current.style.background = `radial-gradient(850px circle at ${currentX}px ${currentY}px, rgba(255, 255, 255, 0.045), transparent 80%)`;
+        }
+      }
+      animId = requestAnimationFrame(updateSpotlight);
     };
-    animId = requestAnimationFrame(lerpLoop);
+
+    animId = requestAnimationFrame(updateSpotlight);
     return () => cancelAnimationFrame(animId);
   }, []);
 
   const handleMouseMoveGlobal = (e: React.MouseEvent<HTMLDivElement>) => {
     targetMousePos.current = { x: e.clientX, y: e.clientY };
-  };
-
-  // ==========================================================================
-  // KIND 50: 3D ORBITAL CAROUSEL WHEEL PHYSICS & DRAG LOOP
-  // ==========================================================================
-  useEffect(() => {
-    let animId: number;
-
-    const updateOrbitalWheel = () => {
-      if (!isDraggingWheelRef.current) {
-        if (Math.abs(wheelVelocityRef.current) > 0.0008) {
-          wheelVelocityRef.current *= 0.94;
-        } else {
-          wheelVelocityRef.current = activeHoverOrbitalIndex !== null ? 0 : 0.0016;
-        }
-        wheelAngleRef.current += wheelVelocityRef.current;
-        setWheelAngle(wheelAngleRef.current);
-      }
-      animId = requestAnimationFrame(updateOrbitalWheel);
-    };
-
-    animId = requestAnimationFrame(updateOrbitalWheel);
-    return () => cancelAnimationFrame(animId);
-  }, [activeHoverOrbitalIndex]);
-
-  const handleWheelPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    isDraggingWheelRef.current = true;
-    setIsDraggingWheel(true);
-    wheelStartPointerX.current = e.clientX;
-    lastWheelPointerX.current = e.clientX;
-    lastWheelTimestamp.current = performance.now();
-    wheelVelocityRef.current = 0;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
-
-  const handleWheelPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingWheelRef.current) return;
-    const now = performance.now();
-    const dt = Math.max(1, now - lastWheelTimestamp.current);
-    const dx = e.clientX - lastWheelPointerX.current;
-
-    const dTheta = (dx / 460) * 1.4;
-    wheelAngleRef.current += dTheta;
-    setWheelAngle(wheelAngleRef.current);
-
-    wheelVelocityRef.current = dTheta / (dt / 16.6);
-    lastWheelPointerX.current = e.clientX;
-    lastWheelTimestamp.current = now;
-  };
-
-  const handleWheelPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingWheelRef.current) return;
-    isDraggingWheelRef.current = false;
-    setIsDraggingWheel(false);
-    (e.target as HTMLElement).releasePointerCapture?.(e.pointerId);
-    playMechanicalClick(audioCtxRef.current);
-  };
-
-  const handleScrambleCassettes = () => {
-    setScrambleTrigger((prev) => prev + 1);
-    playMechanicalClick(audioCtxRef.current);
   };
 
   // ==========================================================================
@@ -670,12 +590,10 @@ export default function Home() {
         onPlayClickSound={() => playMechanicalClick(audioCtxRef.current)}
       />
 
-      {/* Dynamic Ambient Mouse Spotlight */}
+      {/* Dynamic Ambient Mouse Spotlight (Direct DOM updated for 144 FPS) */}
       <div
+        ref={spotlightRef}
         className="pointer-events-none fixed inset-0 z-0 transition-opacity duration-700 ease-out opacity-60"
-        style={{
-          background: `radial-gradient(850px circle at ${smoothMousePos.x}px ${smoothMousePos.y}px, rgba(255, 255, 255, 0.045), transparent 80%)`,
-        }}
       />
 
       {/* Parallax Blueprint Grid */}
@@ -779,14 +697,14 @@ export default function Home() {
             </button>
 
             <Link
-              href="/login"
+              href="/signup"
               className="px-4 py-2 border border-white/[0.1] hover:border-white/30 text-zinc-300 hover:text-white text-xs font-mono tracking-wider transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5"
             >
-              Sign in
+              Sign up
             </Link>
 
             <Link
-              href="/signup"
+              href="/dashboard"
               className="px-5 py-2 bg-zinc-100 hover:bg-white text-zinc-950 text-xs font-mono font-semibold tracking-wider transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5 hover:shadow-[0_4px_25px_rgba(255,255,255,0.18)]"
             >
               Enter Forge
@@ -812,68 +730,12 @@ export default function Home() {
           </span>
         </div>
 
-        {/* Center Stage: The 3D Orbital Interactive Carousel Stage */}
-        <div
-          onPointerDown={handleWheelPointerDown}
-          onPointerMove={handleWheelPointerMove}
-          onPointerUp={handleWheelPointerUp}
-          className="relative w-full max-w-6xl h-[720px] flex items-center justify-center cursor-grab active:cursor-grabbing select-none"
-        >
-          {/* Circular Orbital Ring of System Invariant Cards (Kind 50 Architecture) */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            {ORBITAL_CARDS.map((card, idx) => {
-              const total = ORBITAL_CARDS.length;
-              const angle = wheelAngle + (idx / total) * (Math.PI * 2);
-              const radiusX = 480; // Expanded horizontal radius for clean separation
-              const radiusY = 265; // Ample vertical clearance below center console
-
-              const posX = Math.cos(angle) * radiusX;
-              const posY = Math.sin(angle) * radiusY;
-
-              // 3D Depth Scale & Perspective
-              const depthFactor = (Math.sin(angle) + 1) / 2; // 0 (far) to 1 (near)
-              const scale = 0.82 + depthFactor * 0.32;
-              const opacity = 0.65 + depthFactor * 0.35;
-              const zIndex = Math.round(depthFactor * 30);
-              const isHovered = activeHoverOrbitalIndex === idx;
-
-              return (
-                <div
-                  key={card.id}
-                  onPointerEnter={() => setActiveHoverOrbitalIndex(idx)}
-                  onPointerLeave={() => setActiveHoverOrbitalIndex(null)}
-                  style={{
-                    transform: `translate3d(${posX}px, ${posY}px, 0) scale(${isHovered ? scale * 1.08 : scale}) rotate(${posX * 0.008}deg)`,
-                    opacity,
-                    zIndex: isHovered ? 50 : zIndex,
-                    transition: isDraggingWheel ? "none" : "transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease",
-                  }}
-                  className={`pointer-events-auto absolute w-60 sm:w-64 p-4 rounded-2xl border bg-gradient-to-b from-[#1c1c2b]/95 to-[#101018]/95 backdrop-blur-md shadow-[0_22px_50px_rgba(0,0,0,0.92)] transition-all duration-300 ${
-                    isHovered
-                      ? "border-white text-white shadow-[0_22px_55px_rgba(255,255,255,0.22),inset_0_1px_0_rgba(255,255,255,0.4)]"
-                      : "border-white/[0.24] text-zinc-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.2)]"
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pb-2 border-b border-white/[0.1] mb-2.5">
-                    <span className="text-zinc-100 font-bold">[ {card.index} ]</span>
-                    <span className="text-zinc-300 font-medium">{card.tag}</span>
-                  </div>
-
-                  <h3 className="font-mono text-xs font-semibold text-zinc-100 tracking-tight leading-snug">
-                    {card.title}
-                  </h3>
-                  <p className="text-[11px] text-zinc-400 mt-1 font-light leading-snug">
-                    {card.subtitle}
-                  </p>
-
-                  <div className="mt-3 pt-2.5 border-t border-white/[0.08] flex items-center justify-between text-[10px] font-mono text-zinc-400">
-                    <span className="text-zinc-200 font-medium">{card.metric}</span>
-                    <ChevronRight className="w-3 h-3 text-zinc-400" />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        {/* Center Stage: The 3D Orbital Interactive Carousel Stage (Isolated 60 FPS Component) */}
+        <div className="relative w-full max-w-6xl h-[720px] flex items-center justify-center select-none">
+          <OrbitalCarousel
+            cards={ORBITAL_CARDS}
+            onMechanicalClick={() => playMechanicalClick(audioCtxRef.current)}
+          />
 
           {/* Center Monumental Console (Framed by the Orbital Wheel) */}
           <div className="relative z-40 max-w-lg text-center px-6 pointer-events-auto">
@@ -891,18 +753,18 @@ export default function Home() {
             {/* Tactical Interactive Action CTAs */}
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-7">
               <Link
-                href="/signup"
+                href="/dashboard"
                 className="w-full sm:w-auto py-3 px-6 bg-zinc-100 hover:bg-white text-zinc-950 font-mono text-xs font-bold tracking-wider flex items-center justify-center gap-2 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(255,255,255,0.14)] group"
               >
-                <span>Create workspace</span>
+                <span>Enter Forge</span>
                 <ArrowRight className="w-3.5 h-3.5 transition-transform duration-300 group-hover:translate-x-1" />
               </Link>
 
               <Link
-                href="/login"
+                href="/signup"
                 className="w-full sm:w-auto py-3 px-6 border border-white/[0.12] hover:border-white/40 bg-zinc-950/70 text-zinc-300 hover:text-white font-mono text-xs tracking-wider flex items-center justify-center gap-2 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5"
               >
-                <span>Resume session</span>
+                <span>Sign up</span>
                 <LogIn className="w-3.5 h-3.5 text-zinc-500" />
               </Link>
             </div>
@@ -911,91 +773,62 @@ export default function Home() {
       </section>
 
       {/* ===================================================================== */}
-      {/* 3. BIZARRO 3D PHYSICS CANVAS & DISTRIBUTED COMPUTE SUBSTRATE          */}
+      {/* 3. DETERMINISTIC DAG SIMULATION & TRANSACTION SUBSTRATE              */}
       {/* ===================================================================== */}
       <section className="relative z-10 py-24 border-b border-white/[0.08] max-w-7xl mx-auto px-6">
         <div className="flex items-center justify-between border-b border-white/[0.08] pb-4 mb-8 text-xs font-mono tracking-wider text-zinc-500">
           <div className="flex items-center gap-2">
             <span className="text-zinc-300 font-semibold">[ 002 ]</span>
-            <span>Distributed compute substrate & node physics</span>
+            <span>Deterministic DAG execution substrate & transaction lifecycle</span>
           </div>
           <div className="hidden sm:block">
-            <span>Photorealistic 3D compute blades · Grab & toss cluster nodes</span>
+            <span>Topological simulation · Real-time invariant inspection · Saga compensation</span>
           </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           {/* Left Column: Editorial Blueprint */}
-          <div className="lg:col-span-5 pt-2">
+          <div className="lg:col-span-4 pt-2">
             <h2 className="text-3xl sm:text-5xl font-light tracking-[-0.025em] text-zinc-100 leading-[1.12]">
-              Physical certainty in an ephemeral cloud.
+              Deterministic workflows with zero state drift.
             </h2>
             <p className="mt-6 text-sm text-zinc-300 font-light leading-relaxed">
-              Every workflow step is anchored as an immutable domain record. Like hot-swappable enterprise server blades secured in a hardened datacenter rack, transactions serialize under PostgreSQL row mutexes with zero silent state drift.
+              Every workflow step executes inside strict transaction boundaries. From PostgreSQL row mutexes to transactional outbox CDC emitters, Forge guarantees deterministic forward execution and atomic reverse saga compensation.
             </p>
 
             <div className="mt-8 border border-white/[0.08] bg-zinc-950/60 p-5 font-mono text-xs text-zinc-400 space-y-3 shadow-xl">
               <div className="flex items-center justify-between pb-2 border-b border-white/[0.06]">
-                <span className="text-zinc-300">Physics Substrate</span>
-                <span className="text-emerald-400 font-medium">Active (60 FPS)</span>
+                <span className="text-zinc-300">Execution Substrate</span>
+                <span className="text-zinc-200 font-medium">Deterministic DAG Engine</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>Interaction mode</span>
-                <span className="text-zinc-200">Grab, toss, inspect topology</span>
+                <span>Failure handling</span>
+                <span className="text-zinc-200">Reverse topological saga</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>Bus clock</span>
-                <span className="text-zinc-200">4.8 GHz Turbo · 100GbE</span>
+                <span>Concurrency lock</span>
+                <span className="text-zinc-200">PostgreSQL row mutex</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>Cluster topology</span>
-                <span className="text-zinc-200 font-bold">3 Modular Blades Online</span>
+                <span>State isolation</span>
+                <span className="text-zinc-200 font-bold">100% Zero Orphaned Records</span>
               </div>
             </div>
 
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <button
-                onClick={toggleAmbientAudio}
-                className="py-3 px-5 border border-white/[0.12] hover:border-white/40 bg-zinc-950 text-zinc-200 hover:text-white font-mono text-xs tracking-wider flex items-center gap-2 transition-all duration-300"
+              <Link
+                href="/dashboard"
+                className="py-3 px-5 border border-white/[0.15] hover:border-white bg-zinc-100 hover:bg-white text-zinc-950 font-mono text-xs font-semibold tracking-wider flex items-center gap-2 transition-all duration-300"
               >
-                {ambientAudioActive ? (
-                  <>
-                    <Pause className="w-3.5 h-3.5" />
-                    <span>Mute node telemetry</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5" />
-                    <span>Engage node audio</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={handleScrambleCassettes}
-                className="py-3 px-4 border border-white/[0.12] hover:border-zinc-500 bg-zinc-950 text-zinc-300 hover:text-white font-mono text-xs tracking-wider transition-all duration-300"
-                title="Apply physical impulse to compute blades"
-              >
-                Scramble nodes
-              </button>
-
-              <button
-                onClick={toggleTapeSpeed}
-                disabled={!ambientAudioActive}
-                className="py-3 px-3.5 border border-white/[0.12] hover:border-zinc-500 bg-zinc-950 text-zinc-400 hover:text-zinc-200 font-mono text-xs tracking-wider disabled:opacity-40 transition-all duration-300"
-              >
-                Clock: {tapeWarmth}
-              </button>
+                <span>Launch Workflow Studio</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Link>
             </div>
           </div>
 
-          {/* Right Column: Real Three.js 3D WebGL Cassette Deck */}
-          <div className="lg:col-span-7 flex flex-col items-center">
-            <ThreeCassetteDeck
-              ambientAudioActive={ambientAudioActive}
-              scrambleTrigger={scrambleTrigger}
-              onMechanicalClick={() => playMechanicalClick(audioCtxRef.current)}
-            />
+          {/* Right Column: Live Interactive Workflow Showcase */}
+          <div className="lg:col-span-8 flex flex-col items-center">
+            <InteractiveWorkflowShowcase />
           </div>
         </div>
       </section>
