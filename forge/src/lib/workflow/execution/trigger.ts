@@ -5,6 +5,7 @@ import type { JsonValue } from "@/lib/workflow-types/type";
 import type { Prisma, WorkflowRun } from "@prisma/client";
 import { WorkflowDefinitionSchema } from "@/lib/workflow-types/workflow";
 import { getRegisteredActionForIgnition } from "@/lib/workflow-types/action-registry";
+import { AVAILABLE_TRIGGERS } from "@/lib/workflow-types/registry";
 import {
   WorkflowExecutionSnapshot,
   WorkflowActionManifestEntry,
@@ -38,11 +39,27 @@ export async function startWorkflow(
 
   const { run, workflowName, definitionHash } = await executeInTransaction(async (tx) => {
     // 1. ATOMIC WORKFLOW ROW LOCK (FOR SHARE on PostgreSQL)
-    let workflow: { id: string; orgId: string; name: string; definition: unknown } | null = null;
+    let workflow: {
+      id: string;
+      orgId: string;
+      name: string;
+      definition: unknown;
+      isActive?: boolean;
+      publishedVersionId?: string | null;
+    } | null = null;
     if (typeof tx.$queryRaw === "function") {
       try {
-        const rows = await tx.$queryRaw<Array<{ id: string; orgId: string; name: string; definition: unknown }>>`
-          SELECT id, "orgId", name, definition
+        const rows = await tx.$queryRaw<
+          Array<{
+            id: string;
+            orgId: string;
+            name: string;
+            definition: unknown;
+            isActive: boolean;
+            publishedVersionId: string | null;
+          }>
+        >`
+          SELECT id, "orgId", name, definition, "isActive", "publishedVersionId"
           FROM "Workflow"
           WHERE id = ${workflowId} AND "orgId" = ${orgId}
           FOR SHARE
@@ -64,8 +81,39 @@ export async function startWorkflow(
       }
     }
 
+    // FC-015: Live execution requires an active, published workflow version.
+    // Draft-only rows (publishedVersionId === null) and inactive workflows
+    // (isActive === false) fail closed before any run or outbox intent is created.
+    if (workflow.publishedVersionId === null) {
+      throw new Error("Cannot start workflow: workflow has not been published.");
+    }
+    if (workflow.isActive === false) {
+      throw new Error("Cannot start workflow: workflow is currently inactive.");
+    }
+
+    let executionName = workflow.name;
+    let rawDefinition = workflow.definition;
+    let resolvedVersionId: string | null = null;
+
+    if (typeof workflow.publishedVersionId === "string" && workflow.publishedVersionId.length > 0) {
+      const version = await tx.workflowVersion.findFirst({
+        where: {
+          id: workflow.publishedVersionId,
+          workflowId: workflow.id,
+          orgId,
+        },
+        select: { id: true, name: true, definition: true },
+      });
+      if (!version) {
+        throw new Error("Cannot start workflow: published workflow version not found.");
+      }
+      executionName = version.name;
+      rawDefinition = version.definition;
+      resolvedVersionId = version.id;
+    }
+
     // 2. VALIDATE DEFINITION AT IGNITION
-    const parsedDefinition = WorkflowDefinitionSchema.safeParse(workflow.definition);
+    const parsedDefinition = WorkflowDefinitionSchema.safeParse(rawDefinition);
     if (!parsedDefinition.success) {
       throw new Error(
         `Cannot start workflow: definition is invalid: ${parsedDefinition.error.issues
@@ -75,9 +123,22 @@ export async function startWorkflow(
     }
     const definition = parsedDefinition.data;
 
-    // 3. BUILD ACTION MANIFEST WITH PINNED VERSIONS
+    // 3. VALIDATE TRIGGERS & BUILD ACTION MANIFEST WITH PINNED VERSIONS
+    // TRIGGER steps are validated against AVAILABLE_TRIGGERS and retain no-op
+    // trigger-context semantics in wrapper.ts; only ACTION steps belong in the
+    // executable actionManifest.
+    const knownTriggerIds = new Set(AVAILABLE_TRIGGERS.map((t) => t.id));
     const actionManifest: WorkflowActionManifestEntry[] = [];
     for (const [stepId, step] of Object.entries(definition.steps)) {
+      if (step.kind === "TRIGGER") {
+        if (!knownTriggerIds.has(step.action)) {
+          throw new Error(
+            `Cannot start workflow: trigger step "${stepId}" has unknown trigger "${step.action}"`,
+          );
+        }
+        continue;
+      }
+
       const action = getRegisteredActionForIgnition(step.action);
       if (!action) {
         throw new Error(
@@ -95,7 +156,7 @@ export async function startWorkflow(
     const snapshot: WorkflowExecutionSnapshot = {
       snapshotSchemaVersion: 1,
       workflowId: workflow.id,
-      workflowName: workflow.name,
+      workflowName: executionName,
       definition,
       actionManifest,
       createdAt: new Date().toISOString(),
@@ -115,6 +176,7 @@ export async function startWorkflow(
     const createdRun = await tx.workflowRun.create({
       data: {
         workflowId: workflow.id,
+        ...(resolvedVersionId ? { workflowVersionId: resolvedVersionId } : {}),
         status: "RUNNING",
         context: initialContext,
         definitionSnapshot: snapshot as unknown as Prisma.InputJsonValue,
@@ -122,7 +184,7 @@ export async function startWorkflow(
       },
     });
 
-    return { run: createdRun, workflowName: workflow.name, definitionHash: hash };
+    return { run: createdRun, workflowName: executionName, definitionHash: hash };
   });
 
   console.log(`[IGNITION] Started WorkflowRun ${run.id} for Workflow ${workflowName} (hash: ${definitionHash})`);
