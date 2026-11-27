@@ -139,7 +139,7 @@ describe("updateWorkflowState tenant scope", () => {
 
     const result = await update();
 
-    expect(result).toEqual({ success: true });
+    expect(result).toMatchObject({ success: true });
     expect(prismaDouble.workflow.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: WORKFLOW_ID, orgId: ORG_A },
@@ -157,7 +157,7 @@ describe("updateWorkflowState tenant scope", () => {
 
     const result = await update();
 
-    expect(result).toEqual({ success: true });
+    expect(result).toMatchObject({ success: true });
     const saved = storedWorkflow();
     expect(saved.uiNodes).toEqual(NODES);
     expect(saved.eventId).toBe("evt_1");

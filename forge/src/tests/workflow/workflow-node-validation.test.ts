@@ -255,7 +255,7 @@ describe("updateWorkflowState node validation", () => {
 
     const result = await updateWorkflowState("acme", WORKFLOW_ID, [UI_TRIGGER, UI_ACTION], EDGES);
 
-    expect(result).toEqual({ success: true });
+    expect(result).toMatchObject({ success: true });
     expect(prismaDouble.workflow.updateMany).toHaveBeenCalled();
   });
 

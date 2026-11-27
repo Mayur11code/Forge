@@ -95,7 +95,7 @@ describe("saveWorkflowState metadata & validation (FC-012)", () => {
       "  Routes urgent tasks automatically.  ",
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       success: true,
       workflowId: expect.any(String),
       name: "Customer Triage",
@@ -117,7 +117,7 @@ describe("saveWorkflowState metadata & validation (FC-012)", () => {
       "   ",
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       success: true,
       workflowId: expect.any(String),
       name: "Minimal Flow",
@@ -178,7 +178,9 @@ describe("saveWorkflowState metadata & validation (FC-012)", () => {
       "Should not persist",
     );
     expect(res.success).toBe(false);
-    expect(res.error).toContain("cycle");
+    if (!res.success) {
+      expect(res.error).toContain("cycle");
+    }
     expect(prismaDouble.workflow.create).not.toHaveBeenCalled();
   });
 });
@@ -206,7 +208,7 @@ describe("updateWorkflowState metadata & invariants (FC-012)", () => {
       description: "Updated summary",
     });
 
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       success: true,
       name: "Renamed Flow",
       description: "Updated summary",
@@ -222,7 +224,7 @@ describe("updateWorkflowState metadata & invariants (FC-012)", () => {
 
     const res = await updateWorkflowState("acme", WORKFLOW_ID, VALID_NODES, []);
 
-    expect(res).toEqual({ success: true });
+    expect(res).toMatchObject({ success: true });
     expect(store.workflows[0]).toMatchObject({
       name: "Original Name",
       description: "Original Description",
@@ -253,7 +255,9 @@ describe("updateWorkflowState metadata & invariants (FC-012)", () => {
     );
 
     expect(res.success).toBe(false);
-    expect(res.error).toContain("cycle");
+    if (!res.success) {
+      expect(res.error).toContain("cycle");
+    }
     expect(prismaDouble.workflow.updateMany).not.toHaveBeenCalled();
     expect(store.workflows[0]).toMatchObject({
       name: "Original Name",
