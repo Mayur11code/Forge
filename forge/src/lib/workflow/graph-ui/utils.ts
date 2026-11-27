@@ -1,4 +1,3 @@
-
 import {
   AppNode,
   AppEdge,
@@ -13,26 +12,10 @@ import {
   AVAILABLE_TRIGGERS,
 } from "@/lib/workflow-types/registry";
 
-/**
- * What a definition lookup actually needs.
- *
- * `AppNode` is a React Flow `Node`, which requires `id`, `position` and friends.
- * Several call sites hold only the discriminant and its data - a node rendered
- * inside the canvas, or a node being rebuilt from a select's value - so they were
- * casting a partial through `any` to satisfy the wider type. The lookup reads
- * nothing else, so this states that.
- */
 type NodeDefinitionInput =
   | { type: "trigger"; data: TriggerNodeData }
   | { type: "action"; data: ActionNodeData };
 
-/**
- * Overloaded on the discriminant so the result matches the argument: a caller
- * holding an action node gets an `ActionDef` and can read `requires` without
- * asserting one, which is what the previous `as ActionDef` casts were papering
- * over. Without the third signature TS picks the first matching overload, so it
- * is declared explicitly for callers holding the union.
- */
 export function getNodeDefinition(
   node: { type: "trigger"; data: TriggerNodeData },
 ): TriggerDef | undefined;
@@ -43,83 +26,65 @@ export function getNodeDefinition(
   node: NodeDefinitionInput,
 ): TriggerDef | ActionDef | undefined;
 export function getNodeDefinition(node: NodeDefinitionInput) {
-  if (
-    node.type === "trigger" &&
-    node.data.eventId
-  ) {
-    return AVAILABLE_TRIGGERS.find(
-      (t) => t.id === node.data.eventId
-    );
+  if (node.type === "trigger" && node.data.eventId) {
+    return AVAILABLE_TRIGGERS.find((t) => t.id === node.data.eventId);
   }
 
-  if (
-    node.type === "action" &&
-    node.data.actionType
-  ) {
-    return AVAILABLE_ACTIONS.find(
-      (a) => a.id === node.data.actionType
-    );
+  if (node.type === "action" && node.data.actionType) {
+    return AVAILABLE_ACTIONS.find((a) => a.id === node.data.actionType);
   }
 
   return undefined;
 }
 
+export type UpstreamOutputOption = {
+  sourceNodeId: string;
+  sourceNodeType: "trigger" | "action";
+  sourceNodeLabel: string;
+  outputKey: string;
+  expression: string;
+};
 
-//recursively walks the graph upwards and return all available outputs
+export function formatVariableExpression(
+  sourceNodeId: string,
+  sourceNodeType: "trigger" | "action",
+  outputKey: string,
+): string {
+  const prefix = sourceNodeType === "trigger" ? "trigger" : sourceNodeId;
+  return `{{${prefix}.outputs.${outputKey}}}`;
+}
+
+/**
+ * Recursively walks the graph upwards and returns all available upstream outputs.
+ */
 export function getAvailableUpstreamOutputs(
   targetNodeId: string,
   nodes: AppNode[],
   edges: AppEdge[],
-  visited = new Set<string>()
-): {
-  sourceNodeId: string;
-  outputKey: string;
-}[] {
-
-
+  visited = new Set<string>(),
+): UpstreamOutputOption[] {
   if (visited.has(targetNodeId)) {
     return [];
   }
 
   visited.add(targetNodeId);
 
-
-  //for o1 lookup
-  const nodeMap = new Map(
-    nodes.map((n) => [n.id, n])
-  );
-
-  //adjecency list for incoming edges to quickly find parents of a node
-  const incomingEdgeMap =
-    new Map<string, AppEdge[]>();
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  const incomingEdgeMap = new Map<string, AppEdge[]>();
 
   for (const edge of edges) {
-    const existing =
-      incomingEdgeMap.get(edge.target) ?? [];
-
+    const existing = incomingEdgeMap.get(edge.target) ?? [];
     existing.push(edge);
-
-    incomingEdgeMap.set(
-      edge.target,
-      existing
-    );
+    incomingEdgeMap.set(edge.target, existing);
   }
 
+  const resolvedOutputs = new Map<string, UpstreamOutputOption>();
 
-  const resolvedOutputs = new Map<string, { sourceNodeId: string; outputKey: string; }>();
-
-
-  const traverse = (
-    nodeId: string,
-    depth: number
-  ) => {
-    const incomingEdges =
-      incomingEdgeMap.get(nodeId) ?? [];
+  const traverse = (nodeId: string) => {
+    const incomingEdges = incomingEdgeMap.get(nodeId) ?? [];
 
     for (const edge of incomingEdges) {
-      const parentNode =
-        nodeMap.get(edge.source);
-
+      const parentNode = nodeMap.get(edge.source);
       if (!parentNode) continue;
 
       if (visited.has(parentNode.id)) {
@@ -128,74 +93,56 @@ export function getAvailableUpstreamOutputs(
 
       visited.add(parentNode.id);
 
-      const parentDef =
-        getNodeDefinition(parentNode);
-
-
+      const parentDef = getNodeDefinition(parentNode);
       if (parentDef?.outputs?.length) {
-        for (const outputKey of parentDef.outputs) {
-          const key =
-            `${parentNode.id}.${outputKey}`;
+        const sourceNodeType = parentNode.type;
+        const sourceNodeLabel = parentNode.data.label || parentDef.label || parentNode.id;
 
+        for (const outputKey of parentDef.outputs) {
+          const key = `${parentNode.id}.${outputKey}`;
           if (!resolvedOutputs.has(key)) {
             resolvedOutputs.set(key, {
-              sourceNodeId:
-                parentNode.id,
+              sourceNodeId: parentNode.id,
+              sourceNodeType,
+              sourceNodeLabel,
               outputKey,
+              expression: formatVariableExpression(parentNode.id, sourceNodeType, outputKey),
             });
           }
         }
       }
 
-      /**
-       * Recursive traversal upward
-       */
-      traverse(parentNode.id, depth + 1);
+      traverse(parentNode.id);
     }
   };
 
-  traverse(targetNodeId, 0);
+  traverse(targetNodeId);
 
-  return Array.from(
-    resolvedOutputs.values()
-  );
+  return Array.from(resolvedOutputs.values());
 }
 
-
-
+/**
+ * Auto-maps required inputs on `targetNodeId` from upstream outputs ONLY when:
+ * 1. The target field is currently empty, AND
+ * 2. Exactly one upstream provider exposes that `outputKey` (ambiguous providers
+ *    are left unmapped so the user can choose explicitly in PropertiesPanel).
+ */
 export function autoMapNodeVariables(
   targetNodeId: string,
   edges: AppEdge[],
   setNodes: (
-    payload:
-      | AppNode[]
-      | ((
-        nds: AppNode[]
-      ) => AppNode[])
-  ) => void
+    payload: AppNode[] | ((nds: AppNode[]) => AppNode[]),
+  ) => void,
 ) {
   setNodes((nds) => {
+    const nodeMap = new Map(nds.map((n) => [n.id, n]));
+    const targetNode = nodeMap.get(targetNodeId);
 
-    const nodeMap = new Map(
-      nds.map((n) => [n.id, n])
-    );
-
-    const targetNode =
-      nodeMap.get(targetNodeId);
-
-
-    if (
-      !targetNode ||
-      targetNode.type !== "action"
-    ) {
+    if (!targetNode || targetNode.type !== "action") {
       return nds;
     }
 
-    const targetDef =
-      getNodeDefinition(
-        targetNode
-      ) as ActionDef | null;
-
+    const targetDef = getNodeDefinition(targetNode);
     if (!targetDef?.requires?.length) {
       return nds;
     }
@@ -205,84 +152,44 @@ export function autoMapNodeVariables(
     };
 
     let hasChanges = false;
-
-    const availableOutputs =
-      getAvailableUpstreamOutputs(
-        targetNodeId,
-        nds,
-        edges
-      );
-
+    const availableOutputs = getAvailableUpstreamOutputs(targetNodeId, nds, edges);
 
     for (const requiredInput of targetDef.requires) {
-
-      const existingValue =
-        updatedConfig[
-        requiredInput
-        ];
-
+      const existingValue = updatedConfig[requiredInput];
       const isEmpty =
-        existingValue == null ||
-        String(existingValue)
-          .trim() === "";
+        existingValue == null || String(existingValue).trim() === "";
 
       if (!isEmpty) {
         continue;
       }
 
+      const matchingProviders = availableOutputs.filter(
+        (output) => output.outputKey === requiredInput,
+      );
 
-      const provider =
-        availableOutputs.find(
-          (output) =>
-            output.outputKey ===
-            requiredInput
-        );
-
-      if (!provider) {
+      // Ambiguous providers: do not silently pick an arbitrary upstream node.
+      if (matchingProviders.length !== 1) {
         continue;
       }
 
-      const providerNode =
-        nodeMap.get(
-          provider.sourceNodeId
-        );
-
-      const nodeId =
-        providerNode?.type ===
-          "trigger"
-          ? "trigger"
-          : provider.sourceNodeId;
-
-
-      updatedConfig[
-        requiredInput
-      ] =
-        `{{${nodeId}.outputs.${requiredInput}}}`;
-
+      updatedConfig[requiredInput] = matchingProviders[0].expression;
       hasChanges = true;
     }
-
 
     if (!hasChanges) {
       return nds;
     }
 
-
     return nds.map((node) => {
-      if (
-        node.id === targetNodeId &&
-        node.type === "action"
-      ) {
+      if (node.id === targetNodeId && node.type === "action") {
         return {
           ...node,
           data: {
             ...node.data,
-            config:
-              updatedConfig,
+            config: updatedConfig,
           },
         };
       }
-
       return node;
     });
   });

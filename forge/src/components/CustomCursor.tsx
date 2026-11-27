@@ -6,12 +6,13 @@ export function CustomCursor() {
   const dotRef = useRef<HTMLDivElement | null>(null);
   const ringRef = useRef<HTMLDivElement | null>(null);
   const coordsRef = useRef<HTMLDivElement | null>(null);
+  const coordsTextRef = useRef<HTMLSpanElement | null>(null);
 
   const [isPointerDevice, setIsPointerDevice] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
   const [isClicking, setIsClicking] = useState(false);
-  const [coords, setCoords] = useState({ x: 0, y: 0 });
 
+  const isHoveringRef = useRef(false);
   const mousePos = useRef({ x: -100, y: -100 });
   const ringPos = useRef({ x: -100, y: -100 });
 
@@ -22,15 +23,17 @@ export function CustomCursor() {
       document.body.classList.add("custom-cursor-hide");
     }
 
+    const pad = (n: number) => String(n).padStart(4, "0");
+
     const handleMouseMove = (e: MouseEvent) => {
       mousePos.current = { x: e.clientX, y: e.clientY };
 
-      // Update dot immediately
+      // Update dot immediately with 0 latency
       if (dotRef.current) {
         dotRef.current.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0)`;
       }
 
-      // Check if hovering interactive element
+      // Check if hovering interactive element - only toggle state when value changes
       const target = e.target as HTMLElement | null;
       if (target) {
         const interactive = Boolean(
@@ -38,9 +41,14 @@ export function CustomCursor() {
             target.closest("a") ||
             target.closest("[role='button']") ||
             target.closest("input") ||
+            target.closest("select") ||
+            target.closest("textarea") ||
             target.closest("canvas")
         );
-        setIsHovering(interactive);
+        if (interactive !== isHoveringRef.current) {
+          isHoveringRef.current = interactive;
+          setIsHovering(interactive);
+        }
       }
     };
 
@@ -51,16 +59,16 @@ export function CustomCursor() {
     window.addEventListener("mousedown", handleMouseDown);
     window.addEventListener("mouseup", handleMouseUp);
 
-    // Smooth lerp loop for the outer reticle ring & technical HUD
+    // Smooth lerp loop for the outer reticle ring & technical HUD (Zero React re-renders)
     let animId: number;
     let frameCount = 0;
 
     const render = () => {
       animId = requestAnimationFrame(render);
 
-      // Lerp ring position towards mouse position (0.22 damping)
-      ringPos.current.x += (mousePos.current.x - ringPos.current.x) * 0.22;
-      ringPos.current.y += (mousePos.current.y - ringPos.current.y) * 0.22;
+      // Lerp ring position towards mouse position (0.28 damping for snappy response)
+      ringPos.current.x += (mousePos.current.x - ringPos.current.x) * 0.28;
+      ringPos.current.y += (mousePos.current.y - ringPos.current.y) * 0.28;
 
       if (ringRef.current) {
         ringRef.current.style.transform = `translate3d(${ringPos.current.x}px, ${ringPos.current.y}px, 0)`;
@@ -70,13 +78,12 @@ export function CustomCursor() {
         coordsRef.current.style.transform = `translate3d(${ringPos.current.x + 18}px, ${ringPos.current.y + 18}px, 0)`;
       }
 
-      // Throttle coordinate text updates to 15fps to avoid excessive React renders
+      // Update coordinate text directly via DOM ref every 3 frames without triggering React re-renders
       frameCount++;
-      if (frameCount % 4 === 0) {
-        setCoords({
-          x: Math.round(mousePos.current.x),
-          y: Math.round(mousePos.current.y),
-        });
+      if (frameCount % 3 === 0 && coordsTextRef.current) {
+        const x = Math.max(0, Math.round(mousePos.current.x));
+        const y = Math.max(0, Math.round(mousePos.current.y));
+        coordsTextRef.current.textContent = `+ X ${pad(x)} · Y ${pad(y)}`;
       }
     };
 
@@ -92,8 +99,6 @@ export function CustomCursor() {
   }, []);
 
   if (!isPointerDevice) return null;
-
-  const pad = (n: number) => String(n).padStart(4, "0");
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[9999] overflow-hidden select-none">
@@ -116,7 +121,7 @@ export function CustomCursor() {
             : "w-8 h-8 border-white/35"
         }`}
       >
-        {/* Subtle crosshair tick marks when hovering (SLX technical style) */}
+        {/* Subtle crosshair tick marks when hovering */}
         {isHovering && (
           <>
             <span className="absolute top-0 w-1.5 h-[1px] bg-white/70" />
@@ -127,12 +132,12 @@ export function CustomCursor() {
         )}
       </div>
 
-      {/* 3. SLX Management-Style Technical Coordinate HUD */}
+      {/* 3. SLX Technical Coordinate HUD (Direct DOM updated) */}
       <div
         ref={coordsRef}
         className="fixed top-0 left-0 font-mono text-[9px] text-zinc-500 tracking-wider transition-opacity duration-300 pointer-events-none hidden sm:block"
       >
-        <span className="text-zinc-400 font-semibold">+</span> X {pad(coords.x)} · Y {pad(coords.y)}
+        <span ref={coordsTextRef}>+ X 0000 · Y 0000</span>
       </div>
     </div>
   );

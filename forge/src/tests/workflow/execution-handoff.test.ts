@@ -62,7 +62,7 @@ const MATERIALIZED_WORKFLOW = {
   id: WORKFLOW_ID,
   orgId: ORG_ID,
   name: "Create onboarding task",
-  isActive: false,
+  isActive: true,
   eventId: null,
   sourceProposalId: "interaction_1",
   definition: {

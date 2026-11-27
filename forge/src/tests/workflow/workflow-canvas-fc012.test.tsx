@@ -50,9 +50,11 @@ jest.mock("@xyflow/react", () => {
       getNodes: () => [],
       updateNodeData: jest.fn(),
       setNodes: jest.fn(),
+      fitView: jest.fn(),
     }),
     useOnSelectionChange: jest.fn(),
     useNodesData: () => undefined,
+    useNodes: () => [],
     useEdges: () => [],
     addEdge: jest.fn((conn, eds) => [...eds, conn]),
     getOutgoers: jest.fn(() => []),
@@ -142,7 +144,7 @@ describe("WorkflowBuilder FC-012 authoring UX", () => {
         "wf_1",
         SAMPLE_NODES,
         [],
-        { name: "Confirmed Name", description: null },
+        expect.objectContaining({ name: "Confirmed Name", description: null }),
       ),
     );
     expect(toastSuccessMock).toHaveBeenCalledWith("Workflow metadata updated.");
@@ -172,7 +174,7 @@ describe("WorkflowBuilder FC-012 authoring UX", () => {
         "wf_1",
         SAMPLE_NODES,
         [],
-        { name: "Flow A", description: "Notifies team" },
+        expect.objectContaining({ name: "Flow A", description: "Notifies team" }),
       ),
     );
     expect(screen.getByText("Notifies team")).toBeInTheDocument();

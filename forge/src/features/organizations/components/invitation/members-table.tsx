@@ -182,7 +182,7 @@ export function MembersTable({
           className={`flex items-center justify-between p-3.5 rounded-xl border text-sm animate-in fade-in ${
             feedback.type === 'error'
               ? 'bg-red-500/10 border-red-500/20 text-red-400'
-              : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+              : 'bg-white/[0.08] border-white/20 text-zinc-100'
           }`}
         >
           <div className="flex items-center gap-2">
@@ -501,12 +501,12 @@ export function MembersTable({
 
 function StatusBadge({ status }: { status: string }) {
   const styles = {
-    active: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+    active: 'bg-white/[0.08] text-zinc-100 border-white/20',
     pending: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
     inactive: 'bg-zinc-800/50 text-zinc-400 border-zinc-700/50',
   };
   const dotColor = {
-    active: 'bg-emerald-400',
+    active: 'bg-white shadow-[0_0_8px_rgba(255,255,255,0.7)]',
     pending: 'bg-amber-400',
     inactive: 'bg-zinc-500',
   };

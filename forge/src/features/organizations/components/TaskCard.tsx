@@ -51,9 +51,9 @@ const STATUS_CONFIG: Record<
   },
   DONE: {
     label: "Completed",
-    bg: "bg-emerald-500/10",
-    text: "text-emerald-400",
-    border: "border-emerald-500/20",
+    bg: "bg-white/[0.08]",
+    text: "text-zinc-100",
+    border: "border-white/20",
     icon: CheckCircle2,
   },
 };

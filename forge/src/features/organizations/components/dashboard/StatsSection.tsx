@@ -61,7 +61,7 @@ export default async function StatsSection({
           >
             <div className="flex items-center justify-between mb-4">
               <Icon className="w-5 h-5 text-zinc-400" />
-              <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-full uppercase">
+              <span className="text-[10px] font-mono font-medium text-zinc-300 bg-white/[0.06] border border-white/10 px-2 py-0.5 rounded-full uppercase">
                 LIVE
               </span>
             </div>

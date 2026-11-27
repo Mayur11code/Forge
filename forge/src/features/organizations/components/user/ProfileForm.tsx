@@ -184,7 +184,7 @@ export default function ProfileForm({
             className={`flex items-start gap-3 p-3.5 rounded-xl border text-sm animate-in fade-in ${
               profileFeedback.type === "error"
                 ? "bg-red-500/10 border-red-500/20 text-red-400"
-                : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                : "bg-white/[0.08] border-white/20 text-zinc-100"
             }`}
           >
             {profileFeedback.type === "error" ? (
@@ -324,7 +324,7 @@ export default function ProfileForm({
             className={`flex items-start gap-3 p-3.5 rounded-xl border text-sm animate-in fade-in ${
               passwordFeedback.type === "error"
                 ? "bg-red-500/10 border-red-500/20 text-red-400"
-                : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                : "bg-white/[0.08] border-white/20 text-zinc-100"
             }`}
           >
             {passwordFeedback.type === "error" ? (

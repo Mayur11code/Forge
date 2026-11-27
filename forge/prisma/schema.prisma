@@ -563,6 +563,7 @@ model Workflow {
   name        String
   description String?
   isActive    Boolean  @default(false)
+  draftRevision Int    @default(1)
   
 
   uiNodes     Json     @default("[]") 
@@ -577,17 +578,12 @@ model Workflow {
   
   eventId     String? // Nullable initially until the user connects a trigger
 
-  // event    Event?  @relation(fields: [eventId], references: [id], onDelete: Restrict)
-  
+  publishedVersionId String?          @unique
+  publishedVersion   WorkflowVersion? @relation("WorkflowPublishedVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  versions           WorkflowVersion[] @relation("WorkflowVersions")
+
   runs        WorkflowRun[] // Excellent addition for observability
 
-  // Assignment 37.8 — provenance back-link to the proposal this workflow was
-  // materialized from (written by 37.11). `@unique` makes materialization
-  // idempotent: a retried materialization cannot create a second workflow for
-  // the same proposal. `onDelete: SetNull` means deleting the source execution
-  // (e.g. its session cascades) does NOT delete a workflow the user already has;
-  // Postgres permits many NULLs under a unique index, so hand-authored workflows
-  // are unaffected.
   sourceProposalId String?  @unique
   sourceProposal   AgentToolExecution? @relation("WorkflowSourceProposal", fields: [sourceProposalId], references: [id], onDelete: SetNull)
 
@@ -596,6 +592,31 @@ model Workflow {
 
   @@index([orgId])
   @@index([eventId])
+}
+
+model WorkflowVersion {
+  id             String   @id @default(cuid())
+  workflowId     String
+  orgId          String
+  versionNumber  Int
+  name           String
+  description    String?
+  eventId        String?
+  uiNodes        Json
+  uiEdges        Json
+  definition     Json
+  definitionHash String
+  publishedAt    DateTime @default(now())
+  publishedById  String?
+
+  workflow       Workflow      @relation("WorkflowVersions", fields: [workflowId], references: [id], onDelete: Cascade)
+  publishedFor   Workflow?     @relation("WorkflowPublishedVersion")
+  runs           WorkflowRun[]
+
+  @@unique([workflowId, versionNumber])
+  @@unique([id, workflowId, orgId])
+  @@index([workflowId])
+  @@index([orgId])
 }
 
 
@@ -628,17 +649,20 @@ model WorkflowRun {
   // F-03: Immutable Execution Snapshot & Canonical Hash
   definitionSnapshot Json?
   definitionHash     String?
+  workflowVersionId  String?
 
   startedAt   DateTime                @default(now())
   completedAt DateTime?
 
  
-  workflow    Workflow                @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  stepRuns    StepRun[]
-  auditLogs   ExecutionAuditLog[]
-  outboxEvents WorkflowOutbox[]
+  workflow        Workflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  workflowVersion WorkflowVersion? @relation(fields: [workflowVersionId], references: [id], onDelete: SetNull)
+  stepRuns        StepRun[]
+  auditLogs       ExecutionAuditLog[]
+  outboxEvents    WorkflowOutbox[]
 
   @@index([workflowId])
+  @@index([workflowVersionId])
   @@index([status])
 }
 

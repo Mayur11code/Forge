@@ -121,6 +121,7 @@ function attachRun(result: Row, include: Row | undefined) {
 
 export const store = {
   workflows: [] as Row[],
+  workflowVersions: [] as Row[],
   runs: [] as Row[],
   stepRuns: [] as Row[],
   auditLogs: [] as Row[],
@@ -134,6 +135,7 @@ export const store = {
 
 export function resetStore() {
   store.workflows = [];
+  store.workflowVersions = [];
   store.runs = [];
   store.stepRuns = [];
   store.auditLogs = [];
@@ -154,11 +156,13 @@ export function resetStore() {
   voeSeq = 0;
   vehSeq = 0;
   workflowOutboxSeq = 0;
+  workflowVersionSeq = 0;
 }
 
 let stepRunSeq = 0;
 let auditSeq = 0;
 let workflowSeq = 0;
+let workflowVersionSeq = 0;
 let runSeq = 0;
 let taskSeq = 0;
 let projectSeq = 0;
@@ -465,21 +469,30 @@ const updateManyWorkflows = async ({ where, data }: { where: Row; data: Row }) =
   const hits = store.workflows.filter((row) => matchesWorkflowWhere(row, where));
 
   for (const row of hits) {
-    Object.assign(row, data);
+    for (const [k, v] of Object.entries(data)) {
+      if (
+        k === "draftRevision" &&
+        v &&
+        typeof v === "object" &&
+        "increment" in (v as Record<string, unknown>)
+      ) {
+        const current = typeof row.draftRevision === "number" ? row.draftRevision : 1;
+        row.draftRevision = current + Number((v as { increment: number }).increment);
+      } else {
+        row[k] = v;
+      }
+    }
   }
 
   return { count: hits.length };
 };
 
-/**
- * `where` shared by both workflow lookups, so the read that authorizes the write
- * and the write itself cannot drift apart. The save action is only tenant-safe
- * while `orgId` is filtered here; dropping it from either half silently restores
- * cross-tenant access and every negative test would pass on the other half alone.
- */
 function matchesWorkflowWhere(row: Row, where: Row): boolean {
   if (where.id !== undefined && row.id !== where.id) return false;
   if (where.orgId !== undefined && row.orgId !== where.orgId) return false;
+  if (where.draftRevision !== undefined && row.draftRevision !== where.draftRevision) {
+    return false;
+  }
   return true;
 }
 
@@ -549,11 +562,79 @@ const createWorkflow = async ({ data }: { data: Row }) => {
     id: `wf_${workflowSeq}`,
     eventId: null,
     isActive: false,
+    draftRevision: 1,
+    publishedVersionId: null,
     ...data,
   };
 
   store.workflows.push(row);
   return { ...row };
+};
+
+const createWorkflowVersion = async ({ data }: { data: Row }) => {
+  if (
+    store.workflowVersions.some(
+      (v) =>
+        v.workflowId === data.workflowId &&
+        v.versionNumber === data.versionNumber,
+    )
+  ) {
+    const err = new Error(
+      "Unique constraint failed on the fields: (`workflowId`,`versionNumber`)",
+    ) as Error & { code: string };
+    err.code = "P2002";
+    throw err;
+  }
+
+  workflowVersionSeq += 1;
+  const row: Row = {
+    id: `wfv_${workflowVersionSeq}`,
+    publishedAt: new Date(),
+    publishedById: null,
+    description: null,
+    eventId: null,
+    ...data,
+  };
+  store.workflowVersions.push(row);
+  return { ...row };
+};
+
+const findFirstWorkflowVersion = async ({
+  where,
+  orderBy,
+}: {
+  where?: Row;
+  orderBy?: Row;
+} = {}) => {
+  let matches = store.workflowVersions.filter((row) => {
+    if (!where) return true;
+    if (where.id !== undefined && row.id !== where.id) return false;
+    if (where.workflowId !== undefined && row.workflowId !== where.workflowId) {
+      return false;
+    }
+    if (where.orgId !== undefined && row.orgId !== where.orgId) return false;
+    return true;
+  });
+
+  if (orderBy?.versionNumber === "desc") {
+    matches = [...matches].sort(
+      (a, b) => Number(b.versionNumber) - Number(a.versionNumber),
+    );
+  }
+
+  return matches[0] ? { ...matches[0] } : null;
+};
+
+const findUniqueWorkflowVersion = async ({ where }: { where: Row }) => {
+  const hit = store.workflowVersions.find((row) => {
+    if (where.id !== undefined && row.id !== where.id) return false;
+    if (where.workflowId !== undefined && row.workflowId !== where.workflowId) {
+      return false;
+    }
+    if (where.orgId !== undefined && row.orgId !== where.orgId) return false;
+    return true;
+  });
+  return hit ? { ...hit } : null;
 };
 
 /**
@@ -1373,6 +1454,12 @@ const queryRawImpl = async (strings: TemplateStringsArray, ...values: unknown[])
         orgId: wf.orgId,
         name: wf.name,
         definition: wf.definition,
+        uiNodes: wf.uiNodes,
+        uiEdges: wf.uiEdges,
+        eventId: wf.eventId ?? null,
+        isActive: wf.isActive,
+        publishedVersionId: wf.publishedVersionId,
+        draftRevision: wf.draftRevision,
         description: wf.description ?? null,
         createdAt: wf.createdAt ?? new Date(),
         updatedAt: wf.updatedAt ?? new Date(),
@@ -1466,6 +1553,11 @@ type PrismaDouble = {
     findUnique: jest.Mock;
     updateMany: jest.Mock;
     create: jest.Mock;
+  };
+  workflowVersion: {
+    create: jest.Mock;
+    findFirst: jest.Mock;
+    findUnique: jest.Mock;
   };
   workflowRun: {
     findUnique: jest.Mock;
@@ -1568,6 +1660,12 @@ export const prismaDouble: PrismaDouble = {
     create: jest.fn(createWorkflow),
   },
 
+  workflowVersion: {
+    create: jest.fn(createWorkflowVersion),
+    findFirst: jest.fn(findFirstWorkflowVersion),
+    findUnique: jest.fn(findUniqueWorkflowVersion),
+  },
+
   workflowRun: {
     findUnique: jest.fn(findUniqueRun),
     findMany: jest.fn(findManyRuns),
@@ -1657,6 +1755,9 @@ const realImplementations = {
   findFirstWorkflow,
   findUniqueWorkflow,
   createWorkflow,
+  createWorkflowVersion,
+  findFirstWorkflowVersion,
+  findUniqueWorkflowVersion,
   createStepRun,
   createManyStepRuns,
   findManyStepRuns,
@@ -1717,6 +1818,9 @@ export function restoreWorkflowDouble(): void {
   prismaDouble.workflow.findUnique.mockImplementation(realImplementations.findUniqueWorkflow);
   prismaDouble.workflow.updateMany.mockImplementation(realImplementations.updateManyWorkflows);
   prismaDouble.workflow.create.mockImplementation(realImplementations.createWorkflow);
+  prismaDouble.workflowVersion.create.mockImplementation(realImplementations.createWorkflowVersion);
+  prismaDouble.workflowVersion.findFirst.mockImplementation(realImplementations.findFirstWorkflowVersion);
+  prismaDouble.workflowVersion.findUnique.mockImplementation(realImplementations.findUniqueWorkflowVersion);
   prismaDouble.workflowRun.findUnique.mockImplementation(realImplementations.findUniqueRun);
   prismaDouble.workflowRun.findMany.mockImplementation(realImplementations.findManyRuns);
   prismaDouble.workflowRun.create.mockImplementation(realImplementations.createRun);

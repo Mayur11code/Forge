@@ -15,12 +15,14 @@ export const authConfig = {
     }),
   ],
   callbacks: {
-    // 1. The Bouncer Logic: Redirects to /login if trying to access /org without a session
+    // 1. The Bouncer Logic: Redirects to /login if trying to access /org or /dashboard without a session
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user;
-      const isOrgRoute = nextUrl.pathname.startsWith("/org");
+      const isProtected =
+        nextUrl.pathname.startsWith("/org") ||
+        nextUrl.pathname.startsWith("/dashboard");
 
-      if (isOrgRoute) {
+      if (isProtected) {
         if (isLoggedIn) return true;
         return false; // Auth.js automatically redirects to /login
       }
