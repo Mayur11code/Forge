@@ -432,7 +432,7 @@ export const ProposalReviewCard = memo(function ProposalReviewCard({
             isPending
               ? "border-zinc-700 text-zinc-300"
               : effectiveState === "APPROVED"
-                ? "border-emerald-800/60 text-emerald-400"
+                ? "border-white/30 text-zinc-100"
                 : "border-red-900/60 text-red-400"
           }`}
         >
@@ -562,7 +562,7 @@ export const ProposalReviewCard = memo(function ProposalReviewCard({
       )}
 
       {isMaterialized && (
-        <div className="mt-5 rounded-lg border border-emerald-900/40 bg-emerald-950/20 p-3">
+        <div className="mt-5 rounded-lg border border-white/20 bg-white/[0.04] p-3">
           <p className="text-[11px] text-zinc-300">
             Workflow created. It is saved as a draft with no trigger, so it will
             not run until you configure one.

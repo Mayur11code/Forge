@@ -155,8 +155,8 @@ export default function ApiKeyManagementCard({
     switch (status) {
       case "ACTIVE":
         return (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
-            <CheckCircle2 className="h-3 w-3" /> Active
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.08] px-2.5 py-0.5 text-xs font-medium text-zinc-100 border border-white/20">
+            <CheckCircle2 className="h-3 w-3 text-zinc-200" /> Active
           </span>
         );
       case "PENDING_VALIDATION":
@@ -314,7 +314,7 @@ export default function ApiKeyManagementCard({
             </h2>
           </div>
           <span className="inline-flex items-center gap-1 rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600">
-            <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" /> AES-256-GCM Vault
+            <ShieldCheck className="h-3.5 w-3.5 text-zinc-500" /> AES-256-GCM Vault
           </span>
         </div>
         <p className="mt-1 text-sm text-zinc-500">
@@ -336,8 +336,8 @@ export default function ApiKeyManagementCard({
         </div>
       )}
       {successMessage && (
-        <div className="border-b border-emerald-100 bg-emerald-50 p-4 text-xs text-emerald-800 flex items-start gap-2">
-          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+        <div className="border-b border-white/20 bg-white/[0.06] p-4 text-xs text-zinc-200 flex items-start gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-zinc-300 mt-0.5" />
           <div className="flex-1 font-medium">{successMessage}</div>
         </div>
       )}

@@ -133,7 +133,7 @@ export default function InviteMemberModal({ orgSlug }: Props) {
                 <div
                   className={`p-3.5 rounded-xl border text-xs font-medium flex items-start gap-2.5 ${
                     emailSent
-                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                      ? "bg-white/[0.08] border-white/20 text-zinc-100"
                       : "bg-amber-500/10 border-amber-500/20 text-amber-400"
                   }`}
                 >
@@ -166,8 +166,8 @@ export default function InviteMemberModal({ orgSlug }: Props) {
                     >
                       {copied ? (
                         <>
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-emerald-400">Copied</span>
+                          <Check className="w-3.5 h-3.5 text-zinc-200" />
+                          <span className="text-zinc-200">Copied</span>
                         </>
                       ) : (
                         <>
