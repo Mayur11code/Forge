@@ -58,6 +58,11 @@ export default async function WorkflowsDashboard({ params }: { params: Promise<{
               <h3 className="font-bold text-lg text-white mb-1 group-hover:text-blue-400 transition-colors">
                 {wf.name}
               </h3>
+              {wf.description && (
+                <p className="text-xs text-zinc-400 line-clamp-2 mb-3">
+                  {wf.description}
+                </p>
+              )}
               <p className="text-sm text-zinc-500 mb-4">
                 ID: <span className="font-mono text-xs">{wf.id.slice(0, 8)}...</span>
               </p>

@@ -610,18 +610,18 @@ flowchart TD
 #### FC-012 | M3 | Canvas Authoring UX, Workflow Naming & Toast Notifications
 - **Milestone:** M3
 - **Capability:** Smooth visual workflow authoring with custom workflow naming and feedback.
-- **Current Evidence:** Workflow canvas loads, but workflow title editing is disconnected and save notifications lack clear feedback.
-- **Missing Behavior:** Editable workflow header title/description and instant toast alerts on save/error.
+- **Current Evidence:** Implemented inline editable workflow title (`Untitled workflow` default on new, persisted `name` on edit) and optional `description` in `WorkflowEditorHeader.tsx`, wired atomic metadata+graph persistence in `saveWorkflowState`/`updateWorkflowState`, replaced all `alert()` calls in `WorkflowCanvas.tsx` and `RunWorkflowButton.tsx` with `sonner` toasts, and integrated dark-themed `<MiniMap />` alongside `<Controls />`.
+- **Missing Behavior:** None in automated scope; browser manual acceptance pending.
 - **Required Outcome:** Wire `WorkflowEditorHeader.tsx` to update workflow name and description; add Sonner toast triggers.
 - **Dependencies:** FC-008
-- **Files Involved:** `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`, `src/features/organizations/components/workflow/WorkflowCanvas.tsx`
+- **Files Involved:** `src/features/organizations/components/workflow/WorkflowEditorHeader.tsx`, `src/features/organizations/components/workflow/WorkflowCanvas.tsx`, `src/features/organizations/components/workflow/RunWorkflowButton.tsx`, `src/app/actions/workflows/workflow.ts`, `src/app/org/[orgId]/workflows/[workflowId]/page.tsx`, `src/app/org/[orgId]/workflows/page.tsx`
 - **Acceptance Criteria:**
   - Clicking workflow title in canvas header enables inline editing and persists name change.
   - Saving workflow shows green toast on success or descriptive error toast on failure.
   - Canvas zoom/pan controls and mini-map operate smoothly without layout shifts.
   - **Tenant Boundary:** Canvas only loads workflows belonging to caller's active organization.
-- **Tests & Verification:** Browser test creating a workflow, renaming it, and verifying persistence.
-- **Status:** `NOT_STARTED`
+- **Tests & Verification:** `src/tests/workflow/workflow-metadata.test.ts`, `src/tests/workflow/workflow-canvas-fc012.test.tsx`, `src/tests/workflow/workflow-node-validation.test.ts`, `src/tests/workflow/workflow-update-scope.test.ts`, `src/tests/workflow/run-workflow-button.test.tsx`, `src/tests/workflow/dag-validation.test.ts` (6/6 suites, 76/76 tests passing). Dev-log: [2026-11-27 M3 FC-012 Canvas Authoring](../dev-log/2026-11-27-m3-fc012-canvas-authoring.md).
+- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
 
 #### FC-013 | M3 | Node Property Configuration Drawer & Variable Auto-Mapping
 - **Milestone:** M3
