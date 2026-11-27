@@ -5,7 +5,7 @@ Status:              ACTIVE AUTHORITATIVE TRACKER
 Target Outcome:      COMPLETE FORGE AS A DEMONSTRABLE PRODUCT FIRST (M0–M10)
 Post-Product Scope:  DevOps, Cloud Hosting & Platform Observability (M11)
 Canonical File:      forge/docs/product/PRODUCT_COMPLETION_TRACKER.md
-Last Updated:        2026-11-27 (Milestone M3 Complete & M3.1 Workspace Polish / CI Hardened)
+Last Updated:        2026-11-27 (Milestones M0, M1, M2, M3 COMPLETE & ACCEPTED; Milestone M4 Active)
 ```
 
 > [!IMPORTANT]
@@ -534,7 +534,7 @@ flowchart TD
 
 ---
 
-### Milestone M2: Projects and Task Management
+### Milestone M2: Projects and Task Management (COMPLETE & ACCEPTED)
 
 #### FC-008 | M2 | Project Lifecycle: Edit, Archive & Delete
 - **Milestone:** M2
@@ -605,7 +605,7 @@ flowchart TD
 
 ---
 
-### Milestone M3: Complete Workflow Builder
+### Milestone M3: Complete Workflow Builder (COMPLETE & ACCEPTED)
 
 #### FC-012 | M3 | Canvas Authoring UX, Workflow Naming & Toast Notifications
 - **Milestone:** M3
@@ -621,7 +621,7 @@ flowchart TD
   - Canvas zoom/pan controls and mini-map operate smoothly without layout shifts.
   - **Tenant Boundary:** Canvas only loads workflows belonging to caller's active organization.
 - **Tests & Verification:** `src/tests/workflow/workflow-metadata.test.ts`, `src/tests/workflow/workflow-canvas-fc012.test.tsx`, `src/tests/workflow/workflow-node-validation.test.ts`, `src/tests/workflow/workflow-update-scope.test.ts`, `src/tests/workflow/run-workflow-button.test.tsx`, `src/tests/workflow/dag-validation.test.ts` (6/6 suites, 76/76 tests passing). Dev-log: [2026-11-27 M3 FC-012 Canvas Authoring](../dev-log/2026-11-27-m3-fc012-canvas-authoring.md).
-- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
+- **Status:** `DONE (Complete & Accepted)`
 
 #### FC-013 | M3 | Node Property Configuration Drawer & Variable Auto-Mapping
 - **Milestone:** M3
@@ -636,7 +636,7 @@ flowchart TD
   - Text fields offer variable insertion button listing outputs of all topological upstream nodes.
   - Form validation warns if required fields or variable references are invalid.
 - **Tests & Verification:** `src/tests/workflow/fc013-properties-and-variables.test.tsx`, `src/tests/workflow/action-capabilities.test.ts`, `src/tests/workflow/proposal-references.test.ts` (all passing in full `npm test` 139/139 suites). Dev-log: [2026-11-27 M3 FC-013](../dev-log/2026-11-27-m3-fc013-capability-editor-and-variable-picker.md).
-- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
+- **Status:** `DONE (Complete & Accepted)`
 
 #### FC-014 | M3 | Graph Validation & Actionable Error Diagnostics
 - **Milestone:** M3
@@ -651,7 +651,7 @@ flowchart TD
   - Canvas flags nodes with missing required inputs with red error icon.
   - Publishing is blocked if graph contains cycles, lacks a trigger, or has invalid nodes.
 - **Tests & Verification:** `src/tests/workflow/fc014-diagnostics-and-trigger-manifest.test.ts`, `src/tests/workflow/dag-validation.test.ts`, `src/tests/workflow/immutable-definition.test.ts` (all passing in full `npm test` 139/139 suites). Dev-log: [2026-11-27 M3 FC-014](../dev-log/2026-11-27-m3-fc014-graph-validation-and-diagnostics.md).
-- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
+- **Status:** `DONE (Complete & Accepted)`
 
 #### FC-015 | M3 | Draft vs. Published State Management & Active Lifecycle
 - **Milestone:** M3
@@ -666,7 +666,7 @@ flowchart TD
   - Clicking "Publish" validates graph, freezes current configuration, and activates trigger.
   - User can toggle workflow active/inactive with instant execution suspension.
 - **Tests & Verification:** `npx prisma validate && npx prisma generate`; `src/tests/workflow/fc015-version-lifecycle.test.ts`, `src/tests/workflow/workflow-update-scope.test.ts`, `src/tests/workflow/workflow-metadata.test.ts`, `src/tests/workflow/execution-handoff.test.ts` (all passing in full `npm test` 139/139 suites). Dev-log: [2026-11-27 M3 FC-015](../dev-log/2026-11-27-m3-fc015-published-workflow-lifecycle.md).
-- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
+- **Status:** `DONE (Complete & Accepted)`
 
 #### FC-016 | M3 | Manual Test-Run Drawer & Trigger Output Preview
 - **Milestone:** M3
@@ -681,7 +681,7 @@ flowchart TD
   - Submitting simulation executes workflow in sandbox context and returns step-by-step output timeline without DB writes or live dispatch.
   - Displays formatted redacted outputs, skipped branches, and highlights failing nodes.
 - **Tests & Verification:** `src/tests/workflow/fc016-safe-simulation.test.ts` (verifies zero calls to `task.create`, `workflowRun.create`, `workflowOutbox.create`, `startWorkflow`, `advanceWorkflow`), passing in full `npm test` 139/139 suites. Dev-log: [2026-11-27 M3 FC-016](../dev-log/2026-11-27-m3-fc016-safe-workflow-simulation.md).
-- **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
+- **Status:** `DONE (Complete & Accepted)`
 
 #### M3.1 | M3 | Workspace UI Revamp, Simulation Engine Polish & CI Hardening
 - **Milestone:** M3 / M3.1
@@ -695,7 +695,7 @@ flowchart TD
   - Defensively guarded `useReactFlow()` across `ActionNode.tsx` and `TriggerNode.tsx` for read-only / preview environments; mocked evaluator in `fc015-version-lifecycle.test.ts` to isolate unit tests from external Redis network failures in CI.
 - **Files Involved:** `src/app/page.tsx`, `src/features/organizations/components/workflow/nodes/ActionNode.tsx`, `src/features/organizations/components/workflow/nodes/TriggerNode.tsx`, `src/features/organizations/components/workflow/edges/ExecutionEdge.tsx`, `src/features/organizations/components/workflow/WorkflowLiveViewer.tsx`, `src/tests/agent/proposal-graph-preview.test.tsx`, `src/tests/workflow/fc015-version-lifecycle.test.ts`
 - **Tests & Verification:** 139/139 Jest suites passing (2,120/2,120 tests), `npx tsc --noEmit` 0 errors. Dev-log: [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md).
-- **Status:** `DONE (Verified by Automated Test Suite & Remote CI; Owner Manual Acceptance Pending)`
+- **Status:** `DONE (Complete & Accepted)`
 
 ---
 
@@ -1186,15 +1186,16 @@ flowchart TD
 | **FC-005** | **M1** | Member Role Management & Removal Controls (`/members`) | P1 | M | `DONE (Owner Accepted)` | FC-003 |
 | **FC-006** | **M1** | Reliable Email Delivery for Invitations via Resend | P1 | S | `PARTIAL (App Flow Owner-Accepted; Resend Delivery Deferred)` | FC-003 |
 | **FC-007** | **M1** | User Profile & Account Settings Completeness | P2 | S | `DONE (Owner Accepted)` | FC-002 |
-| **FC-008** | **M2** | Project Lifecycle: Edit, Archive & Delete | P1 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-003 |
-| **FC-009** | **M2** | Interactive Task Lifecycle & Status Transitions | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-005, FC-008 |
-| **FC-010** | **M2** | Task Comments & Collaboration Feed | P1 | S | `DONE (Verified; Owner Acceptance PENDING)` | FC-009 |
-| **FC-011** | **M2** | Task Filtering, Debounced Search & Pagination Polish | P2 | S | `DONE (Verified; Owner Acceptance PENDING)` | FC-009 |
-| **FC-012** | **M3** | Canvas Authoring UX, Workflow Naming & Toast Notifications | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-008 |
-| **FC-013** | **M3** | Node Property Configuration Drawer & Variable Auto-Mapping | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-012 |
-| **FC-014** | **M3** | Graph Validation & Actionable Error Diagnostics | P0 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-013 |
-| **FC-015** | **M3** | Draft vs. Published State Management & Active Lifecycle | P1 | S | `DONE (Verified; Owner Acceptance PENDING)` | FC-014 |
-| **FC-016** | **M3** | Manual Test-Run Drawer & Trigger Output Preview | P1 | M | `DONE (Verified; Owner Acceptance PENDING)` | FC-015 |
+| **FC-008** | **M2** | Project Lifecycle: Edit, Archive & Delete | P1 | M | `DONE (Owner Accepted)` | FC-003 |
+| **FC-009** | **M2** | Interactive Task Lifecycle & Status Transitions | P0 | M | `DONE (Owner Accepted)` | FC-005, FC-008 |
+| **FC-010** | **M2** | Task Comments & Collaboration Feed | P1 | S | `DONE (Owner Accepted)` | FC-009 |
+| **FC-011** | **M2** | Task Filtering, Debounced Search & Pagination Polish | P2 | S | `DONE (Owner Accepted)` | FC-009 |
+| **FC-012** | **M3** | Canvas Authoring UX, Workflow Naming & Toast Notifications | P0 | M | `DONE (Owner Accepted)` | FC-008 |
+| **FC-013** | **M3** | Node Property Configuration Drawer & Variable Auto-Mapping | P0 | M | `DONE (Owner Accepted)` | FC-012 |
+| **FC-014** | **M3** | Graph Validation & Actionable Error Diagnostics | P0 | M | `DONE (Owner Accepted)` | FC-013 |
+| **FC-015** | **M3** | Draft vs. Published State Management & Active Lifecycle | P1 | S | `DONE (Owner Accepted)` | FC-014 |
+| **FC-016** | **M3** | Manual Test-Run Drawer & Trigger Output Preview | P1 | M | `DONE (Owner Accepted)` | FC-015 |
+| **M3.1** | **M3** | Workspace UI Revamp, Simulation Engine Polish & CI Hardening | P1 | M | `DONE (Owner Accepted)` | FC-016 |
 | **FC-017** | **M4** | Real Domain Event-to-Workflow Dispatch Engine | P0 | L | `NOT_STARTED` | FC-015 |
 | **FC-018** | **M4** | Task Domain Event Producers (`task.created`, `task.updated`, `completed`) | P0 | M | `NOT_STARTED` | FC-017 |
 | **FC-019** | **M4** | Trigger Filtering, Variable Propagation & Storm Protection | P1 | M | `NOT_STARTED` | FC-018 |
@@ -1437,6 +1438,7 @@ Milestone M3 (Complete Workflow Builder) and M3.1 (Workspace UI Revamp, Simulati
 
 **Release Decision:**
 - **Automated Verification:** **PASS** (139/139 test suites passing, 2,120/2,120 tests).
-- **Milestone M3 Automated Status:** **CLOSED (AUTOMATED IMPLEMENTATION COMPLETE & VERIFIED)**.
-- **Active Milestone:** **Milestone M3 Owner Manual Acceptance -> Milestone M4: Real Event Triggers and Automation (FC-017 through FC-021)**.
+- **Milestone M2 Status:** **CLOSED & COMPLETE (Owner Accepted)**.
+- **Milestone M3 Status:** **CLOSED & COMPLETE (Owner Accepted)**.
+- **Active Milestone:** **Milestone M4: Real Event Triggers and Automation (FC-017 through FC-021)**.
 - **Dev-Logs:** [2026-11-27 M3 Integration Review](../dev-log/2026-11-27-m3-integration-and-release-review.md) · [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md)
