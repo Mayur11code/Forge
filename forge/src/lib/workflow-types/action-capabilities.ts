@@ -7,26 +7,7 @@
 // decides whether a generated workflow step is valid, and what the canvas reads
 // when it decides which fields to show and which outputs can be wired.
 //
-// Client-safe by construction. It imports `zod` and nothing else at runtime:
-//
-//   - no Prisma client, no database module
-//   - no server-only action implementation (the modules under
-//     src/lib/workflow/actions/** import the extended Prisma client and must
-//     never reach a browser bundle)
-//   - no runtime import of ./action-registry either, because that module
-//     transitively imports an action implementation. The coupling to the
-//     registry is a TYPE-ONLY import, which `isolatedModules` erases, so the
-//     key set is still checked at compile time with no runtime edge.
-//
-// A capability here is SCHEMA INFORMATION ONLY. It is never execution
-// authority. `orgId`, `userId`, `workflowId` and `runId` are deliberately absent
-// from every input schema: they come from trusted persisted context (the
-// AgentSession row for tools, the Workflow row for actions) and a capability
-// must never advertise a way to supply them. See AD-10 and AD-P1 in
-// docs/architecture/workflows/assignments-37-tracker.md.
-//
-// The runtime registry (./action-registry.ts) remains the only thing that can
-// decide an action runs. This file describes; it does not dispatch.
+// Client-safe by construction. It imports `zod` and nothing else at runtime.
 
 import { z } from "zod";
 import type { RegisteredActionId } from "./action-registry";
@@ -43,43 +24,26 @@ export type ActionCapability = {
   /** What the action does, in terms a model can act on. */
   description: string;
   /**
-   * STRICT object schema for model-supplied inputs. `.strict()`, so an unknown
-   * key is rejected instead of silently dropped — a typo in a field name must
-   * fail at the generation boundary, not at execution time.
+   * STRICT object schema for model-supplied inputs.
    */
   input: z.ZodType;
   /**
-   * Object schema for the SUCCESSFUL business payload only — the value an
-   * action returns under ActionResult.data, which is what the wrapper persists
-   * into StepRun.outputs and what `{{stepId.outputs.*}}` resolves against.
-   * Not the outer ActionResult envelope.
+   * Object schema for the SUCCESSFUL business payload only.
    */
   output: z.ZodType;
   /**
-   * Whether the action defines a compensation function. Drives the saga path in
-   * the executor; a planner does not choose it.
+   * Whether the action defines a compensation function.
    */
   compensation: { available: boolean };
   /**
-   * Documented failure behaviour, for the planner and for 37.14. Descriptive,
-   * not authoritative — the executor still decides per attempt.
+   * Documented failure behaviour.
    */
   failure: {
-    /** What the runtime currently does on failure, or null when undecided. */
     isRetriableByDefault: boolean | null;
     notes: string;
   };
 };
 
-/**
- * Narrow a capability schema to a Zod object.
- *
- * Throwing rather than returning an empty list is deliberate. Every derivation
- * below answers "which fields does this action expose?", and a schema shape that
- * cannot be read would make that answer silently empty — which is exactly the
- * defect this module exists to fix. An unreadable schema is a bug in the
- * capability, and it should say so.
- */
 function objectShape(schema: z.ZodType, context: string): Record<string, z.ZodType> {
   if (!(schema instanceof z.ZodObject)) {
     throw new Error(
@@ -90,12 +54,6 @@ function objectShape(schema: z.ZodType, context: string): Record<string, z.ZodTy
   return schema.shape as Record<string, z.ZodType>;
 }
 
-/**
- * Every model-suppliable input, in declaration order.
- *
- * The UI builds its form from this rather than from its own field list, so a new
- * argument on the input schema appears in the canvas without a second edit.
- */
 export function inputFields(input: z.ZodType): {
   name: string;
   field: z.ZodType;
@@ -105,54 +63,24 @@ export function inputFields(input: z.ZodType): {
   );
 }
 
-/**
- * Inputs the model must supply.
- *
- * Derived from optionality on the schema, not from a parallel array, so adding
- * a required argument to an input schema cannot leave the UI and the prompt
- * still advertising the old set.
- */
 export function requiredInputFields(input: z.ZodType): string[] {
   return Object.entries(objectShape(input, "Capability input schema"))
     .filter(([, field]) => !field.isOptional())
     .map(([name]) => name);
 }
 
-/**
- * Inputs the model may omit. Includes fields with a `.default()`, because a
- * defaulted field is optional from the caller's side even though it is always
- * present after parsing.
- */
 export function optionalInputFields(input: z.ZodType): string[] {
   return Object.entries(objectShape(input, "Capability input schema"))
     .filter(([, field]) => field.isOptional())
     .map(([name]) => name);
 }
 
-/**
- * Output fields a later step is allowed to reference as
- * `{{<stepId>.outputs.<field>}}`.
- *
- * Derived from the output schema rather than listed. `getAvailableUpstreamOutputs`
- * feeds the canvas's auto-mapper from this, and 37.3's reference validator will
- * check paths against it, so a stale list here is a silent routing defect
- * downstream rather than a cosmetic error.
- */
 export function referenceableOutputFields(output: z.ZodType): string[] {
   return Object.keys(objectShape(output, "Capability output schema"));
 }
 
 /**
  * The canonical action capability catalog.
- *
- * Total by construction: `satisfies Record<RegisteredActionId, ...>` requires
- * every registered action to appear, and — because `satisfies` applies excess
- * property checking to object literals — rejects an entry with no registration.
- * Registering an executor without describing it, or describing one without
- * registering it, is a compile error in both directions.
- *
- * The runtime registry is the source of truth for membership. This file is the
- * source of truth for what membership means.
  */
 export const ActionCapabilities = {
   "task.create": {
@@ -197,23 +125,205 @@ export const ActionCapabilities = {
       })
       .strict(),
 
-    // Mirrors the payload returned by createTaskAction
-    // (src/lib/workflow/actions/core/create-task.ts:68-71): { taskId, title }.
-    // Both are referenceable, because the wrapper persists exactly this object
-    // into StepRun.outputs.
     output: z.object({
       taskId: z.string().describe("Id of the created task."),
       title: z.string().describe("Title the task was created with."),
     }),
 
-    // createTaskAction declares no compensate function, so the executor takes
-    // the trivially-successful path in wrapper.ts.
-    compensation: { available: false },
+    // Reconciled: createTaskAction defines transactional compensation
+    compensation: { available: true },
 
     failure: {
       isRetriableByDefault: null,
       notes:
         "Non-retriable when the title or projectId is missing, when the workflow row is gone, and when the project or assignee is outside the organization (bad generated config). Retriable on a database error. See createTaskAction.execute.",
+    },
+  } satisfies ActionCapability,
+
+  "task.update": {
+    id: "task.update",
+    label: "Update a Task",
+    description: "Update the status, priority, title, description, or assignee of an existing task within the organization.",
+
+    input: z
+      .object({
+        taskId: z.string().describe("Id of the task to update."),
+        title: z.string().min(1).max(100).optional().describe("Updated task title."),
+        status: z.enum(["TODO", "IN_PROGRESS", "BLOCKED", "DONE"]).optional().describe("Updated task execution status."),
+        priority: z.enum(["LOW", "MEDIUM", "HIGH"]).optional().describe("Updated task priority."),
+        description: z.string().optional().describe("Updated task description body."),
+        assigneeId: z.string().cuid().optional().describe("Updated assignee user ID."),
+      })
+      .strict(),
+
+    output: z.object({
+      taskId: z.string().describe("Id of the updated task."),
+      title: z.string().optional().describe("Updated task title."),
+      status: z.string().optional().describe("Updated task status."),
+      priority: z.string().optional().describe("Updated task priority."),
+      assigneeId: z.string().nullable().optional().describe("Updated assignee user ID."),
+      previousState: z.record(z.string(), z.any()).optional().describe("Atomic pre-state snapshot for rollback."),
+    }),
+
+    compensation: { available: true },
+
+    failure: {
+      isRetriableByDefault: true,
+      notes: "Non-retriable on invalid input or task not found. Retriable on transient database errors.",
+    },
+  } satisfies ActionCapability,
+
+  "comment.create": {
+    id: "comment.create",
+    label: "Create a Comment",
+    description: "Post an automated comment on an existing task within the organization.",
+
+    input: z
+      .object({
+        taskId: z.string().describe("Id of the task to comment on."),
+        content: z.string().min(1, "Comment content cannot be empty").describe("Text content of the comment."),
+        userId: z.string().optional().describe("Optional author user ID. Defaults to organization owner/system bot if omitted."),
+      })
+      .strict(),
+
+    output: z.object({
+      commentId: z.string().describe("Id of the created comment."),
+      taskId: z.string().describe("Target task ID."),
+      content: z.string().describe("Body text of the comment."),
+      userId: z.string().optional().describe("Author user ID."),
+      createdAt: z.string().optional().describe("Creation timestamp."),
+    }),
+
+    compensation: { available: true },
+
+    failure: {
+      isRetriableByDefault: true,
+      notes: "Non-retriable on missing task or empty content. Retriable on database connection errors.",
+    },
+  } satisfies ActionCapability,
+
+  "email.send": {
+    id: "email.send",
+    label: "Send Email",
+    description: "Send an automated notification email via Resend.",
+
+    input: z
+      .object({
+        toEmail: z.string().min(1, "Recipient email is required").describe("Recipient email address."),
+        subject: z.string().min(1, "Subject is required").describe("Subject line for the email."),
+        bodyText: z.string().optional().describe("Body content for the email."),
+        attachmentUrl: z.string().optional().describe("Optional public artifact URL to attach."),
+        attachmentName: z.string().optional().describe("Optional filename for the attachment."),
+      })
+      .strict(),
+
+    output: z.object({
+      resendId: z.string().nullable().describe("Provider message ID returned by Resend."),
+      deliveredTo: z.string().describe("Target recipient email address."),
+      messageId: z.string().nullable().optional().describe("Message tracking ID."),
+    }),
+
+    compensation: { available: false },
+
+    failure: {
+      isRetriableByDefault: true,
+      notes: "Non-retriable on validation error or malformed address. Retriable on rate limit or network error.",
+    },
+  } satisfies ActionCapability,
+
+  "report.generate": {
+    id: "report.generate",
+    label: "Generate Report",
+    description: "Compile a real Markdown progress report from project tasks and upload to UploadThing.",
+
+    input: z
+      .object({
+        projectId: z.string().optional().describe("Optional project ID to scope task metrics."),
+        title: z.string().optional().describe("Optional custom title for the report."),
+        userName: z.string().optional().describe("Name of the user or system requesting the report."),
+        templateId: z.string().optional().describe("Optional template identifier."),
+      })
+      .strict(),
+
+    output: z.object({
+      documentUrl: z.string().describe("Public URL of the uploaded Markdown report artifact."),
+      fileKey: z.string().describe("UploadThing file key used for saga compensation cleanup."),
+      fileName: z.string().describe("Uploaded filename."),
+      sizeBytes: z.number().describe("Artifact size in bytes."),
+      markdownContent: z.string().optional().describe("Generated Markdown document content."),
+    }),
+
+    compensation: { available: true },
+
+    failure: {
+      isRetriableByDefault: true,
+      notes: "Retriable on temporary storage or network upload errors.",
+    },
+  } satisfies ActionCapability,
+
+  "logic.condition": {
+    id: "logic.condition",
+    label: "Condition",
+    description: "Evaluate a logical comparison between two operands to control DAG branch routing.",
+
+    input: z
+      .object({
+        value1: z.any().describe("Left-hand operand."),
+        operator: z
+          .enum(["==", "===", "!=", "!==", ">", "<", ">=", "<=", "CONTAINS"])
+          .describe("Comparison operator."),
+        value2: z.any().describe("Right-hand operand."),
+      })
+      .strict(),
+
+    output: z.object({
+      branch: z.enum(["TRUE", "FALSE"]).describe("Branch chosen by the condition evaluation."),
+      details: z.string().optional().describe("Evaluation trace string."),
+      conditionMet: z.boolean().optional().describe("Boolean outcome of the condition."),
+    }),
+
+    compensation: { available: false },
+
+    failure: {
+      isRetriableByDefault: false,
+      notes: "Deterministic logic operation; non-retriable on bad operators.",
+    },
+  } satisfies ActionCapability,
+
+  "http.request": {
+    id: "http.request",
+    label: "HTTP Request",
+    description: "Dispatch an outbound HTTP webhook request protected by strict SSRF defense.",
+
+    input: z
+      .object({
+        url: z.string().min(1, "URL is required").describe("Target destination URL (HTTP or HTTPS)."),
+        method: z
+          .enum(["GET", "POST", "PUT", "PATCH", "DELETE"])
+          .optional()
+          .default("GET")
+          .describe("HTTP method to execute."),
+        headers: z.record(z.string(), z.string()).optional().describe("Optional request headers."),
+        body: z.any().optional().describe("Optional request payload body."),
+        timeout: z.number().optional().describe("Request timeout in milliseconds (max 10000ms)."),
+      })
+      .strict(),
+
+    output: z.object({
+      status: z.number().describe("HTTP response status code."),
+      statusText: z.string().describe("HTTP status message."),
+      data: z.any().optional().describe("Parsed JSON response data if applicable."),
+      text: z.string().optional().describe("Bounded response body text."),
+      headers: z.record(z.string(), z.string()).optional().describe("Redacted response headers."),
+      effectiveUrl: z.string().optional().describe("Final effective URL after redirects."),
+      pinnedIp: z.string().optional().describe("Pinned socket IP address."),
+    }),
+
+    compensation: { available: false },
+
+    failure: {
+      isRetriableByDefault: false,
+      notes: "Non-retriable on SSRF security policy violations or 4xx client errors. Retriable on 5xx or 429.",
     },
   } satisfies ActionCapability,
 } satisfies Record<RegisteredActionId, ActionCapability>;

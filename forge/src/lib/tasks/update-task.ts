@@ -37,6 +37,7 @@ export type UpdateTaskActor = {
   orgId: string;
   userId?: string;
   origin?: MutationOrigin;
+  expectedState?: Record<string, unknown>;
 };
 
 export type UpdateTaskFailureCode =
@@ -162,6 +163,19 @@ export async function updateTaskInOrg(
 
       if (!existing) {
         throw new Error("TASK_NOT_FOUND");
+      }
+
+      // 4.2.1. Concurrency conflict / CAS validation under row lock
+      if (actor.expectedState && typeof actor.expectedState === "object") {
+        for (const [field, expectedVal] of Object.entries(actor.expectedState)) {
+          if (expectedVal !== undefined) {
+            const currentVal = (existing as Record<string, unknown>)[field] ?? null;
+            const expVal = expectedVal ?? null;
+            if (currentVal !== expVal) {
+              throw new Error(`CONCURRENCY_CONFLICT: Field '${field}' has diverged (expected '${expVal}', found '${currentVal}')`);
+            }
+          }
+        }
       }
 
       // 4.3. Atomic compare-and-swap transition check for task completion (M4-REM-1)

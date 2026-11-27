@@ -12,7 +12,7 @@ import { updateTaskInOrg } from "@/lib/tasks/update-task";
 import { createProjectInOrg } from "@/lib/projects/create-project";
 import { evaluateTriggerFilter, type TriggerFilterConfig } from "@/lib/workflow-types/trigger-filter";
 import { simulateWorkflowRun } from "@/lib/workflow/execution/simulator";
-import type { WorkflowDefinition, WorkflowGraph } from "@/lib/workflow-types/workflow";
+import type { WorkflowDefinition } from "@/lib/workflow-types/workflow";
 import { GET as cronHandler } from "@/app/api/cron/domain-outbox/route";
 import { NextRequest } from "next/server";
 
@@ -81,7 +81,7 @@ describe("M4 — Owner Acceptance Checklist (Real PostgreSQL E3 Execution)", () 
       await db.task.deleteMany({ where: { project: { orgId: { in: [ORG_A_ID, ORG_B_ID] } } } });
       await db.domainEventOutbox.deleteMany({ where: { orgId: { in: [ORG_A_ID, ORG_B_ID] } } });
       await db.project.deleteMany({ where: { orgId: { in: [ORG_A_ID, ORG_B_ID] } } });
-      await db.membership.deleteMany({ where: { organizationId: { in: [ORG_A_ID, ORG_B_ID] } } });
+      await db.membership.deleteMany({ where: { orgId: { in: [ORG_A_ID, ORG_B_ID] } } });
       await db.organization.deleteMany({ where: { id: { in: [ORG_A_ID, ORG_B_ID] } } });
       await db.user.deleteMany({ where: { id: USER_A_ID } });
     } catch {

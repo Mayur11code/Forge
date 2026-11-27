@@ -90,6 +90,44 @@ const ACTION_FIELD_PRESENTATION = {
     description: { label: "Task Description", type: "textarea" },
     priority: { label: "Priority", type: "select" },
   },
+  "task.update": {
+    taskId: { label: "Task ID", type: "string" },
+    title: { label: "Task Title", type: "string" },
+    status: { label: "Status", type: "select" },
+    priority: { label: "Priority", type: "select" },
+    description: { label: "Task Description", type: "textarea" },
+    assigneeId: { label: "Assignee ID", type: "string" },
+  },
+  "comment.create": {
+    taskId: { label: "Task ID", type: "string" },
+    content: { label: "Comment Content", type: "textarea" },
+    userId: { label: "Author User ID", type: "string" },
+  },
+  "email.send": {
+    toEmail: { label: "To Email", type: "string" },
+    subject: { label: "Subject", type: "string" },
+    bodyText: { label: "Body Text", type: "textarea" },
+    attachmentUrl: { label: "Attachment URL", type: "string" },
+    attachmentName: { label: "Attachment Name", type: "string" },
+  },
+  "report.generate": {
+    projectId: { label: "Project ID", type: "string" },
+    title: { label: "Report Title", type: "string" },
+    userName: { label: "Requested By", type: "string" },
+    templateId: { label: "Template ID", type: "string" },
+  },
+  "logic.condition": {
+    value1: { label: "Value 1", type: "string" },
+    operator: { label: "Operator", type: "select" },
+    value2: { label: "Value 2", type: "string" },
+  },
+  "http.request": {
+    url: { label: "Request URL", type: "string" },
+    method: { label: "HTTP Method", type: "select" },
+    headers: { label: "Headers (JSON)", type: "textarea" },
+    body: { label: "Body (JSON/Text)", type: "textarea" },
+    timeout: { label: "Timeout (ms)", type: "number" },
+  },
 } satisfies Partial<
   Record<RegisteredActionId, Record<string, ActionFieldPresentation>>
 >;
@@ -162,6 +200,9 @@ function inferWidget(field: z.ZodType): {
   if (core instanceof z.ZodNumber) return { type: "number" };
   if (core instanceof z.ZodBoolean) return { type: "boolean" };
   if (core instanceof z.ZodString) return { type: "string" };
+  if (core instanceof z.ZodAny || core instanceof z.ZodUnknown || core instanceof z.ZodRecord) {
+    return { type: "textarea" };
+  }
   return {
     type: "unsupported",
     unsupportedReason: `Unsupported schema type "${core.constructor.name}" cannot be rendered as a form input.`,
@@ -177,10 +218,7 @@ function buildActionDef(capability: ActionCapability): ActionDef {
     ({ name, field }) => {
       const preset = presentation[name];
       const inferred = inferWidget(field);
-      const type =
-        inferred.type === "unsupported"
-          ? "unsupported"
-          : (preset?.type ?? inferred.type);
+      const type = preset?.type ?? inferred.type;
 
       return {
         name,
@@ -190,7 +228,7 @@ function buildActionDef(capability: ActionCapability): ActionDef {
         required: required.has(name),
         description: extractDescription(field),
         defaultValue: extractDefaultValue(field),
-        unsupportedReason: inferred.unsupportedReason,
+        unsupportedReason: type === "unsupported" ? inferred.unsupportedReason : undefined,
       };
     },
   );
