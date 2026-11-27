@@ -46,6 +46,8 @@ console.log("Fetched workflow:", workflow);
           {/* 3. Pass the hydrated data into the client component */}
           <WorkflowBuilder 
             workflowId={workflow.id} 
+            initialName={workflow.name}
+            initialDescription={workflow.description}
             initialNodes={nodes} 
             initialEdges={edges} 
           />

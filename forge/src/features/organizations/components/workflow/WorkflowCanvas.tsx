@@ -1,119 +1,112 @@
 "use client";
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState, useTransition } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
   Controls,
   Background,
+  MiniMap,
   useNodesState,
   useEdgesState,
   addEdge,
-  getOutgoers, 
+  getOutgoers,
   useReactFlow,
   type Connection,
 } from '@xyflow/react';
-
-import { autoMapNodeVariables} from '@/lib/workflow/graph-ui/utils';
-
-
-import { saveWorkflowState, updateWorkflowState } from '@/app/actions/workflows/workflow';
 import { useRouter, useParams } from 'next/navigation';
-import { useTransition } from 'react';
+import { toast } from 'sonner';
 
-
-
+import { autoMapNodeVariables } from '@/lib/workflow/graph-ui/utils';
+import { saveWorkflowState, updateWorkflowState } from '@/app/actions/workflows/workflow';
 import TriggerNode from './nodes/TriggerNode';
 import ActionNode from './nodes/ActionNode';
-import type { AppNode, AppEdge } from '@/lib/workflow-types/workflow'; 
+import type { AppNode, AppEdge } from '@/lib/workflow-types/workflow';
 import Sidebar from './sidebar';
-import { Loader2, Save } from 'lucide-react'; 
 import PropertiesPanel from './PropertiesPanel';
-import RunWorkflowButton from './RunWorkflowButton';
+import WorkflowEditorHeader from './WorkflowEditorHeader';
 
 interface WorkflowCanvasProps {
-  workflowId?: string; // undefined for new workflows
+  workflowId?: string;
+  initialName?: string;
+  initialDescription?: string | null;
   initialNodes?: AppNode[];
   initialEdges?: AppEdge[];
 }
 
-
-// rerender prevention
 const nodeTypes = {
   trigger: TriggerNode,
   action: ActionNode,
 };
 
-// internal component to use the useReactFlow hook safely
-function CanvasArea({ workflowId, initialNodes, initialEdges }: WorkflowCanvasProps) {
+function CanvasArea({
+  workflowId,
+  initialName = 'Untitled workflow',
+  initialDescription = null,
+  initialNodes,
+  initialEdges,
+}: WorkflowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<AppNode>(initialNodes || []);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges || []);
   const { screenToFlowPosition, getNodes } = useReactFlow();
 
+  const [workflowName, setWorkflowName] = useState(initialName);
+  const [workflowDescription, setWorkflowDescription] = useState<string | null>(
+    initialDescription ?? null,
+  );
+
   const params = useParams();
   const orgId = params.orgId as string;
-
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   const isValidConnection = useCallback(
     (connection: Connection | AppEdge) => {
-
       if (connection.source === connection.target) return false;
 
       const targetNode = nodes.find((n) => n.id === connection.target);
-      // THis is a sanity check. In theory, React Flow shouldn't even allow this 
-
       if (!targetNode) return false;
-  
 
-  
       const hasCycle = (node: AppNode, visited = new Set<string>()): boolean => {
         if (visited.has(node.id)) return false;
         visited.add(node.id);
 
-        const outgoers = getOutgoers(node, nodes, edges); //immediate downwnstream nodes
+        const outgoers = getOutgoers(node, nodes, edges);
         for (const outgoer of outgoers) {
-          if (outgoer.id === connection.source) return true; 
+          if (outgoer.id === connection.source) return true;
           if (hasCycle(outgoer, visited)) return true;
         }
         return false;
       };
 
       if (hasCycle(targetNode)) {
-        alert("Action blocked: This connection would create an infinite loop.");
+        toast.error('Connection blocked: this would create a cycle in the workflow.');
         return false;
       }
 
       return true;
     },
-    [nodes, edges]
+    [nodes, edges],
   );
 
-const onConnect = useCallback(
+  const onConnect = useCallback(
     (connection: Connection) => {
-   
       setEdges((eds) => addEdge(connection, eds));
 
-    
       setEdges((currentEdges) => {
-        autoMapNodeVariables(
-          connection.target, 
-          currentEdges, 
-          setNodes
-        );
+        autoMapNodeVariables(connection.target, currentEdges, setNodes);
         return currentEdges;
       });
     },
-    [getNodes, setEdges, setNodes]
+    [setEdges, setNodes],
   );
 
- 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
   }, []);
 
-  
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
@@ -121,14 +114,12 @@ const onConnect = useCallback(
       const type = event.dataTransfer.getData('application/reactflow');
       if (!type) return;
 
-
       if (type === 'trigger') {
-    
-        const currentNodes = getNodes(); //to prevent stale closure issues
+        const currentNodes = getNodes();
         const alreadyHasTrigger = currentNodes.some((n) => n.type === 'trigger');
         if (alreadyHasTrigger) {
-          alert("Workflows can only have one Trigger event.");
-          return; 
+          toast.error('Workflows can only have one Trigger event.');
+          return;
         }
       }
 
@@ -138,11 +129,8 @@ const onConnect = useCallback(
       });
 
       const newNodeId = `${type}_${Date.now()}`;
-
-      // Declare the variable with our strict type first
       let newNode: AppNode;
 
-  
       if (type === 'trigger') {
         newNode = {
           id: newNodeId,
@@ -155,101 +143,136 @@ const onConnect = useCallback(
           id: newNodeId,
           type: 'action',
           position,
-          data: { label: 'New Action', actionType: 'unset', config: {}, isConfigured: false, isCritical: false },
+          data: {
+            label: 'New Action',
+            actionType: 'unset',
+            config: {},
+            isConfigured: false,
+            isCritical: false,
+          },
         };
       } else {
-        return; // Failsafe in case a rogue drag event occurs
+        return;
       }
 
       setNodes((nds) => nds.concat(newNode));
     },
-    [screenToFlowPosition, setNodes]
+    [getNodes, screenToFlowPosition, setNodes],
   );
 
+  const persistWorkflow = (
+    nextName: string,
+    nextDescription: string | null,
+    isMetadataOnlySave: boolean,
+  ) => {
+    if (isPending) return;
 
-  const router = useRouter();
-
-  const [isPending, startTransition] = useTransition();
-
-
-  const handleSave = () => {
     startTransition(async () => {
-      const orgId = params.orgId as string;
-
-      
-      if (workflowId) {
-        const result = await updateWorkflowState(orgId, workflowId, nodes, edges);
-        if (result.success) alert("Workflow Updated!");
-        else alert("Failed to update.");
-      }
-    
-      else {
-        const result = await saveWorkflowState(orgId, "My First Automation", nodes, edges);
-        if (result.success) {
-          alert("Workflow Created!");
-  
-          //edit page
-          router.push(`/org/${orgId}/workflows/${result.workflowId}`);
+      try {
+        if (workflowId) {
+          const result = await updateWorkflowState(
+            orgId,
+            workflowId,
+            nodes,
+            edges,
+            { name: nextName, description: nextDescription },
+          );
+          if (result.success) {
+            setWorkflowName(nextName);
+            setWorkflowDescription(nextDescription);
+            toast.success(
+              isMetadataOnlySave ? 'Workflow metadata updated.' : 'Workflow saved.',
+            );
+          } else {
+            toast.error(result.error || 'Failed to update workflow.');
+          }
         } else {
-          alert("Failed to save.");
+          const result = await saveWorkflowState(
+            orgId,
+            nextName,
+            nodes,
+            edges,
+            nextDescription,
+          );
+          if (result.success) {
+            toast.success('Workflow created.');
+            router.push(`/org/${orgId}/workflows/${result.workflowId}`);
+          } else {
+            toast.error(result.error || 'Failed to create workflow.');
+          }
         }
+      } catch {
+        toast.error('Network error while saving workflow. Please try again.');
       }
     });
   };
 
+  const handleCommitName = (nextName: string) => {
+    setWorkflowName(nextName);
+    if (workflowId && nodes.length > 0) {
+      persistWorkflow(nextName, workflowDescription, true);
+    }
+  };
 
+  const handleCommitDescription = (nextDescription: string | null) => {
+    setWorkflowDescription(nextDescription);
+    if (workflowId && nodes.length > 0) {
+      persistWorkflow(workflowName, nextDescription, true);
+    }
+  };
+
+  const handleSave = () => {
+    persistWorkflow(workflowName, workflowDescription, false);
+  };
 
   return (
-    <div className="flex-grow h-[80vh]" ref={reactFlowWrapper}>
+    <div className="flex flex-1 flex-col h-full min-w-0" ref={reactFlowWrapper}>
+      <WorkflowEditorHeader
+        workflowId={workflowId}
+        orgId={orgId}
+        name={workflowName}
+        description={workflowDescription}
+        isPending={isPending}
+        canSave={nodes.length > 0}
+        onCommitName={handleCommitName}
+        onCommitDescription={handleCommitDescription}
+        onSave={handleSave}
+      />
 
-{/* Sleek Floating Action Bar */}
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-3">
-        
-        {/* Only show the Run button if the workflow exists in the database.
-            37.12: no fabricated trigger payload is passed; the server action
-            validates any context and derives the tenant from the slug. */}
-        {workflowId && (
-          <RunWorkflowButton 
-            workflowId={workflowId} 
-            orgId={orgId} 
-          />
-        )}
-
-        <button
-          onClick={handleSave}
-          disabled={isPending || nodes.length === 0}
-          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg transition-all hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+      <div className="relative flex-1 min-h-0">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+          isValidConnection={isValidConnection}
+          nodeTypes={nodeTypes}
+          fitView
+          colorMode="dark"
         >
-          {isPending ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-          {isPending ? 'Saving...' : 'Save Canvas'}
-        </button>
+          <Background gap={16} size={1} color="#3f3f46" />
+          <Controls />
+          <MiniMap
+            pannable
+            zoomable
+            bgColor="#09090b"
+            maskColor="rgba(0, 0, 0, 0.72)"
+            nodeColor={(node) => (node.type === 'trigger' ? '#10b981' : '#3b82f6')}
+            className="!bg-zinc-950 !border !border-zinc-800 !rounded-lg"
+          />
+        </ReactFlow>
       </div>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        isValidConnection={isValidConnection}
-        nodeTypes={nodeTypes}
-        fitView
-        colorMode='dark'
-      >
-        <Background gap={16} size={1} color="#3f3f46" />
-        <Controls />
-      </ReactFlow>
     </div>
   );
 }
 
-
 export default function WorkflowBuilder(props: WorkflowCanvasProps) {
   return (
-    <div className="flex w-full border-grey-800 rounded-xl overflow-hidden shadow-sm">
+    <div className="flex h-full w-full border border-zinc-800 rounded-xl overflow-hidden shadow-sm">
       <Sidebar />
-      {/*CanvasArea can use the screenToFlowPosition hook */}
       <ReactFlowProvider>
         <CanvasArea {...props} />
         <PropertiesPanel />

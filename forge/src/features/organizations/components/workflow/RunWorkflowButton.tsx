@@ -4,6 +4,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { triggerWorkflowRun } from "@/app/actions/workflows/workflow-run";
 
 interface RunWorkflowButtonProps {
@@ -52,15 +53,16 @@ export default function RunWorkflowButton({
       if (result.success) {
         // Hand off to the existing run view. The run is created and the
         // evaluator has been seeded, but nothing here claims it has finished.
+        toast.success("Workflow execution started.");
         router.push(result.redirectTo);
         return;
       }
 
-      alert(result.error);
+      toast.error(result.error);
     } catch {
       // A thrown error (transport failure, action crash) must leave the control
       // retryable rather than stuck in a submitting state.
-      alert("Failed to start workflow.");
+      toast.error("Failed to start workflow.");
     } finally {
       setSubmitting(false);
     }

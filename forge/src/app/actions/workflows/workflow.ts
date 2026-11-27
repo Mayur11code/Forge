@@ -1,5 +1,6 @@
 'use server';
 
+import { z } from 'zod';
 import { db } from '@/lib/prisma/db'; 
 import { revalidatePath } from 'next/cache';
 import { getOrgAccess } from '@/features/organizations/getOrgAccess';
@@ -15,6 +16,33 @@ import {
   IncomingEdgesSchema,
   type IncomingNode,
 } from '@/lib/workflow/validation/incoming-graph';
+
+const WorkflowNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Workflow name is required.")
+  .max(100, "Workflow name must be at most 100 characters.");
+
+const WorkflowDescriptionSchema = z
+  .string()
+  .trim()
+  .max(500, "Workflow description must be at most 500 characters.")
+  .nullable()
+  .optional();
+
+export type WorkflowMetadataInput = {
+  name?: string;
+  description?: string | null;
+};
+
+function normalizeDescription(
+  raw: string | null | undefined,
+): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const trimmed = raw.trim();
+  return trimmed.length === 0 ? null : trimmed;
+}
 
 /**
  * Turn a compile failure into something the user can act on.
@@ -40,11 +68,28 @@ export async function saveWorkflowState(
   orgslug: string, 
   name: string,
   uiNodes: unknown[], 
-  uiEdges: unknown[]
+  uiEdges: unknown[],
+  description?: string | null,
 ) {
   try {
     const access = await getOrgAccess(orgslug);
     if (!access) return { success: false, error: "Unauthorized" };
+
+    const parsedName = WorkflowNameSchema.safeParse(name);
+    if (!parsedName.success) {
+      return {
+        success: false,
+        error: parsedName.error.issues[0]?.message || "Invalid workflow name.",
+      };
+    }
+
+    const parsedDescription = WorkflowDescriptionSchema.safeParse(description);
+    if (!parsedDescription.success) {
+      return {
+        success: false,
+        error: parsedDescription.error.issues[0]?.message || "Invalid workflow description.",
+      };
+    }
 
     const areNodesValid = IncomingNodesSchema.safeParse(uiNodes); 
     if (!areNodesValid.success) return { success: false, error: "Malformed workflow data." };
@@ -66,10 +111,12 @@ export async function saveWorkflowState(
     // Find the trigger to extract the global event ID
     const triggerNode = validNodes.find(n => n.type === 'trigger');
     const eventId = triggerNode?.data?.eventId || null;
+    const normalizedDescription = normalizeDescription(parsedDescription.data) ?? null;
 
     const workflow = await db.workflow.create({
       data: {
-        name,
+        name: parsedName.data,
+        description: normalizedDescription,
         orgId,
         uiNodes: validNodes, 
         uiEdges: validEdges,
@@ -81,8 +128,14 @@ export async function saveWorkflowState(
       }
     });
 
+    revalidatePath(`/org/${orgslug}/workflows`);
     revalidatePath(`/org/${orgId}/workflows`);
-    return { success: true, workflowId: workflow.id };
+    return {
+      success: true,
+      workflowId: workflow.id,
+      name: parsedName.data,
+      description: normalizedDescription,
+    };
   } catch (error) {
     const compileError = describeCompileFailure(error);
     if (compileError) {
@@ -101,11 +154,37 @@ export async function updateWorkflowState(
   orgslug: string,
   workflowId: string, 
   uiNodes: unknown[], 
-  uiEdges: unknown[]
+  uiEdges: unknown[],
+  metadata?: WorkflowMetadataInput,
 ) {
   try {
     const access = await getOrgAccess(orgslug);
     if (!access) return { success: false, error: "Unauthorized" };
+
+    let validatedName: string | undefined;
+    if (metadata?.name !== undefined) {
+      const parsedName = WorkflowNameSchema.safeParse(metadata.name);
+      if (!parsedName.success) {
+        return {
+          success: false,
+          error: parsedName.error.issues[0]?.message || "Invalid workflow name.",
+        };
+      }
+      validatedName = parsedName.data;
+    }
+
+    let validatedDescription: string | null | undefined;
+    if (metadata?.description !== undefined) {
+      const parsedDescription = WorkflowDescriptionSchema.safeParse(metadata.description);
+      if (!parsedDescription.success) {
+        return {
+          success: false,
+          error:
+            parsedDescription.error.issues[0]?.message || "Invalid workflow description.",
+        };
+      }
+      validatedDescription = normalizeDescription(parsedDescription.data);
+    }
 
     const areNodesValid = IncomingNodesSchema.safeParse(uiNodes); 
     if (!areNodesValid.success) return { success: false, error: "Malformed workflow data." };
@@ -117,25 +196,17 @@ export async function updateWorkflowState(
     const validEdges = areEdgesValid.data;
 
     // --- THE COMPILER INJECTION ---
-    
     const compiledDefinition = compileWorkflow(validNodes, validEdges);
     
     const triggerNode = validNodes.find(n => n.type === 'trigger');
     const eventId = triggerNode?.data?.eventId || null;
 
-    // Tenancy rides in the write predicate, not in a check beside it. The old
-    // predicate was `{ id: workflowId }`, so `getOrgAccess` above proved
-    // membership in an org the update then ignored - any authenticated member of
-    // any org could overwrite any workflow by id.
+    // Tenancy rides in the write predicate, not in a check beside it.
     const existing = await db.workflow.findFirst({
       where: { id: workflowId, orgId: access.organization.id },
       select: { id: true },
     });
 
-    // A workflow owned by another org is indistinguishable from one that does
-    // not exist, and both refuse before any write is issued. A distinct response
-    // for each would turn this endpoint into an existence oracle for other
-    // tenants' workflow ids.
     if (!existing) {
       return { success: false, error: "Workflow not found in this organization." };
     }
@@ -146,6 +217,8 @@ export async function updateWorkflowState(
         orgId: access.organization.id,
       },
       data: {
+        ...(validatedName !== undefined ? { name: validatedName } : {}),
+        ...(validatedDescription !== undefined ? { description: validatedDescription } : {}),
         uiNodes: validNodes, 
         uiEdges: validEdges,
         // Update the DAG on every save!
@@ -155,16 +228,18 @@ export async function updateWorkflowState(
       }
     });
 
-    // The refusal above already established the tenant, but the write carries
-    // the same constraint so the two can never disagree. If the row moved orgs or
-    // disappeared between the two statements this matches nothing, and the
-    // response is unchanged rather than a cross-tenant write.
     if (count === 0) {
       return { success: false, error: "Workflow not found in this organization." };
     }
 
+    revalidatePath(`/org/${orgslug}/workflows`);
+    revalidatePath(`/org/${orgslug}/workflows/${workflowId}`);
     revalidatePath(`/org/${access.organization.id}/workflows/${workflowId}`);
-    return { success: true };
+    return {
+      success: true,
+      ...(validatedName !== undefined ? { name: validatedName } : {}),
+      ...(validatedDescription !== undefined ? { description: validatedDescription } : {}),
+    };
   } catch (error) {
     const compileError = describeCompileFailure(error);
     if (compileError) {

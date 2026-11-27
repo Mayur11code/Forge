@@ -28,8 +28,19 @@ jest.mock("@/app/actions/workflows/workflow-run", () => ({
   triggerWorkflowRun: jest.fn(),
 }));
 
+jest.mock("sonner", () => ({
+  toast: {
+    success: jest.fn(),
+    error: jest.fn(),
+  },
+}));
+
+import { toast } from "sonner";
 import { triggerWorkflowRun } from "@/app/actions/workflows/workflow-run";
 import RunWorkflowButton from "@/features/organizations/components/workflow/RunWorkflowButton";
+
+const toastSuccessMock = toast.success as jest.Mock;
+const toastErrorMock = toast.error as jest.Mock;
 
 const triggerWorkflowRunMock = triggerWorkflowRun as jest.Mock;
 
@@ -57,7 +68,7 @@ it("calls the action with the workflow id and slug, and no fabricated payload", 
   expect(triggerWorkflowRunMock.mock.calls[0]).toHaveLength(2);
 });
 
-it("navigates to the run view on success and does not claim completion", async () => {
+it("navigates to the run view on success and reports start via toast, never completion", async () => {
   triggerWorkflowRunMock.mockResolvedValue({
     success: true,
     runId: "run_1",
@@ -70,6 +81,7 @@ it("navigates to the run view on success and does not claim completion", async (
   await waitFor(() =>
     expect(push).toHaveBeenCalledWith(`/org/${SLUG}/runs/run_1`),
   );
+  expect(toastSuccessMock).toHaveBeenCalledWith("Workflow execution started.");
   // The only status word is "starting", never "completed"/"finished".
   expect(screen.queryByText(/complete|finished|done/i)).not.toBeInTheDocument();
 });
@@ -104,8 +116,7 @@ it("refuses a second request while the first is in flight (single submission)", 
   });
 });
 
-it("surfaces a failed start and leaves the control retryable", async () => {
-  const alertSpy = jest.spyOn(window, "alert").mockImplementation(() => {});
+it("surfaces a failed start via error toast and leaves the control retryable", async () => {
   triggerWorkflowRunMock.mockResolvedValueOnce({
     success: false,
     error: "Invalid trigger data.",
@@ -115,8 +126,9 @@ it("surfaces a failed start and leaves the control retryable", async () => {
   fireEvent.click(screen.getByRole("button", { name: /test workflow/i }));
 
   await waitFor(() =>
-    expect(alertSpy).toHaveBeenCalledWith("Invalid trigger data."),
+    expect(toastErrorMock).toHaveBeenCalledWith("Invalid trigger data."),
   );
+  expect(toastSuccessMock).not.toHaveBeenCalled();
 
   // The guard is released: the control is enabled again and a retry issues a
   // fresh request.
@@ -129,19 +141,15 @@ it("surfaces a failed start and leaves the control retryable", async () => {
   });
   fireEvent.click(button);
   await waitFor(() => expect(triggerWorkflowRunMock).toHaveBeenCalledTimes(2));
-
-  alertSpy.mockRestore();
 });
 
 it("stays retryable if the action throws (transport failure)", async () => {
-  const alertSpy = jest.spyOn(window, "alert").mockImplementation(() => {});
   triggerWorkflowRunMock.mockRejectedValueOnce(new Error("network down"));
 
   render(<RunWorkflowButton workflowId={WORKFLOW_ID} orgId={SLUG} />);
   fireEvent.click(screen.getByRole("button", { name: /test workflow/i }));
 
-  await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("Failed to start workflow."));
+  await waitFor(() => expect(toastErrorMock).toHaveBeenCalledWith("Failed to start workflow."));
+  expect(toastSuccessMock).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: /test workflow/i })).not.toBeDisabled();
-
-  alertSpy.mockRestore();
 });
