@@ -14,6 +14,7 @@
 | **FC-014** | Graph Validation & Actionable Error Diagnostics | `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)` | [FC-014 Dev Log](./2026-11-27-m3-fc014-graph-validation-and-diagnostics.md) |
 | **FC-015** | Draft vs. Published State Management & Active Lifecycle | `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)` | [FC-015 Dev Log](./2026-11-27-m3-fc015-published-workflow-lifecycle.md) |
 | **FC-016** | Manual Test-Run Drawer & Trigger Output Preview | `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)` | [FC-016 Dev Log](./2026-11-27-m3-fc016-safe-workflow-simulation.md) |
+| **M3.1** | Workspace UI Revamp, Simulation Engine Polish & CI Hardening | `DONE (Verified by Automated Test Suite & Remote CI)` | [M3.1 Dev Log](./2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md) |
 
 ## 2. Verification Summary
 

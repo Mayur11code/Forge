@@ -5,7 +5,7 @@ Status:              ACTIVE AUTHORITATIVE TRACKER
 Target Outcome:      COMPLETE FORGE AS A DEMONSTRABLE PRODUCT FIRST (M0–M10)
 Post-Product Scope:  DevOps, Cloud Hosting & Platform Observability (M11)
 Canonical File:      forge/docs/product/PRODUCT_COMPLETION_TRACKER.md
-Last Updated:        2026-11-27 (Milestone M2 Owner Acceptance & M3 Authorization)
+Last Updated:        2026-11-27 (Milestone M3 Complete & M3.1 Workspace Polish / CI Hardened)
 ```
 
 > [!IMPORTANT]
@@ -682,6 +682,20 @@ flowchart TD
   - Displays formatted redacted outputs, skipped branches, and highlights failing nodes.
 - **Tests & Verification:** `src/tests/workflow/fc016-safe-simulation.test.ts` (verifies zero calls to `task.create`, `workflowRun.create`, `workflowOutbox.create`, `startWorkflow`, `advanceWorkflow`), passing in full `npm test` 139/139 suites. Dev-log: [2026-11-27 M3 FC-016](../dev-log/2026-11-27-m3-fc016-safe-workflow-simulation.md).
 - **Status:** `DONE (Verified by Automated Test Suite; Owner Manual Acceptance Pending)`
+
+#### M3.1 | M3 | Workspace UI Revamp, Simulation Engine Polish & CI Hardening
+- **Milestone:** M3 / M3.1
+- **Capability:** High-performance landing page DAG canvas, white glow processing simulation, and CI pipeline isolation.
+- **Current Evidence:**
+  - Resolved low-FPS mouse tracking bottleneck on `/`; replaced 3D cassette meshes with an interactive SVG workflow DAG simulation canvas with playback controls, speed slider, node inspection, and step rollback.
+  - Rewired "Enter Forge" CTA to route directly to `/dashboard` (redirecting unauthenticated users to `/login`) and updated sign-in button copy to "Sign Up".
+  - Upgraded typography with crisp monospace font tokens (`font-mono`) and Kind 50 / Bizarro aerospace styling.
+  - Resolved Action node input completeness check where titles entered in node inspector or labels were incorrectly flagged as missing data.
+  - Resolved simulation engine multi-node propagation stall; added real-time sequential downstream state passing and upgraded processing node status to high-contrast white glow (`ring-white/80`, `shadow-[0_0_25px_rgba(255,255,255,0.4)]`, `border-white`).
+  - Defensively guarded `useReactFlow()` across `ActionNode.tsx` and `TriggerNode.tsx` for read-only / preview environments; mocked evaluator in `fc015-version-lifecycle.test.ts` to isolate unit tests from external Redis network failures in CI.
+- **Files Involved:** `src/app/page.tsx`, `src/features/organizations/components/workflow/nodes/ActionNode.tsx`, `src/features/organizations/components/workflow/nodes/TriggerNode.tsx`, `src/features/organizations/components/workflow/edges/ExecutionEdge.tsx`, `src/features/organizations/components/workflow/WorkflowLiveViewer.tsx`, `src/tests/agent/proposal-graph-preview.test.tsx`, `src/tests/workflow/fc015-version-lifecycle.test.ts`
+- **Tests & Verification:** 139/139 Jest suites passing (2,120/2,120 tests), `npx tsc --noEmit` 0 errors. Dev-log: [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md).
+- **Status:** `DONE (Verified by Automated Test Suite & Remote CI; Owner Manual Acceptance Pending)`
 
 ---
 
@@ -1399,5 +1413,30 @@ Milestone M2 (Projects and Task Management) has completed implementation and und
 - **Automated Verification:** **PASS** (133/133 test suites passing, 2,075/2,075 tests).
 - **Owner Manual Acceptance:** **PASS** (All 41 checklist items verified on 2026-11-27).
 - **Milestone M2 Status:** **CLOSED & COMPLETE**.
-- **Active Milestone:** **Milestone M3: Complete Workflow Builder (FC-012 through FC-016)**.
 - **Manual Acceptance Record:** [2026-11-27 M2 Owner Manual Acceptance](../dev-log/2026-11-27-m2-owner-manual-acceptance.md)
+
+### Milestone M3 Product Completion & Verification Record (2026-11-27)
+
+Milestone M3 (Complete Workflow Builder) and M3.1 (Workspace UI Revamp, Simulation Engine & CI Hardening) have completed automated implementation and verification across all assignments:
+1. **FC-012 (Canvas Authoring UX):** Inline editable workflow title and description, dark-themed MiniMap, zoom/pan controls, and Sonner toast feedback.
+2. **FC-013 (Node Property Configuration Drawer):** Schema-driven parameter configuration with upstream output auto-mapping and `{{trigger.outputs.field}}` variable picker.
+3. **FC-014 (Graph Diagnostics):** Unified real-time DAG validation with node warning/error badges and click-to-focus issue inspector.
+4. **FC-015 (Draft vs. Published Lifecycle):** Immutable `WorkflowVersion` model, CAS draft revision increments, monotonic version numbering, and instant active/paused execution gating.
+5. **FC-016 (Safe Workflow Simulation):** Sandbox execution simulator with mocked payloads, secret redaction, and zero-mutation isolation.
+6. **M3.1 (Workspace UI Revamp, Simulation Engine & CI Hardening):**
+   - High-FPS interactive workflow DAG on landing page with touch/hover feedback, play/pause simulation, speed control, node inspection, and step rollback.
+   - Sequential multi-node simulation engine with active output storage and high-contrast white glow processing state.
+   - Node title completeness validation recognizing configuration and labels.
+   - Defensive `useReactFlow()` error boundaries in `ActionNode.tsx` and `TriggerNode.tsx` for read-only preview environments (`proposal-graph-preview.test.tsx`).
+   - Mocked workflow evaluator in `fc015-version-lifecycle.test.ts` to isolate unit tests from external Upstash Redis network dependencies in CI.
+
+**Verification Gates Passed:**
+- **Automated Tests:** 139/139 test suites passed (2,120/2,120 tests green across Jest, 0 failures, 0 regressions).
+- **TypeScript:** `npx tsc --noEmit` passed with 0 errors.
+- **Git Delivery:** Pushed to `feat/m1-identity-and-latenight-landing`.
+
+**Release Decision:**
+- **Automated Verification:** **PASS** (139/139 test suites passing, 2,120/2,120 tests).
+- **Milestone M3 Automated Status:** **CLOSED (AUTOMATED IMPLEMENTATION COMPLETE & VERIFIED)**.
+- **Active Milestone:** **Milestone M3 Owner Manual Acceptance -> Milestone M4: Real Event Triggers and Automation (FC-017 through FC-021)**.
+- **Dev-Logs:** [2026-11-27 M3 Integration Review](../dev-log/2026-11-27-m3-integration-and-release-review.md) · [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md)
