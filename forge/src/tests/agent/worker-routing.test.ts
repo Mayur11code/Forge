@@ -15,6 +15,8 @@
 // route, which would leave the test looking at an empty mock.
 
 jest.mock("server-only", () => ({}));
+jest.mock("@/lib/prisma/extended", () => ({ prisma: {} }));
+jest.mock("@/lib/prisma/db", () => ({ db: {} }));
 
 jest.mock("@/app/api/worker/file-worker/fw", () => ({
   fileWorkerHandler: jest.fn(),

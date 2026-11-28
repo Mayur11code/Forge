@@ -196,6 +196,21 @@ export async function createTaskInOrg(
       });
     }
 
+    // 6. Asynchronous notification CDC event fired outside the transaction (P14)
+    try {
+      const { dispatchEvent } = await import("@/lib/events/event-bus");
+      await dispatchEvent("TASK_CREATED", {
+        taskId: task.id,
+        orgId: actor.orgId,
+        projectId: task.projectId,
+        userId: actor.userId ?? "system-cdc",
+        subject: "New Task Created",
+        body: `A new task "${task.title}" has been added.`,
+      });
+    } catch (cdcErr) {
+      console.warn("[CDC] Best-effort TASK_CREATED event dispatch failed:", cdcErr);
+    }
+
     return { success: true, task };
   } catch (error) {
     console.error("[createTaskInOrg] Transaction failed:", error);

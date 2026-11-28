@@ -31,15 +31,16 @@ class MockTransactionalClient {
 
   public task = {
     create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
-      this.taskCreated = { id: "task_new_1", ...data };
+      this.taskCreated = { id: "task_new_1", projectId: "proj_1", status: "TODO", priority: "MEDIUM", ...data };
       return this.taskCreated;
     }),
     update: jest.fn(async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-      this.taskUpdated = { id: where.id, projectId: "proj_1", ...data };
+      this.taskUpdated = { id: where.id, projectId: "proj_1", status: "TODO", priority: "MEDIUM", ...data };
       return this.taskUpdated;
     }),
+    updateMany: jest.fn(async () => ({ count: 1 })),
     findFirst: jest.fn(async ({ where }: { where?: { id?: string } }) => {
-      return { id: where?.id ?? "task_existing_1", projectId: "proj_1", title: "Existing Task" };
+      return { id: where?.id ?? "task_existing_1", projectId: "proj_1", title: "Existing Task", status: "TODO", priority: "MEDIUM" };
     }),
     findUniqueOrThrow: jest.fn(async ({ where }: { where: { id: string } }) => {
       return {
@@ -49,6 +50,10 @@ class MockTransactionalClient {
         project: { orgId: "org_1" },
       };
     }),
+  };
+
+  public domainEventOutbox = {
+    create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: "dom_1", ...data })),
   };
 
   public project = {

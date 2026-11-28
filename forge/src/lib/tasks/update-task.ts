@@ -137,6 +137,7 @@ export async function updateTaskInOrg(
   //    records VectorOutboxEvent intent, DomainEventOutbox intent, and emits task.completed
   //    if and only if a genuine state transition occurred (UPPR Rev 4.1 M4-REM-1).
   try {
+    let isGenuineCompletion = false;
     const task = await prisma.$transaction(async (tx) => {
       // 4.1. Row-level lock acquisition to serialize concurrent transitions
       if (typeof tx.$queryRaw === "function") {
@@ -179,7 +180,6 @@ export async function updateTaskInOrg(
       }
 
       // 4.3. Atomic compare-and-swap transition check for task completion (M4-REM-1)
-      let isGenuineCompletion = false;
       if (changes.status === "DONE") {
         const transition = await tx.task.updateMany({
           where: {
@@ -295,6 +295,29 @@ export async function updateTaskInOrg(
       enqueueDomainOutboxWakeup().catch((err) => {
         console.warn("[OUTBOX] Fast-path wake-up notification deferred to background sweeper:", err);
       });
+    }
+
+    // 6. Asynchronous notification CDC event fired outside the transaction (P14)
+    try {
+      const { dispatchEvent } = await import("@/lib/events/event-bus");
+      await dispatchEvent("TASK_UPDATED", {
+        taskId: task.id,
+        orgId: actor.orgId,
+        projectId: task.projectId,
+        userId: actor.userId ?? "system-cdc",
+        subject: "Task Updated",
+        body: `Task "${task.title}" has been modified.`,
+      });
+
+      if (isGenuineCompletion) {
+        await dispatchEvent("TASK_COMPLETED", {
+          taskId: task.id,
+          orgId: actor.orgId,
+          projectId: task.projectId,
+        });
+      }
+    } catch (cdcErr) {
+      console.warn("[CDC] Best-effort TASK_UPDATED / TASK_COMPLETED event dispatch failed:", cdcErr);
     }
 
     return { success: true, task };
