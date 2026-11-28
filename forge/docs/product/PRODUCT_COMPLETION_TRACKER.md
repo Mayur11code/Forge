@@ -380,17 +380,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
+    classDef done fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff;
     classDef product fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#fff;
     classDef gate fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#fff;
     classDef infra fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fff;
 
-    M0["M0: Scope Reset & Authority (DONE)"]:::product --> M1["M1: Accounts & Organizations (ACCEPTED)"]:::product
-    M1 --> M2["M2: Projects & Tasks"]:::product
-    M1 --> M3["M3: Workflow Builder"]:::product
-    M2 --> M4["M4: Event Automation Engine"]:::product
+    M0["M0: Scope Reset & Authority (DONE)"]:::done --> M1["M1: Accounts & Organizations (ACCEPTED)"]:::done
+    M1 --> M2["M2: Projects & Tasks (ACCEPTED)"]:::done
+    M1 --> M3["M3: Workflow Builder (ACCEPTED)"]:::done
+    M2 --> M4["M4: Event Automation Engine (VERIFIED)"]:::done
     M3 --> M4
-    M3 --> M5["M5: Actions & Integrations"]:::product
-    M4 --> M6["M6: Run Center & Monitoring"]:::product
+    M3 --> M5["M5: Actions & Integrations (ACCEPTED)"]:::done
+    M4 --> M6["M6: Run Center & Monitoring (NEXT)"]:::product
     M5 --> M6
     M2 --> M7["M7: Unified AI Experience"]:::product
     M3 --> M7
@@ -1237,46 +1238,46 @@ An automated audit confirms the structural integrity of the 42 assignments:
 3. **Milestone Boundary Discipline:** Zero assignments in Milestones M0 through M10 depend on any assignment in Milestone M11. The flow is strictly unidirectional into the M10 Exit Gate.
 4. **Critical Path Traced:**
    ```text
-   FC-001 (M0: Tracker Authority)
+   FC-001 (M0: Tracker Authority) [DONE]
      │
      ▼
-   FC-002 (M1: Registration /signup)
+   FC-002 (M1: Registration /signup) [DONE]
      │
      ▼
-   FC-003 (M1: Org Onboarding /onboarding)
+   FC-003 (M1: Org Onboarding /onboarding) [DONE]
      │
      ▼
-   FC-008 (M2: Project Lifecycle)
+   FC-008 (M2: Project Lifecycle) [DONE]
      │
      ▼
-   FC-012 (M3: Canvas Authoring)
+   FC-012 (M3: Canvas Authoring) [DONE]
      │
      ▼
-   FC-013 (M3: Property Drawer)
+   FC-013 (M3: Property Drawer) [DONE]
      │
      ▼
-   FC-014 (M3: Graph Validation)
+   FC-014 (M3: Graph Validation) [DONE]
      │
      ▼
-   FC-015 (M3: Draft vs Published)
+   FC-015 (M3: Draft vs Published) [DONE]
      │
      ▼
-   FC-017 (M4: Dispatch Engine)
+   FC-017 (M4: Dispatch Engine) [DONE]
      │
      ▼
-   FC-018 (M4: Task Event Producers)
+   FC-018 (M4: Task Event Producers) [DONE]
      │
      ▼
-   FC-020 (M5: Native Actions)
+   FC-020 (M5: Native Actions) [DONE]
      │
      ▼
-   FC-021 (M5: Task Update & Saga Compensation)
+   FC-021 (M5: Task Update & Saga Compensation) [DONE]
      │
      ▼
-   FC-023 (M5: 3 Automation Scenarios)
+   FC-023 (M5: 3 Automation Scenarios) [DONE]
      │
      ▼
-   FC-024 (M6: Run History /runs)
+   FC-024 (M6: Run History /runs) [NEXT]
      │
      ▼
    FC-025 (M6: Step Inspector)
@@ -1321,31 +1322,31 @@ flowchart TD
     FC004 --> FC034["FC-034: Navigation Audit"]:::norm
     FC005 --> FC009["FC-009: Task Status Transitions"]:::done
     FC008 --> FC009
-    FC008 --> FC012["FC-012: Canvas Authoring"]:::crit
+    FC008 --> FC012["FC-012: Canvas Authoring"]:::done
     
     FC009 --> FC010["FC-010: Task Comments"]:::done
     FC009 --> FC011["FC-011: Task Filters/Search"]:::done
     FC009 --> FC027["FC-027: AI Assistant /ai"]:::norm
     FC009 --> FC030["FC-030: File Vector Tombstone"]:::norm
     
-    FC012 --> FC013["FC-013: Node Property Drawer"]:::crit
+    FC012 --> FC013["FC-013: Node Property Drawer"]:::done
     FC012 --> FC027
     
-    FC013 --> FC014["FC-014: Graph Validation"]:::crit
-    FC013 --> FC020["FC-020: Register Native Actions"]:::crit
+    FC013 --> FC014["FC-014: Graph Validation"]:::done
+    FC013 --> FC020["FC-020: Register Native Actions"]:::done
     
-    FC014 --> FC015["FC-015: Draft vs Published"]:::crit
-    FC015 --> FC016["FC-016: Test-Run Drawer"]:::norm
-    FC015 --> FC017["FC-017: Event Dispatch Engine"]:::crit
+    FC014 --> FC015["FC-015: Draft vs Published"]:::done
+    FC015 --> FC016["FC-016: Test-Run Drawer"]:::done
+    FC015 --> FC017["FC-017: Event Dispatch Engine"]:::done
     
-    FC017 --> FC018["FC-018: Task CDC Producers"]:::crit
-    FC017 --> FC023["FC-023: 3 Automation Scenarios"]:::crit
+    FC017 --> FC018["FC-018: Task CDC Producers"]:::done
+    FC017 --> FC023["FC-023: 3 Automation Scenarios"]:::done
     FC017 --> FC024["FC-024: Run History /runs"]:::crit
     
-    FC018 --> FC019["FC-019: Trigger Filters & Storm Def"]:::norm
+    FC018 --> FC019["FC-019: Trigger Filters & Storm Def"]:::done
     
-    FC020 --> FC021["FC-021: Task Update & Saga Comp"]:::crit
-    FC020 --> FC022["FC-022: SSRF-Safe HTTP Action"]:::norm
+    FC020 --> FC021["FC-021: Task Update & Saga Comp"]:::done
+    FC020 --> FC022["FC-022: SSRF-Safe HTTP Action"]:::done
     FC020 --> FC023
     FC021 --> FC023
     
