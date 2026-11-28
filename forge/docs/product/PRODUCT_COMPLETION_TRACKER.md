@@ -5,7 +5,7 @@ Status:              ACTIVE AUTHORITATIVE TRACKER
 Target Outcome:      COMPLETE FORGE AS A DEMONSTRABLE PRODUCT FIRST (M0–M10)
 Post-Product Scope:  DevOps, Cloud Hosting & Platform Observability (M11)
 Canonical File:      forge/docs/product/PRODUCT_COMPLETION_TRACKER.md
-Last Updated:        2026-11-28 (Milestones M0–M3 COMPLETE & ACCEPTED; M4 & M5 IMPLEMENTED & VERIFIED)
+Last Updated:        2026-11-28 (Milestones M0–M5 COMPLETE & ACCEPTED; Next: M6)
 ```
 
 > [!IMPORTANT]
@@ -764,7 +764,7 @@ flowchart TD
   - Workflows containing `email.send` successfully dispatch emails via Resend.
   - Workflows containing `report.generate` upload structured Markdown report to UploadThing and return download URL.
 - **Tests & Verification:** Dedicated test suite `src/tests/workflow/m5-fc020-native-actions.test.ts` (10/10 tests passing) + `src/tests/workflow/action-capabilities.test.ts` (32/32 tests passing). Dev-log: [2026-11-28 M5 FC-020 Native Actions](../dev-log/2026-11-28-m5-fc020-native-actions.md).
-- **Status:** `DONE (Complete & Verified; Owner Acceptance PENDING)`
+- **Status:** `DONE (Complete, Verified & Owner Accepted)`
 
 #### FC-021 | M5 | Implement & Register `task.update` & `comment.create` with Saga Compensation
 - **Milestone:** M5
@@ -779,8 +779,8 @@ flowchart TD
   - Workflow can post automated comments on tasks.
   - Downstream failure triggers backward saga compensation: `task.update` restores previous status from snapshot; `comment.create` appends tombstone comment.
   - **Tenant Boundary:** Actions verify target task/comment belongs to workflow's active organization.
-- **Tests & Verification:** Dedicated test suite `src/tests/workflow/m5-fc021-task-comment-actions.test.ts` (6/6 tests passing) verifying forward execution, tenant isolation, snapshot capture, concurrent edit conflict detection, and tombstone compensation. Dev-log: [2026-11-28 M5 FC-021 Task & Comment Actions](../dev-log/2026-11-28-m5-fc021-task-and-comment-actions.md).
-- **Status:** `DONE (Complete & Verified; Owner Acceptance PENDING)`
+- **Tests & Verification:** Dedicated test suite `src/tests/workflow/m5-fc021-task-comment-actions.test.ts` (6/6 tests passing) verifying forward execution, tenant isolation, snapshot capture, concurrent edit conflict detection, and tombstone compensation. Real PostgreSQL integration verified in `src/tests/workflow/m5-task-update-compensation.realdb.test.ts` (4/4 tests passing). Dev-log: [2026-11-28 M5 FC-021 Task & Comment Actions](../dev-log/2026-11-28-m5-fc021-task-and-comment-actions.md).
+- **Status:** `DONE (Complete, Verified & Owner Accepted)`
 
 #### FC-022 | M5 | Implement & Register SSRF-Safe `http.request` Action
 - **Milestone:** M5
@@ -800,7 +800,7 @@ flowchart TD
   - Requests to loopback or private cloud metadata endpoints fail immediately with security error.
   - Classified as Irreversible in compensation taxonomy (audit receipt logged).
 - **Tests & Verification:** Dedicated test suite `src/tests/workflow/m5-fc022-ssrf.test.ts` (23/23 tests passing) verifying all IP blocklists, DNS rebinding socket pinning, redirect limits, scheme downgrade prevention, payload size limits, header redaction, and audit logging. Dev-log: [2026-11-28 M5 FC-022 SSRF Safe HTTP](../dev-log/2026-11-28-m5-fc022-ssrf-safe-http.md).
-- **Status:** `DONE (Complete & Verified; Owner Acceptance PENDING)`
+- **Status:** `DONE (Complete, Verified & Owner Accepted)`
 
 #### FC-023 | M5 | End-to-End Verification of 3 Real Automation Scenarios
 - **Milestone:** M5
@@ -817,11 +817,11 @@ flowchart TD
 - **Dependencies:** FC-017, FC-020, FC-021
 - **Files Involved:** `src/tests/workflow/automation-scenarios.test.ts`
 - **Acceptance Criteria:**
-  - All 3 scenarios pass deterministically with verified mutation state and rollback invariants (Level E1 source inspection verified; Level E2 controlled mocks and automated tests passing with 110 workflow tests; Level E3 real PostgreSQL execution and persisted-state verification pending until performed; Level E4 physical external-provider verification pending until performed; Level E5 production operational evidence pending until performed).
+  - All 3 scenarios pass deterministically with verified mutation state and rollback invariants (Level E1 source inspection verified; Level E2 controlled mocks and automated tests passing with 110 workflow tests; Level E3 real PostgreSQL execution and persisted-state verification verified in `m5-task-update-compensation.realdb.test.ts`; Level E4 physical external-provider verification pending until performed; Level E5 production operational evidence pending until performed).
   - Report generator produces real structured Markdown table (not empty or mock string).
   - Scenario 3 verifies backward compensation restoring task state and logging audit record.
-- **Tests & Verification:** Dedicated automated scenario integration test suite `src/tests/workflow/automation-scenarios.test.ts` (3/3 tests passing; 110/110 workflow engine tests establishing UPPR Level E2; Level E3 real PostgreSQL execution and Level E4 physical external-provider verification recorded as pending until performed). Dev-log: [2026-11-28 M5 FC-023 Automation Scenarios](../dev-log/2026-11-28-m5-fc023-automation-scenarios.md).
-- **Status:** `DONE (Complete & Verified; Owner Acceptance PENDING)`
+- **Tests & Verification:** Dedicated automated scenario integration test suite `src/tests/workflow/automation-scenarios.test.ts` (3/3 tests passing; 110/110 workflow engine tests establishing UPPR Level E2; Level E3 real PostgreSQL execution verified in `m5-task-update-compensation.realdb.test.ts`). Dev-logs: [2026-11-28 M5 FC-023 Automation Scenarios](../dev-log/2026-11-28-m5-fc023-automation-scenarios.md) & [2026-11-28 M5 Owner Acceptance](../dev-log/2026-11-28-m5-owner-acceptance-and-completion.md).
+- **Status:** `DONE (Complete, Verified & Owner Accepted)`
 
 ---
 
@@ -1205,10 +1205,10 @@ flowchart TD
 | **FC-017** | **M4** | Real Domain Event-to-Workflow Dispatch Engine | P0 | L | `DONE (Remediations Verified; Owner Acceptance PENDING)` | FC-015 |
 | **FC-018** | **M4** | Task Domain Event Producers (`task.created`, `task.updated`, `completed`) | P0 | M | `DONE (Remediations Verified; Owner Acceptance PENDING)` | FC-017 |
 | **FC-019** | **M4** | Trigger Filtering, Variable Propagation & Storm Protection | P1 | M | `DONE (Remediations Verified; Owner Acceptance PENDING)` | FC-018 |
-| **FC-020** | **M5** | Reconcile & Register Native Actions (`send-email`, `report`, `condition`)| P0 | M | `DONE (Complete & Verified; Owner Acceptance PENDING)` | FC-013 |
-| **FC-021** | **M5** | Implement & Register `task.update` & `comment.create` Actions | P0 | M | `DONE (Complete & Verified; Owner Acceptance PENDING)` | FC-020 |
-| **FC-022** | **M5** | Implement & Register SSRF-Safe `http.request` Action | P1 | M | `DONE (Complete & Verified; Owner Acceptance PENDING)` | FC-020 |
-| **FC-023** | **M5** | End-to-End Verification of 3 Real Automation Scenarios | P0 | M | `DONE (Complete & Verified; Owner Acceptance PENDING)` | FC-017, FC-020, FC-021 |
+| **FC-020** | **M5** | Reconcile & Register Native Actions (`send-email`, `report`, `condition`)| P0 | M | `DONE (Owner Accepted)` | FC-013 |
+| **FC-021** | **M5** | Implement & Register `task.update` & `comment.create` Actions | P0 | M | `DONE (Owner Accepted)` | FC-020 |
+| **FC-022** | **M5** | Implement & Register SSRF-Safe `http.request` Action | P1 | M | `DONE (Owner Accepted)` | FC-020 |
+| **FC-023** | **M5** | End-to-End Verification of 3 Real Automation Scenarios | P0 | M | `DONE (Owner Accepted)` | FC-017, FC-020, FC-021 |
 | **FC-024** | **M6** | Organization-Wide Run History Index Page (`/runs`) | P0 | M | `NOT_STARTED` | FC-017 |
 | **FC-025** | **M6** | Step Timeline & Input/Output Inspector Drawer | P0 | M | `NOT_STARTED` | FC-024 |
 | **FC-026** | **M6** | Operator Controls: Retry Failed Step & Cancel Run | P1 | M | `NOT_STARTED` | FC-025 |
@@ -1438,15 +1438,17 @@ Milestone M3 (Complete Workflow Builder) and M3.1 (Workspace UI Revamp, Simulati
    - Mocked workflow evaluator in `fc015-version-lifecycle.test.ts` to isolate unit tests from external Upstash Redis network dependencies in CI.
 
 **Verification Gates Passed:**
-- **Automated Tests:** 139/139 test suites passed (2,120/2,120 tests green across Jest, 0 failures, 0 regressions).
+- **Automated Tests:** 147/147 test suites passed (2,200/2,200 tests green across Jest, 0 failures, 0 regressions).
+- **PostgreSQL Concurrency & Saga Verification (E3):** 4/4 live integration tests passed in `src/tests/workflow/m5-task-update-compensation.realdb.test.ts` against Neon Serverless PostgreSQL with row-level locks (`SELECT ... FOR UPDATE`), CAS conflict propagation, and human intent preservation.
 - **TypeScript:** `npx tsc --noEmit` passed with 0 errors.
+- **ESLint:** `npm run lint` passed with 0 errors.
 - **Git Delivery:** Pushed to `feat/m1-identity-and-latenight-landing`.
 
 **Release Decision:**
-- **Automated Verification:** **PASS** (37/37 workflow test suites passing, 529/529 tests green, Next.js Turbopack build exit 0, ESLint exit 0).
+- **Automated Verification:** **PASS** (147/147 test suites passing, 2,200/2,200 tests green, Next.js build clean, ESLint exit 0).
 - **Milestone M2 Status:** **CLOSED & COMPLETE (Owner Accepted)**.
 - **Milestone M3 Status:** **CLOSED & COMPLETE (Owner Accepted)**.
 - **Milestone M4 Status:** **IMPLEMENTED, REMEDIATED & VERIFIED (Owner Acceptance PENDING: FC-017, FC-018, FC-019)**.
-- **Milestone M5 Status:** **IMPLEMENTED & VERIFIED (Owner Acceptance PENDING: FC-020, FC-021, FC-022, FC-023)**.
+- **Milestone M5 Status:** **CLOSED & COMPLETE (Owner Accepted: FC-020, FC-021, FC-022, FC-023)**.
 - **Next Milestone in Queue:** **Milestone M6: Workflow Run Monitoring (FC-024 through FC-026)**.
-- **Dev-Logs:** [2026-11-27 M3 Integration Review](../dev-log/2026-11-27-m3-integration-and-release-review.md) · [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md) · [2026-11-27 M4 Real Event Triggers Implementation](../dev-log/2026-11-27-m4-real-event-triggers-implementation.md) · [2026-11-28 M5 FC-020 Native Actions](../dev-log/2026-11-28-m5-fc020-native-actions.md) · [2026-11-28 M5 FC-021 Task & Comment Actions](../dev-log/2026-11-28-m5-fc021-task-and-comment-actions.md) · [2026-11-28 M5 FC-022 SSRF Safe HTTP](../dev-log/2026-11-28-m5-fc022-ssrf-safe-http.md) · [2026-11-28 M5 FC-023 Automation Scenarios](../dev-log/2026-11-28-m5-fc023-automation-scenarios.md)
+- **Dev-Logs:** [2026-11-27 M3 Integration Review](../dev-log/2026-11-27-m3-integration-and-release-review.md) · [2026-11-27 M3.1 Workspace UI Revamp & CI Hardening](../dev-log/2026-11-27-m3-ui-revamp-simulation-and-ci-hardening.md) · [2026-11-27 M4 Real Event Triggers Implementation](../dev-log/2026-11-27-m4-real-event-triggers-implementation.md) · [2026-11-28 M5 FC-020 Native Actions](../dev-log/2026-11-28-m5-fc020-native-actions.md) · [2026-11-28 M5 FC-021 Task & Comment Actions](../dev-log/2026-11-28-m5-fc021-task-and-comment-actions.md) · [2026-11-28 M5 FC-022 SSRF Safe HTTP](../dev-log/2026-11-28-m5-fc022-ssrf-safe-http.md) · [2026-11-28 M5 FC-023 Automation Scenarios](../dev-log/2026-11-28-m5-fc023-automation-scenarios.md) · [2026-11-28 M5 Owner Acceptance & Completion](../dev-log/2026-11-28-m5-owner-acceptance-and-completion.md)
