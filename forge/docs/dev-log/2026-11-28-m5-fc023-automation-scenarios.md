@@ -82,6 +82,6 @@ In strict compliance with UPPR Rev 4.1 evidence standards:
 |:---:|:---|:---|
 | **E1** | Source inspection and static evidence | **VERIFIED:** Version-pinned action definitions (`@1.0.0`), Zod schemas, React Flow canvas presentations. |
 | **E2** | Controlled mocks and automated tests | **VERIFIED:** 110/110 passing workflow engine tests (including 3/3 business scenarios in `src/tests/workflow/automation-scenarios.test.ts` and 79 dedicated M5 tests) pass deterministically using in-memory transactional stores and controlled provider mocks. |
-| **E3** | Real PostgreSQL execution and persisted-state verification | **PENDING:** Real PostgreSQL execution and persisted-state verification pending until performed. |
+| **E3** | Real PostgreSQL execution and persisted-state verification | **VERIFIED:** Executed against Neon Serverless PostgreSQL in `src/tests/workflow/m5-task-update-compensation.realdb.test.ts` (4/4 passed), verifying multi-field CAS rollback, concurrent human edit preservation, full snapshot restoration, and duplicate compensation idempotency under live row-locking. |
 | **E4** | Physical external-provider verification | **PENDING:** Physical external-provider verification pending until performed. |
 | **E5** | Production operational evidence | **PENDING:** Production operational evidence pending until operational deployment. |
