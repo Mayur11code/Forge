@@ -23,10 +23,16 @@ import { computeWorkflowDefinitionHash } from "../validation/canonical-hash";
 // one and can never be started. The parameter is deliberately not optional:
 // there is no unscoped call shape left for a future caller to reach for, and
 // adding one would not compile.
+export interface StartWorkflowOptions {
+  expectedVersionId?: string;
+  dispatchId?: string;
+}
+
 export async function startWorkflow(
   orgId: string,
   workflowId: string,
   triggerData: Record<string, JsonValue> = {},
+  options?: StartWorkflowOptions,
 ): Promise<WorkflowRun> {
   const executeInTransaction = async <T>(
     fn: (tx: Parameters<Parameters<typeof db.$transaction>[0]>[0]) => Promise<T>,
@@ -37,7 +43,7 @@ export async function startWorkflow(
     return fn(db);
   };
 
-  const { run, workflowName, definitionHash } = await executeInTransaction(async (tx) => {
+  const { run, workflowName, definitionHash, isRecovered } = await executeInTransaction(async (tx) => {
     // 1. ATOMIC WORKFLOW ROW LOCK (FOR SHARE on PostgreSQL)
     let workflow: {
       id: string;
@@ -89,6 +95,78 @@ export async function startWorkflow(
     }
     if (workflow.isActive === false) {
       throw new Error("Cannot start workflow: workflow is currently inactive.");
+    }
+
+    // Publication race protection: if an expected version ID was specified, assert it still matches!
+    if (options?.expectedVersionId && workflow.publishedVersionId !== options.expectedVersionId) {
+      throw new Error(
+        `Cannot start workflow: expected version ${options.expectedVersionId} but current published version is ${workflow.publishedVersionId}.`,
+      );
+    }
+
+    // M4-REM-2: Atomic Dispatch Ledger Claim & Redelivery Recovery (Section 3.3)
+    if (options?.dispatchId) {
+      // 0.1 Check for already STARTED dispatch (recovery of existing run)
+      const dispatch = await (tx as unknown as {
+        workflowTriggerDispatch: {
+          findUnique: (args: unknown) => Promise<{ id: string; status: string; runId: string | null } | null>;
+        };
+      }).workflowTriggerDispatch.findUnique({
+        where: { id: options.dispatchId },
+      });
+
+      if (!dispatch) {
+        throw new Error(`Cannot start workflow: dispatch ${options.dispatchId} not found.`);
+      }
+
+      if (dispatch.status === "STARTED" && dispatch.runId) {
+        const existingRun = await tx.workflowRun.findUnique({
+          where: { id: dispatch.runId },
+        });
+        if (existingRun) {
+          return { run: existingRun, workflowName: workflow.name, definitionHash: existingRun.definitionHash || "", isRecovered: true };
+        }
+      }
+
+      // 0.2 Atomically claim ignition right: transition PENDING -> PROCESSING
+      const claimResult = await (tx as unknown as {
+        workflowTriggerDispatch: {
+          updateMany: (args: unknown) => Promise<{ count: number }>;
+        };
+      }).workflowTriggerDispatch.updateMany({
+        where: {
+          id: options.dispatchId,
+          status: "PENDING",
+          runId: null,
+        },
+        data: {
+          status: "PROCESSING",
+        },
+      });
+
+      if (claimResult.count === 0) {
+        // Another concurrent worker claimed the dispatch or it transitioned in the race.
+        // Check if winning worker already completed ignition:
+        const recheck = await (tx as unknown as {
+          workflowTriggerDispatch: {
+            findUnique: (args: unknown) => Promise<{ id: string; status: string; runId: string | null } | null>;
+          };
+        }).workflowTriggerDispatch.findUnique({
+          where: { id: options.dispatchId },
+        });
+
+        if (recheck?.status === "STARTED" && recheck.runId) {
+          const existingRun = await tx.workflowRun.findUnique({
+            where: { id: recheck.runId },
+          });
+          if (existingRun) {
+            return { run: existingRun, workflowName: workflow.name, definitionHash: existingRun.definitionHash || "", isRecovered: true };
+          }
+        }
+
+        // Losing worker: abort BEFORE creating any WorkflowRun row!
+        throw new Error("DISPATCH_ALREADY_CLAIMED_OR_STARTED");
+      }
     }
 
     let executionName = workflow.name;
@@ -184,13 +262,35 @@ export async function startWorkflow(
       },
     });
 
-    return { run: createdRun, workflowName: executionName, definitionHash: hash };
+    // Atomically link created run to WorkflowTriggerDispatch ledger if ignition is event-driven
+    // Concurrency Invariant (M4-REM-2): transition PROCESSING -> STARTED with runId
+    if (options?.dispatchId) {
+      await (tx as unknown as {
+        workflowTriggerDispatch: {
+          updateMany: (args: unknown) => Promise<{ count: number }>;
+        };
+      }).workflowTriggerDispatch.updateMany({
+        where: {
+          id: options.dispatchId,
+          status: "PROCESSING",
+          runId: null,
+        },
+        data: {
+          runId: createdRun.id,
+          status: "STARTED",
+        },
+      });
+    }
+
+    return { run: createdRun, workflowName: executionName, definitionHash: hash, isRecovered: false };
   });
 
   console.log(`[IGNITION] Started WorkflowRun ${run.id} for Workflow ${workflowName} (hash: ${definitionHash})`);
 
-  // 8. PUSH THE FIRST DOMINO (POST-COMMIT)
-  await advanceWorkflow(run.id);
+  // 8. PUSH THE FIRST DOMINO (POST-COMMIT) - Only advance newly started runs
+  if (!isRecovered) {
+    await advanceWorkflow(run.id);
+  }
 
   return run;
 }

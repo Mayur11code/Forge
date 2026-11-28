@@ -6,9 +6,9 @@ import {
   Building2,
   ArrowRight,
   Plus,
-  Shield,
   Layers,
   Users,
+  ArrowLeft,
 } from "lucide-react";
 
 export const metadata = {
@@ -55,89 +55,179 @@ export default async function SelectOrgPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-2xl w-full mx-auto space-y-8">
-        {/* Header */}
-        <div className="text-center space-y-3">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 text-blue-400 mb-1">
-            <Building2 className="w-6 h-6" />
+    <div className="relative min-h-screen bg-[#060608] text-zinc-100 font-sans antialiased selection:bg-zinc-800 selection:text-white flex flex-col justify-between overflow-x-hidden">
+      {/* Parallax Blueprint Grid */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 opacity-[0.03] bg-[linear-gradient(to_right,#ffffff_1px,transparent_1px),linear-gradient(to_bottom,#ffffff_1px,transparent_1px)] bg-[size:48px_48px]"
+      />
+
+      {/* Subtle 35mm Analog Film Grain Texture */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-40 opacity-[0.035] mix-blend-screen bg-repeat"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+        }}
+      />
+
+      {/* Atmospheric Radial Spotlight */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(ellipse_60%_40%_at_50%_10%,rgba(255,255,255,0.06),transparent_70%)]"
+      />
+
+      {/* Museum-Grade Top Navigation Bar */}
+      <header className="relative z-50 border-b border-white/[0.08] bg-[#060608]/85 backdrop-blur-xl">
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <Link href="/" className="group flex items-center gap-3 select-none">
+              <span className="w-6 h-6 border border-zinc-700 bg-zinc-950 flex items-center justify-center font-mono text-xs font-bold text-zinc-300 group-hover:border-white group-hover:text-white transition-colors duration-300">
+                F
+              </span>
+              <span className="font-mono text-xs tracking-[0.2em] uppercase text-zinc-100 font-semibold group-hover:text-white transition-colors duration-300">
+                Forge
+              </span>
+            </Link>
+
+            <div className="hidden sm:flex items-center gap-3 text-[11px] font-mono text-zinc-500 border-l border-white/[0.08] pl-6">
+              <span>Release 1.0</span>
+              <span>·</span>
+              <span className="text-zinc-400">Workspace // Select org</span>
+            </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight text-white">
-            Select a workspace
-          </h1>
-          <p className="text-sm text-zinc-400">
-            Choose an organization to view your team projects, workflows, and runs.
-          </p>
+
+          <div className="flex items-center gap-3">
+            <Link
+              href="/"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-white/[0.1] hover:border-white/30 text-zinc-400 hover:text-zinc-200 text-xs font-mono tracking-wider transition-all duration-300"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>[ Home ]</span>
+            </Link>
+
+            <Link
+              href="/onboarding"
+              className="px-3.5 py-1.5 border border-white/[0.1] hover:border-white/30 text-zinc-300 hover:text-white text-xs font-mono tracking-wider transition-all duration-300 flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>New org</span>
+            </Link>
+          </div>
         </div>
+      </header>
 
-        {/* Organizations Grid */}
-        <div className="space-y-3">
-          {memberships.map((m) => {
-            const org = m.organization;
-            const roleFormatted =
-              m.role.charAt(0).toUpperCase() + m.role.slice(1).toLowerCase();
+      {/* Main Content Stage */}
+      <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-12 sm:py-16">
+        <div className="max-w-2xl w-full mx-auto space-y-8">
+          {/* Header */}
+          <div className="space-y-3">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 border border-white/[0.1] bg-white/[0.03] text-[10px] font-mono tracking-widest uppercase text-zinc-400">
+              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+              <span>AUTHENTICATED // {session.user.email}</span>
+            </div>
 
-            return (
-              <div
-                key={m.id}
-                className="group p-5 bg-zinc-900 border border-zinc-800 hover:border-zinc-700 rounded-2xl transition-all duration-200 flex items-center justify-between gap-4"
-              >
-                <div className="flex items-center gap-4 min-w-0">
-                  <div className="w-12 h-12 rounded-xl bg-zinc-800 border border-zinc-700/80 flex items-center justify-center text-lg font-bold text-zinc-300 uppercase shrink-0 group-hover:border-blue-500/40 group-hover:bg-blue-600/10 group-hover:text-blue-400 transition-colors">
-                    {org.name.charAt(0) || "O"}
-                  </div>
+            <h1 className="text-2xl sm:text-3xl font-light tracking-[-0.03em] text-zinc-100">
+              Select workspace{" "}
+              <span className="font-serif italic text-zinc-400 font-normal text-xl sm:text-2xl">
+                to launch.
+              </span>
+            </h1>
 
-                  <div className="flex flex-col min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-white truncate text-base">
-                        {org.name}
-                      </span>
-                      <span className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60">
-                        {roleFormatted}
-                      </span>
-                    </div>
+            <p className="text-xs sm:text-sm text-zinc-400 font-light leading-relaxed">
+              Choose an active organization sanctuary to view team projects, DAG workflows, and telemetry.
+            </p>
+          </div>
 
-                    <div className="flex items-center gap-4 text-xs text-zinc-400">
-                      <span className="font-mono text-zinc-500">
-                        /org/{org.slug}
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Layers className="w-3.5 h-3.5 text-zinc-500" />
-                        {org._count.projects} projects
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5 text-zinc-500" />
-                        {org._count.memberships} members
-                      </span>
-                    </div>
-                  </div>
-                </div>
+          {/* Organizations Grid */}
+          <div className="space-y-3">
+            {memberships.map((m) => {
+              const org = m.organization;
+              const roleFormatted = m.role.toUpperCase();
 
-                <Link
-                  href={`/org/${org.slug}/dashboard`}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs shadow-lg shadow-blue-600/20 active:scale-[0.98] transition-all shrink-0"
+              return (
+                <div
+                  key={m.id}
+                  className="group relative p-6 bg-zinc-950/85 border border-white/[0.1] hover:border-white/30 transition-all duration-300 flex flex-col sm:flex-row sm:items-center justify-between gap-5 backdrop-blur-xl"
                 >
-                  <span>Launch</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
-              </div>
-            );
-          })}
-        </div>
+                  {/* Subtle corner ticks */}
+                  <span className="absolute -top-1 -left-1 text-zinc-600 font-mono text-[9px] select-none">+</span>
+                  <span className="absolute -top-1 -right-1 text-zinc-600 font-mono text-[9px] select-none">+</span>
+                  <span className="absolute -bottom-1 -left-1 text-zinc-600 font-mono text-[9px] select-none">+</span>
+                  <span className="absolute -bottom-1 -right-1 text-zinc-600 font-mono text-[9px] select-none">+</span>
 
-        {/* Action Bar */}
-        <div className="pt-4 border-t border-zinc-800/80 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-400">
-          <span>Signed in as {session.user.email}</span>
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div className="w-11 h-11 border border-white/[0.15] bg-black/60 flex items-center justify-center text-sm font-mono font-bold text-zinc-200 uppercase shrink-0 group-hover:border-white/50 transition-colors">
+                      {org.name.charAt(0) || "O"}
+                    </div>
 
-          <Link
-            href="/onboarding"
-            className="inline-flex items-center gap-2 font-medium text-blue-400 hover:text-blue-300 transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create another organization</span>
-          </Link>
+                    <div className="flex flex-col min-w-0 space-y-1">
+                      <div className="flex items-center gap-2.5">
+                        <span className="font-medium text-white truncate text-base">
+                          {org.name}
+                        </span>
+                        <span className="text-[9px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 border border-white/[0.1] bg-white/[0.04] text-zinc-300">
+                          {roleFormatted}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs font-mono text-zinc-500">
+                        <span className="text-zinc-400">/org/{org.slug}</span>
+                        <span>·</span>
+                        <span className="flex items-center gap-1.5">
+                          <Layers className="w-3.5 h-3.5 text-zinc-500" />
+                          {org._count.projects} projects
+                        </span>
+                        <span>·</span>
+                        <span className="flex items-center gap-1.5">
+                          <Users className="w-3.5 h-3.5 text-zinc-500" />
+                          {org._count.memberships} members
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <Link
+                    href={`/org/${org.slug}/dashboard`}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-zinc-100 hover:bg-white text-zinc-950 font-mono text-xs font-semibold tracking-wider transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:-translate-y-0.5 hover:shadow-[0_4px_25px_rgba(255,255,255,0.18)] active:translate-y-0 shrink-0 cursor-pointer"
+                  >
+                    <span>Launch</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Action Bar */}
+          <div className="pt-4 border-t border-white/[0.08] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs font-mono text-zinc-400">
+            <span className="text-zinc-500">SESSION: {session.user.email}</span>
+
+            <Link
+              href="/onboarding"
+              className="inline-flex items-center gap-1.5 text-zinc-300 hover:text-white underline underline-offset-4 decoration-white/20 hover:decoration-white transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Create another organization</span>
+            </Link>
+          </div>
         </div>
-      </div>
+      </main>
+
+      {/* Engineering Footer */}
+      <footer className="relative z-10 border-t border-white/[0.08] bg-[#060608]/85 backdrop-blur-xl py-4 px-6">
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] font-mono text-zinc-500">
+          <div className="flex items-center gap-3">
+            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+            <span className="text-zinc-400 font-medium">ORGANIZATION_ROUTER</span>
+            <span>·</span>
+            <span>ROW_MUTEX_VERIFIED</span>
+          </div>
+          <div>
+            <span>MULTI_TENANT // RBAC_SECURED // ZERO_LEAKAGE</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

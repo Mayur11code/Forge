@@ -130,6 +130,8 @@ export const store = {
   comments: [] as Row[],
   attachments: [] as Row[],
   workflowOutbox: [] as Row[],
+  domainEventOutbox: [] as Row[],
+  workflowTriggerDispatch: [] as Row[],
   memberships: [] as Row[],
 };
 
@@ -144,6 +146,8 @@ export function resetStore() {
   store.comments = [];
   store.attachments = [];
   store.workflowOutbox = [];
+  store.domainEventOutbox = [];
+  store.workflowTriggerDispatch = [];
   store.memberships = [];
   stepRunSeq = 0;
   auditSeq = 0;
@@ -157,6 +161,8 @@ export function resetStore() {
   vehSeq = 0;
   workflowOutboxSeq = 0;
   workflowVersionSeq = 0;
+  domainEventOutboxSeq = 0;
+  workflowTriggerDispatchSeq = 0;
 }
 
 let stepRunSeq = 0;
@@ -171,6 +177,8 @@ let attachmentSeq = 0;
 let voeSeq = 0;
 let vehSeq = 0;
 let workflowOutboxSeq = 0;
+let domainEventOutboxSeq = 0;
+let workflowTriggerDispatchSeq = 0;
 
 function uniqueStepRunViolation(): never {
   const error = new Error(
@@ -490,11 +498,49 @@ const updateManyWorkflows = async ({ where, data }: { where: Row; data: Row }) =
 function matchesWorkflowWhere(row: Row, where: Row): boolean {
   if (where.id !== undefined && row.id !== where.id) return false;
   if (where.orgId !== undefined && row.orgId !== where.orgId) return false;
+  if (where.isActive !== undefined && row.isActive !== where.isActive) return false;
   if (where.draftRevision !== undefined && row.draftRevision !== where.draftRevision) {
     return false;
   }
+  if (where.publishedVersionId !== undefined) {
+    if (
+      where.publishedVersionId !== null &&
+      typeof where.publishedVersionId === "object" &&
+      "not" in (where.publishedVersionId as Record<string, unknown>)
+    ) {
+      const notVal = (where.publishedVersionId as { not: unknown }).not;
+      if (notVal === null) {
+        if (row.publishedVersionId === null || row.publishedVersionId === undefined) {
+          return false;
+        }
+      } else if (row.publishedVersionId === notVal) {
+        return false;
+      }
+    } else if (row.publishedVersionId !== where.publishedVersionId) {
+      return false;
+    }
+  }
   return true;
 }
+
+const findManyWorkflows = async ({
+  where = {},
+  include,
+}: {
+  where?: Row;
+  include?: Row;
+} = {}) => {
+  const hits = store.workflows.filter((w) => matchesWorkflowWhere(w, where));
+  return hits.map((row) => {
+    const res: Row = { ...row };
+    if (include?.publishedVersion) {
+      res.publishedVersion = row.publishedVersionId
+        ? (store.workflowVersions.find((v) => v.id === row.publishedVersionId) ?? null)
+        : null;
+    }
+    return res;
+  });
+};
 
 const findFirstWorkflow = async ({
   where,
@@ -982,12 +1028,17 @@ const findManyAuditLogs = async ({ where }: { where?: Row } = {}) => {
 
 const createTask = async ({ data }: { data: Row }) => {
   taskSeq += 1;
+  const cuid = `clx${String(taskSeq).padStart(22, "0")}`;
   const row: Row = {
-    id: data.id ?? `task_${taskSeq}`,
+    id: data.id ?? cuid,
     status: "TODO",
     priority: "MEDIUM",
     description: null,
     assigneeId: null,
+    originType: "USER",
+    originWorkflowId: null,
+    originWorkflowVersionId: null,
+    originWorkflowRunId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...data,
@@ -1006,14 +1057,27 @@ const findUniqueTask = async ({ where, include }: { where: Row; include?: Row })
   return result;
 };
 
-const findFirstTask = async ({ where }: { where: Row }) => {
+const findFirstTask = async ({ where, select }: { where: Row; select?: Row }) => {
   const row = store.tasks.find((t) => {
     if (where.id !== undefined && t.id !== where.id) return false;
     if (where.projectId !== undefined && t.projectId !== where.projectId) return false;
+    if (
+      where.project &&
+      typeof where.project === "object" &&
+      (where.project as Row).orgId !== undefined
+    ) {
+      const proj = store.projects.find((p) => p.id === t.projectId);
+      if (!proj || proj.orgId !== (where.project as Row).orgId) return false;
+    }
     return true;
   });
   if (!row) return null;
-  return { ...row };
+  if (!select) return { ...row };
+  const picked: Row = {};
+  for (const k of Object.keys(select)) {
+    if (select[k]) picked[k] = row[k];
+  }
+  return picked;
 };
 
 const updateTask = async ({ where, data }: { where: Row; data: Row }) => {
@@ -1022,6 +1086,30 @@ const updateTask = async ({ where, data }: { where: Row; data: Row }) => {
   Object.assign(row, data);
   row.updatedAt = new Date();
   return { ...row };
+};
+
+const updateManyTasks = async ({ where = {}, data }: { where?: Row; data: Row }) => {
+  let count = 0;
+  for (const t of store.tasks) {
+    if (where.id !== undefined && t.id !== where.id) continue;
+    if (where.projectId !== undefined && t.projectId !== where.projectId) continue;
+    if (where.status !== undefined) {
+      if (typeof where.status === "object" && where.status !== null) {
+        if ("not" in where.status && t.status === (where.status as { not: unknown }).not) {
+          continue;
+        }
+        if ("in" in where.status && !(where.status as { in: unknown[] }).in.includes(t.status)) {
+          continue;
+        }
+      } else if (t.status !== where.status) {
+        continue;
+      }
+    }
+    Object.assign(t, data);
+    t.updatedAt = new Date();
+    count++;
+  }
+  return { count };
 };
 
 const deleteTask = async ({ where }: { where: Row }) => {
@@ -1042,8 +1130,9 @@ const countTasks = async ({ where }: { where?: Row } = {}) => {
 
 const createProject = async ({ data }: { data: Row }) => {
   projectSeq += 1;
+  const cuid = `clx${String(projectSeq).padStart(22, "0")}`;
   const row: Row = {
-    id: data.id ?? `proj_${projectSeq}`,
+    id: data.id ?? cuid,
     name: "Test Project",
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -1396,9 +1485,237 @@ const deleteManyWorkflowOutbox = async ({ where }: { where?: Row } = {}) => {
   return { count: initialLen - store.workflowOutbox.length };
 };
 
+const createDomainEventOutbox = async ({ data }: { data: Row }) => {
+  domainEventOutboxSeq += 1;
+  const row: Row = {
+    id: `deo_${domainEventOutboxSeq}`,
+    eventId: data.eventId || `evt_${domainEventOutboxSeq}`,
+    attempts: 0,
+    maxAttempts: 5,
+    status: data.status || "PENDING",
+    workflowEligible: data.workflowEligible ?? true,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    nextAttemptAt: new Date(),
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...data,
+  };
+  store.domainEventOutbox.push(row);
+  return { ...row };
+};
+
+const findManyDomainEventOutbox = async ({
+  where = {},
+  take,
+  select,
+}: {
+  where?: Row;
+  take?: number;
+  select?: Row;
+} = {}) => {
+  let hits = store.domainEventOutbox.filter((r) => {
+    if (where.workflowEligible !== undefined && r.workflowEligible !== where.workflowEligible) return false;
+    if (where.status !== undefined && r.status !== where.status) return false;
+    if (where.orgId !== undefined && r.orgId !== where.orgId) return false;
+    if (where.id !== undefined) {
+      if (typeof where.id === "object" && where.id !== null && "in" in (where.id as Record<string, unknown>)) {
+        const list = (where.id as { in: unknown[] }).in;
+        if (!list.includes(r.id)) return false;
+      } else if (r.id !== where.id) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  if (typeof take === "number") hits = hits.slice(0, take);
+
+  return hits.map((r) => {
+    if (!select) return { ...r };
+    const picked: Row = {};
+    for (const k of Object.keys(select)) {
+      if (select[k]) picked[k] = r[k];
+    }
+    return picked;
+  });
+};
+
+const updateManyDomainEventOutbox = async ({ where = {}, data }: { where?: Row; data: Row }) => {
+  const hits = store.domainEventOutbox.filter((r) => {
+    if (where.id !== undefined) {
+      if (typeof where.id === "object" && where.id !== null && "in" in (where.id as Record<string, unknown>)) {
+        const list = (where.id as { in: unknown[] }).in;
+        if (!list.includes(r.id)) return false;
+      } else if (r.id !== where.id) {
+        return false;
+      }
+    }
+    if (where.leaseToken !== undefined && r.leaseToken !== where.leaseToken) return false;
+    return true;
+  });
+
+  for (const r of hits) {
+    for (const [k, v] of Object.entries(data)) {
+      if (k === "attempts" && v && typeof v === "object" && "increment" in (v as Record<string, unknown>)) {
+        r.attempts = ((r.attempts as number) || 0) + Number((v as { increment: number }).increment);
+      } else {
+        r[k] = v;
+      }
+    }
+    r.updatedAt = new Date();
+  }
+  return { count: hits.length };
+};
+
+const countDomainEventOutbox = async ({ where = {} }: { where?: Row } = {}) => {
+  const hits = store.domainEventOutbox.filter((r) => {
+    if (where.workflowEligible !== undefined && r.workflowEligible !== where.workflowEligible) return false;
+    if (where.status !== undefined && r.status !== where.status) return false;
+    if (where.leaseExpiresAt !== undefined && typeof where.leaseExpiresAt === "object" && where.leaseExpiresAt !== null) {
+      if ("lt" in (where.leaseExpiresAt as Record<string, unknown>)) {
+        const threshold = (where.leaseExpiresAt as { lt: Date }).lt;
+        if (!r.leaseExpiresAt || (r.leaseExpiresAt as Date).getTime() >= threshold.getTime()) return false;
+      }
+    }
+    return true;
+  });
+  return hits.length;
+};
+
+const findFirstDomainEventOutbox = async ({
+  where = {},
+  select,
+}: {
+  where?: Row;
+  select?: Row;
+} = {}) => {
+  const rows = await findManyDomainEventOutbox({ where, take: 1, select });
+  return rows[0] || null;
+};
+
+const findUniqueDomainEventOutbox = async ({ where }: { where: Row }) => {
+  const hit = store.domainEventOutbox.find((r) => {
+    if (where.id && r.id === where.id) return true;
+    if (where.eventId && r.eventId === where.eventId) return true;
+    return false;
+  });
+  return hit ? { ...hit } : null;
+};
+
+const createWorkflowTriggerDispatch = async ({ data }: { data: Row }) => {
+  const dup = store.workflowTriggerDispatch.find(
+    (r) => r.eventId === data.eventId && r.workflowId === data.workflowId,
+  );
+  if (dup) {
+    const err = new Error("Unique constraint failed on the fields: (`eventId`,`workflowId`)") as Error & { code: string };
+    err.code = "P2002";
+    throw err;
+  }
+  workflowTriggerDispatchSeq += 1;
+  const row: Row = {
+    id: `wtd_${workflowTriggerDispatchSeq}`,
+    runId: null,
+    status: "PENDING",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    ...data,
+  };
+  store.workflowTriggerDispatch.push(row);
+  return { ...row };
+};
+
+const findUniqueWorkflowTriggerDispatch = async ({ where }: { where: Row }) => {
+  const hit = store.workflowTriggerDispatch.find((r) => {
+    if (where.id && r.id === where.id) return true;
+    if (where.runId && r.runId === where.runId) return true;
+    if (where.eventId_workflowId) {
+      const { eventId, workflowId } = where.eventId_workflowId as { eventId: string; workflowId: string };
+      return r.eventId === eventId && r.workflowId === workflowId;
+    }
+    return false;
+  });
+  return hit ? { ...hit } : null;
+};
+
+const upsertWorkflowTriggerDispatch = async ({
+  where,
+  create,
+  update,
+}: {
+  where: Row;
+  create: Row;
+  update: Row;
+}) => {
+  const existing = await findUniqueWorkflowTriggerDispatch({ where });
+  if (existing) {
+    const row = store.workflowTriggerDispatch.find((r) => r.id === existing.id)!;
+    Object.assign(row, update, { updatedAt: new Date() });
+    return { ...row };
+  }
+  try {
+    return await createWorkflowTriggerDispatch({ data: create });
+  } catch (err: unknown) {
+    if ((err as { code?: string })?.code === "P2002") {
+      const recovered = await findUniqueWorkflowTriggerDispatch({ where });
+      if (recovered) {
+        Object.assign(recovered, update, { updatedAt: new Date() });
+        return { ...recovered };
+      }
+    }
+    throw err;
+  }
+};
+
+const updateWorkflowTriggerDispatch = async ({ where, data }: { where: Row; data: Row }) => {
+  const row = store.workflowTriggerDispatch.find((r) => r.id === where.id);
+  if (!row) throw new Error(`WorkflowTriggerDispatch ${String(where.id)} not found`);
+  Object.assign(row, data, { updatedAt: new Date() });
+  return { ...row };
+};
+
+const updateManyWorkflowTriggerDispatch = async ({
+  where = {},
+  data,
+}: {
+  where?: Row;
+  data: Row;
+}) => {
+  let count = 0;
+  for (const r of store.workflowTriggerDispatch) {
+    if (where.id !== undefined && r.id !== where.id) continue;
+    if (where.orgId !== undefined && r.orgId !== where.orgId) continue;
+    if (where.eventId !== undefined && r.eventId !== where.eventId) continue;
+    if (where.workflowId !== undefined && r.workflowId !== where.workflowId) continue;
+    if (where.runId === null && r.runId !== null) continue;
+    if (where.status !== undefined) {
+      if (typeof where.status === "object" && where.status !== null && "in" in where.status) {
+        if (!(where.status as { in: unknown[] }).in.includes(r.status)) continue;
+      } else if (r.status !== where.status) {
+        continue;
+      }
+    }
+    Object.assign(r, data, { updatedAt: new Date() });
+    count++;
+  }
+  return { count };
+};
+
+const findManyWorkflowTriggerDispatch = async ({ where = {} }: { where?: Row } = {}) => {
+  return store.workflowTriggerDispatch
+    .filter((r) => {
+      if (where.orgId !== undefined && r.orgId !== where.orgId) return false;
+      if (where.eventId !== undefined && r.eventId !== where.eventId) return false;
+      if (where.workflowId !== undefined && r.workflowId !== where.workflowId) return false;
+      if (where.status !== undefined && r.status !== where.status) return false;
+      return true;
+    })
+    .map((r) => ({ ...r }));
+};
+
 const queryRawImpl = async (strings: TemplateStringsArray, ...values: unknown[]) => {
   const text = strings.join("?");
-  if (text.includes('FROM "Task" t') && values.length > 0) {
+  if (text.includes('FROM "Task"') && values.length > 0) {
     const taskId = values[0] as string;
     const task = store.tasks.find((t) => t.id === taskId);
     if (!task) return [];
@@ -1465,6 +1782,21 @@ const queryRawImpl = async (strings: TemplateStringsArray, ...values: unknown[])
         updatedAt: wf.updatedAt ?? new Date(),
       },
     ];
+  }
+  if (text.includes('FROM "DomainEventOutbox"')) {
+    const now = new Date();
+    const rows = store.domainEventOutbox.filter((e) => {
+      if (e.workflowEligible !== true) return false;
+      if (e.status !== "PENDING") return false;
+      if (e.nextAttemptAt instanceof Date && e.nextAttemptAt.getTime() > now.getTime()) {
+        return false;
+      }
+      if (e.leaseExpiresAt instanceof Date && e.leaseExpiresAt.getTime() >= now.getTime()) {
+        return false;
+      }
+      return true;
+    });
+    return rows.map((r) => ({ id: r.id }));
   }
   return [];
 };
@@ -1551,6 +1883,7 @@ type PrismaDouble = {
   workflow: {
     findFirst: jest.Mock;
     findUnique: jest.Mock;
+    findMany: jest.Mock;
     updateMany: jest.Mock;
     create: jest.Mock;
   };
@@ -1585,6 +1918,7 @@ type PrismaDouble = {
     findUnique: jest.Mock;
     findFirst: jest.Mock;
     update: jest.Mock;
+    updateMany: jest.Mock;
     delete: jest.Mock;
     count: jest.Mock;
   };
@@ -1626,6 +1960,22 @@ type PrismaDouble = {
     delete: jest.Mock;
     deleteMany: jest.Mock;
   };
+  domainEventOutbox: {
+    create: jest.Mock;
+    findMany: jest.Mock;
+    findFirst: jest.Mock;
+    findUnique: jest.Mock;
+    updateMany: jest.Mock;
+    count: jest.Mock;
+  };
+  workflowTriggerDispatch: {
+    create: jest.Mock;
+    upsert: jest.Mock;
+    findUnique: jest.Mock;
+    findMany: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+  };
 };
 
 /**
@@ -1656,6 +2006,7 @@ export const prismaDouble: PrismaDouble = {
   workflow: {
     findFirst: jest.fn(findFirstWorkflow),
     findUnique: jest.fn(findUniqueWorkflow),
+    findMany: jest.fn(findManyWorkflows),
     updateMany: jest.fn(updateManyWorkflows),
     create: jest.fn(createWorkflow),
   },
@@ -1695,6 +2046,7 @@ export const prismaDouble: PrismaDouble = {
     findUnique: jest.fn(findUniqueTask),
     findFirst: jest.fn(findFirstTask),
     update: jest.fn(updateTask),
+    updateMany: jest.fn(updateManyTasks),
     delete: jest.fn(deleteTask),
     count: jest.fn(countTasks),
   },
@@ -1743,6 +2095,24 @@ export const prismaDouble: PrismaDouble = {
     delete: jest.fn(deleteWorkflowOutbox),
     deleteMany: jest.fn(deleteManyWorkflowOutbox),
   },
+
+  domainEventOutbox: {
+    create: jest.fn(createDomainEventOutbox),
+    findMany: jest.fn(findManyDomainEventOutbox),
+    findFirst: jest.fn(findFirstDomainEventOutbox),
+    findUnique: jest.fn(findUniqueDomainEventOutbox),
+    updateMany: jest.fn(updateManyDomainEventOutbox),
+    count: jest.fn(countDomainEventOutbox),
+  },
+
+  workflowTriggerDispatch: {
+    create: jest.fn(createWorkflowTriggerDispatch),
+    upsert: jest.fn(upsertWorkflowTriggerDispatch),
+    findUnique: jest.fn(findUniqueWorkflowTriggerDispatch),
+    findMany: jest.fn(findManyWorkflowTriggerDispatch),
+    update: jest.fn(updateWorkflowTriggerDispatch),
+    updateMany: jest.fn(updateManyWorkflowTriggerDispatch),
+  },
 };
 
 const realImplementations = {
@@ -1754,6 +2124,7 @@ const realImplementations = {
   updateManyWorkflows,
   findFirstWorkflow,
   findUniqueWorkflow,
+  findManyWorkflows,
   createWorkflow,
   createWorkflowVersion,
   findFirstWorkflowVersion,
@@ -1772,6 +2143,7 @@ const realImplementations = {
   findUniqueTask,
   findFirstTask,
   updateTask,
+  updateManyTasks,
   deleteTask,
   countTasks,
   createProject,
@@ -1797,6 +2169,18 @@ const realImplementations = {
   updateManyWorkflowOutbox,
   deleteWorkflowOutbox,
   deleteManyWorkflowOutbox,
+  createDomainEventOutbox,
+  findManyDomainEventOutbox,
+  findFirstDomainEventOutbox,
+  findUniqueDomainEventOutbox,
+  updateManyDomainEventOutbox,
+  countDomainEventOutbox,
+  createWorkflowTriggerDispatch,
+  findUniqueWorkflowTriggerDispatch,
+  findManyWorkflowTriggerDispatch,
+  upsertWorkflowTriggerDispatch,
+  updateWorkflowTriggerDispatch,
+  updateManyWorkflowTriggerDispatch,
   queryRawImpl,
   executeRawImpl,
   runTransaction,
@@ -1816,6 +2200,7 @@ const realImplementations = {
 export function restoreWorkflowDouble(): void {
   prismaDouble.workflow.findFirst.mockImplementation(realImplementations.findFirstWorkflow);
   prismaDouble.workflow.findUnique.mockImplementation(realImplementations.findUniqueWorkflow);
+  prismaDouble.workflow.findMany.mockImplementation(realImplementations.findManyWorkflows);
   prismaDouble.workflow.updateMany.mockImplementation(realImplementations.updateManyWorkflows);
   prismaDouble.workflow.create.mockImplementation(realImplementations.createWorkflow);
   prismaDouble.workflowVersion.create.mockImplementation(realImplementations.createWorkflowVersion);
@@ -1850,6 +2235,7 @@ export function restoreWorkflowDouble(): void {
   prismaDouble.task.findUnique.mockImplementation(realImplementations.findUniqueTask);
   prismaDouble.task.findFirst.mockImplementation(realImplementations.findFirstTask);
   prismaDouble.task.update.mockImplementation(realImplementations.updateTask);
+  prismaDouble.task.updateMany.mockImplementation(realImplementations.updateManyTasks);
   prismaDouble.task.delete.mockImplementation(realImplementations.deleteTask);
   prismaDouble.task.count.mockImplementation(realImplementations.countTasks);
   prismaDouble.project.create.mockImplementation(realImplementations.createProject);
@@ -1876,6 +2262,18 @@ export function restoreWorkflowDouble(): void {
   prismaDouble.workflowOutbox.updateMany.mockImplementation(realImplementations.updateManyWorkflowOutbox);
   prismaDouble.workflowOutbox.delete.mockImplementation(realImplementations.deleteWorkflowOutbox);
   prismaDouble.workflowOutbox.deleteMany.mockImplementation(realImplementations.deleteManyWorkflowOutbox);
+  prismaDouble.domainEventOutbox.create.mockImplementation(realImplementations.createDomainEventOutbox);
+  prismaDouble.domainEventOutbox.findMany.mockImplementation(realImplementations.findManyDomainEventOutbox);
+  prismaDouble.domainEventOutbox.findFirst.mockImplementation(realImplementations.findFirstDomainEventOutbox);
+  prismaDouble.domainEventOutbox.findUnique.mockImplementation(realImplementations.findUniqueDomainEventOutbox);
+  prismaDouble.domainEventOutbox.updateMany.mockImplementation(realImplementations.updateManyDomainEventOutbox);
+  prismaDouble.domainEventOutbox.count.mockImplementation(realImplementations.countDomainEventOutbox);
+  prismaDouble.workflowTriggerDispatch.create.mockImplementation(realImplementations.createWorkflowTriggerDispatch);
+  prismaDouble.workflowTriggerDispatch.upsert.mockImplementation(realImplementations.upsertWorkflowTriggerDispatch);
+  prismaDouble.workflowTriggerDispatch.findUnique.mockImplementation(realImplementations.findUniqueWorkflowTriggerDispatch);
+  prismaDouble.workflowTriggerDispatch.findMany.mockImplementation(realImplementations.findManyWorkflowTriggerDispatch);
+  prismaDouble.workflowTriggerDispatch.update.mockImplementation(realImplementations.updateWorkflowTriggerDispatch);
+  prismaDouble.workflowTriggerDispatch.updateMany.mockImplementation(realImplementations.updateManyWorkflowTriggerDispatch);
   prismaDouble.$queryRaw.mockImplementation(realImplementations.queryRawImpl);
   prismaDouble.$executeRaw.mockImplementation(realImplementations.executeRawImpl);
   prismaDouble.$transaction.mockImplementation(realImplementations.transaction);

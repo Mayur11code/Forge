@@ -18,6 +18,12 @@ jest.mock("@/lib/prisma/extended", () => {
   return { prisma: prismaDouble };
 });
 
+jest.mock("@/lib/prisma/db", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { prismaDouble } = require("./helpers/prisma-double");
+  return { db: prismaDouble };
+});
+
 import { prismaDouble } from "./helpers/prisma-double";
 import {
   getTaskInOrg,
@@ -177,7 +183,7 @@ describe("updateTaskInOrg", () => {
   });
 
   it("writes only the fields the caller supplied", async () => {
-    prisma.task.findFirst.mockResolvedValue({ id: TASK_ID });
+    prisma.task.findFirst.mockResolvedValue(taskRow({ id: TASK_ID, status: "TODO" }));
     prisma.task.update.mockResolvedValue(
       taskRow({ status: "DONE" }),
     );

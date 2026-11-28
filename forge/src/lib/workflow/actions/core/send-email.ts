@@ -1,3 +1,4 @@
+// src/lib/workflow/actions/core/send-email.ts
 import { ExecuteFunction, WorkflowAction } from "../../../workflow-types/type";
 import { executeSendEmail } from "@/lib/emails/core-service";
 
@@ -21,18 +22,30 @@ function errorName(error: unknown): string | undefined {
     : undefined;
 }
 
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 const execute: ExecuteFunction = async (ctx) => {
   try {
     const { toEmail, subject, bodyText, attachmentUrl, attachmentName } = ctx.inputs;
 
     if (typeof toEmail !== "string" || typeof subject !== "string") {
-      return { success: false, error: "Missing required fields", isRetriable: false };
+      return { success: false, error: "Missing required fields: toEmail and subject are required", isRetriable: false };
     }
+
+    const safeSubject = escapeHtml(subject);
+    const safeBody = escapeHtml(typeof bodyText === "string" ? bodyText : "");
 
     const htmlTemplate = `
       <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9;">
-        <h2 style="color: #333;">${subject}</h2>
-        <p style="color: #555; font-size: 16px;">${bodyText ?? ""}</p>
+        <h2 style="color: #333;">${safeSubject}</h2>
+        <p style="color: #555; font-size: 16px; white-space: pre-wrap;">${safeBody}</p>
       </div>
     `;
 
@@ -45,14 +58,15 @@ const execute: ExecuteFunction = async (ctx) => {
       attachmentName: optionalString(attachmentName),
     });
 
-    // `?? null` rather than passing `result.id` through: Resend types `id` as
-    // optional, and `undefined` is not representable in the JSONB column this
-    // is written to. A missing id is genuinely "no id", not "absent key".
+    // Stable JSON-compatible output
     return {
       success: true,
-      data: { resendId: result.id ?? null, deliveredTo: result.deliveredTo },
+      data: {
+        resendId: result.id ?? null,
+        messageId: result.id ?? null,
+        deliveredTo: result.deliveredTo,
+      },
     };
-
   } catch (error) {
     // Resend rejects a malformed address with a `validation_error`. Retrying
     // that is pointless and burns the step's retry budget, so it is the one
@@ -68,7 +82,7 @@ const execute: ExecuteFunction = async (ctx) => {
 };
 
 export const sendEmailAction: WorkflowAction = {
-  id: "communication.send_email",
+  id: "email.send",
   version: "1.0.0",
   execute,
 };

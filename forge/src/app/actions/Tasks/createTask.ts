@@ -87,6 +87,7 @@ export async function createTask(input: unknown) {
   });
 
   if (!result.success) {
+    console.error(`[createTask] Execution failed: code=${result.code}, error=${result.error}`);
     return {
       success: false,
       error: result.code,

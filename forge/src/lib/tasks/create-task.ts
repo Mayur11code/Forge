@@ -25,18 +25,23 @@ import { recordVectorSyncIntent } from "@/lib/vector/outbox";
 import { computeTaskContentHash } from "@/lib/vector/provenance";
 import { createTaskSchema } from "@/core/domain";
 import { VectorEntityType, type Task } from "@prisma/client";
+import {
+  recordDomainEventIntent,
+  enqueueDomainOutboxWakeup,
+  type MutationOrigin,
+} from "@/lib/events/domain-outbox";
 
 /**
  * Trusted actor identity. Supplied by the caller, never by the model.
  *
  * `orgId` is REQUIRED and is the authorization boundary.
- * `userId` is optional because a WorkflowRun has no interactive user. `Task`
- * currently has no creator column, so it is accepted for future attribution
- * and must not be used to widen authorization.
+ * `userId` is optional because a WorkflowRun has no interactive user.
+ * `origin` identifies trusted execution provenance (e.g. USER, WORKFLOW, SYSTEM).
  */
 export type CreateTaskActor = {
   orgId: string;
   userId?: string;
+  origin?: MutationOrigin;
 };
 
 export type CreateTaskFailureCode =
@@ -128,7 +133,7 @@ export async function createTaskInOrg(
   }
 
   // 4. The single canonical write.
-  //    Atomically persists the Task and records VectorOutboxEvent intent in a single transaction.
+  //    Atomically persists the Task, records VectorOutboxEvent, and records DomainEventOutbox intent in a single transaction.
   try {
     const task = await prisma.$transaction(async (tx) => {
       const created = await tx.task.create({
@@ -138,6 +143,10 @@ export async function createTaskInOrg(
           description: data.description ?? null,
           priority: data.priority,
           assigneeId: data.assigneeId ?? null,
+          originType: actor.origin?.originType ?? "USER",
+          originWorkflowId: actor.origin?.workflowId ?? null,
+          originWorkflowVersionId: actor.origin?.workflowVersionId ?? null,
+          originWorkflowRunId: actor.origin?.workflowRunId ?? null,
         },
       });
 
@@ -159,10 +168,35 @@ export async function createTaskInOrg(
         contentHash,
       });
 
+      await recordDomainEventIntent({
+        tx,
+        orgId: actor.orgId,
+        eventType: "task.created",
+        entityType: "TASK",
+        entityId: created.id,
+        payload: {
+          taskId: created.id,
+          projectId: created.projectId,
+          title: created.title,
+          description: created.description,
+          priority: created.priority,
+          status: created.status,
+          assigneeId: created.assigneeId,
+        },
+        origin: actor.origin,
+      });
+
       return created;
     });
 
-    // 5. Asynchronous notification CDC event fired outside the transaction (P14)
+    // 5. Post-commit wake-up for domain event outbox sweeper (non-blocking)
+    if (actor.origin?.originType !== "WORKFLOW") {
+      enqueueDomainOutboxWakeup().catch((err) => {
+        console.warn("[OUTBOX] Fast-path wake-up notification deferred to background sweeper:", err);
+      });
+    }
+
+    // 6. Asynchronous notification CDC event fired outside the transaction (P14)
     try {
       const { dispatchEvent } = await import("@/lib/events/event-bus");
       await dispatchEvent("TASK_CREATED", {
@@ -179,6 +213,7 @@ export async function createTaskInOrg(
 
     return { success: true, task };
   } catch (error) {
+    console.error("[createTaskInOrg] Transaction failed:", error);
     return {
       success: false,
       code: "CREATE_FAILED",

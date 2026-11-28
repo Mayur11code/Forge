@@ -2,6 +2,12 @@
 
 import { WorkflowAction } from "./type";
 import { createTaskAction } from "../workflow/actions/core/create-task";
+import { updateTaskAction } from "../workflow/actions/core/update-task";
+import { createCommentAction } from "../workflow/actions/core/create-comment";
+import { sendEmailAction } from "../workflow/actions/core/send-email";
+import { generateReportAction } from "../workflow/actions/core/generate-report";
+import { conditionAction } from "../workflow/actions/logic/conditions";
+import { httpRequestAction } from "../workflow/actions/core/http-request";
 
 /**
  * Key format for versioned registry: `${actionId}@${actionVersion}`
@@ -65,6 +71,12 @@ export function registerAction(action: WorkflowAction): void {
 export function clearVersionedActionStore(): void {
   versionedActionStore.clear();
   registerAction(createTaskAction);
+  registerAction(updateTaskAction);
+  registerAction(createCommentAction);
+  registerAction(sendEmailAction);
+  registerAction(generateReportAction);
+  registerAction(conditionAction);
+  registerAction(httpRequestAction);
 }
 
 /**
@@ -73,12 +85,24 @@ export function clearVersionedActionStore(): void {
  */
 const initialActionRegistry = {
   "task.create": createTaskAction,
+  "task.update": updateTaskAction,
+  "comment.create": createCommentAction,
+  "email.send": sendEmailAction,
+  "report.generate": generateReportAction,
+  "logic.condition": conditionAction,
+  "http.request": httpRequestAction,
 };
 
 export type RegisteredActionId = keyof typeof initialActionRegistry;
 
 // Initial registration of default actions
 registerAction(createTaskAction);
+registerAction(updateTaskAction);
+registerAction(createCommentAction);
+registerAction(sendEmailAction);
+registerAction(generateReportAction);
+registerAction(conditionAction);
+registerAction(httpRequestAction);
 
 /**
  * A proxy over initialActionRegistry that also synchronizes entries with versionedActionStore.

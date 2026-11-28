@@ -41,6 +41,9 @@ export function compileWorkflow(
     if (node.type === "trigger") {
       action = node.data.eventId || "unknown_trigger";
       kind = "TRIGGER";
+      if (node.data.filter) {
+        config = { filter: node.data.filter };
+      }
     } else if (node.type === "action") {
       action = node.data.actionType || "unknown_action";
       config = node.data.config || {};

@@ -106,8 +106,13 @@ export default function TriggerNode({ id, data, selected, isConnectable }: NodeP
 
       {/* Node Body */}
       <div className="px-4 py-3 rounded-b-2xl space-y-3">
-        <div className="rounded-lg bg-black/50 border border-white/[0.06] px-2.5 py-1.5 font-mono text-[11px] text-zinc-400">
-          {data.eventId ? `Event: ${data.eventId}` : 'Needs configuration'}
+        <div className="flex items-center justify-between rounded-lg bg-black/50 border border-white/[0.06] px-2.5 py-1.5 font-mono text-[11px] text-zinc-400">
+          <span>{data.eventId ? `Event: ${data.eventId}` : 'Needs configuration'}</span>
+          {data.filter?.rules && data.filter.rules.length > 0 && (
+            <span className="rounded bg-amber-500/10 border border-amber-500/25 px-1.5 py-0.2 text-[9px] text-amber-300 font-bold">
+              {data.filter.rules.length} {data.filter.rules.length === 1 ? 'filter' : 'filters'}
+            </span>
+          )}
         </div>
 
         {/* Display Output Variables */}

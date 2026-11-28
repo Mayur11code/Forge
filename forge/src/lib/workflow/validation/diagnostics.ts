@@ -16,6 +16,7 @@ import {
   AVAILABLE_TRIGGERS,
   validateActionNodeConfig,
 } from "@/lib/workflow-types/registry";
+import { TriggerFilterConfigSchema } from "@/lib/workflow-types/trigger-filter";
 import { getAvailableUpstreamOutputs } from "@/lib/workflow/graph-ui/utils";
 
 export type WorkflowDiagnosticSeverity = "ERROR" | "WARNING";
@@ -32,6 +33,7 @@ export type WorkflowDiagnosticCode =
   | "MULTIPLE_TRIGGERS"
   | "UNCONFIGURED_TRIGGER"
   | "INVALID_TRIGGER"
+  | "INVALID_TRIGGER_FILTER"
   | "INVALID_ACTION"
   | "MISSING_REQUIRED_INPUT"
   | "INVALID_INPUT_TYPE"
@@ -194,6 +196,20 @@ export function evaluateWorkflowDiagnostics(
         suggestion: "Choose a supported trigger event.",
         blocksPublish: true,
       });
+    }
+
+    if (trig.data.filter) {
+      const parsedFilter = TriggerFilterConfigSchema.safeParse(trig.data.filter);
+      if (!parsedFilter.success) {
+        issues.push({
+          code: "INVALID_TRIGGER_FILTER",
+          severity: "ERROR",
+          nodeId: trig.id,
+          message: `Trigger filter configuration is invalid: ${parsedFilter.error.issues.map((i) => i.message).join(", ")}`,
+          suggestion: "Correct the trigger filter conditions in the properties panel.",
+          blocksPublish: true,
+        });
+      }
     }
   }
 

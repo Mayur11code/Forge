@@ -76,6 +76,10 @@ describe('Contextual Hydration (Stringification)', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
       completedAt: null,
+      originType: "USER",
+      originWorkflowId: null,
+      originWorkflowVersionId: null,
+      originWorkflowRunId: null,
     };
 
     const payload = buildSemanticPayload(mockTask);
@@ -103,6 +107,10 @@ expect(payload).toContain('Title: Fix\n\nLOGIN');
       createdAt: new Date(),
       updatedAt: new Date(),
       completedAt: null,
+      originType: "USER",
+      originWorkflowId: null,
+      originWorkflowVersionId: null,
+      originWorkflowRunId: null,
     };
 
     const payload = buildSemanticPayload(mockTask);

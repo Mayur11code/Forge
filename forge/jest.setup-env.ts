@@ -56,6 +56,7 @@ process.env.QSTASH_CURRENT_SIGNING_KEY ??= "sig_test_placeholder_current_key";
 process.env.QSTASH_NEXT_SIGNING_KEY ??= "sig_test_placeholder_next_key";
 process.env.DATABASE_URL ??= "postgresql://postgres:postgres@localhost:5432/forge_test";
 process.env.AUTH_SECRET ??= "jest-placeholder-auth-secret";
+process.env.RESEND_API_KEY ??= "re_jest_placeholder_key";
 
 // `jest-environment-jsdom` does not expose `TextEncoder`/`TextDecoder`, but the
 // real modules the application imports do reach them - `@prisma/client` pulls in

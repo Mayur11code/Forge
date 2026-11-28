@@ -65,6 +65,8 @@ const topicMap: Record<EventType, string> = {
   AGENT_MAINTENANCE_REQUESTED: "agent-maintenance-requested",
   DOMAIN_CLEANUP_REQUESTED: "domain-cleanup",
   DOMAIN_MAINTENANCE_REQUESTED: "domain-maintenance-requested",
+  PROJECT_CREATED: "project-created",
+  PROCESS_DOMAIN_EVENT_OUTBOX: "process-domain-event-outbox",
 };
 
 export function getTopic(event: EventType): string {

@@ -828,6 +828,12 @@ export const prismaDouble = {
     findMany: jest.fn(findManyExecutions),
     findFirst: jest.fn(findFirstTask),
     update: jest.fn(findFirstTask),
+    updateMany: jest.fn(async () => ({ count: 1 })),
+  },
+
+  domainEventOutbox: {
+    create: jest.fn(async () => ({ id: "mock_dom_1" })),
+    findFirst: jest.fn(async () => null),
   },
 
   membership: {
@@ -883,6 +889,7 @@ export function restorePrismaDouble(): void {
   prismaDouble.task.findMany.mockImplementation(findManyExecutions);
   prismaDouble.task.findFirst.mockImplementation(findFirstTask);
   prismaDouble.task.update.mockImplementation(findFirstTask);
+  prismaDouble.task.updateMany.mockImplementation(async () => ({ count: 1 }));
   prismaDouble.membership.findFirst.mockImplementation(findFirstTask);
   prismaDouble.$transaction.mockImplementation(runTransaction);
   prismaDouble.agentOutboxEvent.findUnique.mockImplementation(findUniqueOutbox);

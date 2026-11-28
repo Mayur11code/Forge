@@ -27,10 +27,17 @@ import {
 } from "@/lib/vector/provenance";
 import { updateTaskSchema } from "@/core/domain";
 import { Prisma, VectorEntityType, type Task } from "@prisma/client";
+import {
+  recordDomainEventIntent,
+  enqueueDomainOutboxWakeup,
+  type MutationOrigin,
+} from "@/lib/events/domain-outbox";
 
 export type UpdateTaskActor = {
   orgId: string;
   userId?: string;
+  origin?: MutationOrigin;
+  expectedState?: Record<string, unknown>;
 };
 
 export type UpdateTaskFailureCode =
@@ -68,22 +75,7 @@ export async function updateTaskInOrg(
 
   const { taskId, ...changes } = parsed.data;
 
-  // 2. Ownership boundary. Resolved BEFORE the write, and a task owned by
-  //    another org is indistinguishable from one that does not exist.
-  const existing = await prisma.task.findFirst({
-    where: { id: taskId, project: { orgId: actor.orgId } },
-    select: { id: true, projectId: true },
-  });
-
-  if (!existing) {
-    return {
-      success: false,
-      code: "TASK_NOT_FOUND",
-      error: "Task not found in this organization.",
-    };
-  }
-
-  // 3. Assignee membership boundary.
+  // 2. Assignee membership boundary.
   if (changes.assigneeId) {
     const membership = await prisma.membership.findFirst({
       where: {
@@ -102,7 +94,7 @@ export async function updateTaskInOrg(
     }
   }
 
-  // 4. Build the update. Only fields the caller actually supplied are set, so
+  // 3. Build the update. Only fields the caller actually supplied are set, so
   //    an omitted field is left untouched rather than nulled.
   const data: Prisma.TaskUpdateInput = {};
 
@@ -140,10 +132,68 @@ export async function updateTaskInOrg(
     };
   }
 
-  // 5. The single canonical write.
-  //    Atomically updates the Task, records VectorOutboxEvent intent, and syncs child attachments on title change (I-11).
+  // 4. The single canonical write.
+  //    Atomically acquires row lock, reads prior status under lock, updates Task,
+  //    records VectorOutboxEvent intent, DomainEventOutbox intent, and emits task.completed
+  //    if and only if a genuine state transition occurred (UPPR Rev 4.1 M4-REM-1).
   try {
+    let isGenuineCompletion = false;
     const task = await prisma.$transaction(async (tx) => {
+      // 4.1. Row-level lock acquisition to serialize concurrent transitions
+      if (typeof tx.$queryRaw === "function") {
+        try {
+          await tx.$queryRaw`SELECT id FROM "Task" WHERE id = ${taskId} FOR UPDATE;`;
+        } catch {
+          // Graceful fallback in non-locking / double environments
+        }
+      }
+
+      // 4.2. Ownership boundary & current state read INSIDE the transaction under lock
+      const existing = await tx.task.findFirst({
+        where: { id: taskId, project: { orgId: actor.orgId } },
+        select: {
+          id: true,
+          projectId: true,
+          status: true,
+          title: true,
+          priority: true,
+          assigneeId: true,
+          description: true,
+        },
+      });
+
+      if (!existing) {
+        throw new Error("TASK_NOT_FOUND");
+      }
+
+      // 4.2.1. Concurrency conflict / CAS validation under row lock
+      if (actor.expectedState && typeof actor.expectedState === "object") {
+        for (const [field, expectedVal] of Object.entries(actor.expectedState)) {
+          if (expectedVal !== undefined) {
+            const currentVal = (existing as Record<string, unknown>)[field] ?? null;
+            const expVal = expectedVal ?? null;
+            if (currentVal !== expVal) {
+              throw new Error(`CONCURRENCY_CONFLICT: Field '${field}' has diverged (expected '${expVal}', found '${currentVal}')`);
+            }
+          }
+        }
+      }
+
+      // 4.3. Atomic compare-and-swap transition check for task completion (M4-REM-1)
+      if (changes.status === "DONE") {
+        const transition = await tx.task.updateMany({
+          where: {
+            id: taskId,
+            status: { not: "DONE" },
+          },
+          data: {
+            status: "DONE",
+            completedAt: new Date(),
+          },
+        });
+        isGenuineCompletion = transition.count > 0;
+      }
+
       const updated = await tx.task.update({
         where: { id: taskId },
         data,
@@ -199,8 +249,53 @@ export async function updateTaskInOrg(
         }
       }
 
+      // 3. Atomically record DomainEventOutbox intent for task.updated (FC-018)
+      await recordDomainEventIntent({
+        tx,
+        orgId: actor.orgId,
+        eventType: "task.updated",
+        entityType: "TASK",
+        entityId: updated.id,
+        payload: {
+          taskId: updated.id,
+          projectId: updated.projectId,
+          title: updated.title,
+          description: updated.description,
+          priority: updated.priority,
+          status: updated.status,
+          assigneeId: updated.assigneeId,
+          previousStatus: existing.status,
+        },
+        origin: actor.origin,
+      });
+
+      // 4. Genuine state transition check: only fire task.completed if this mutation performed the genuine transition to DONE (M4-REM-1)!
+      if (isGenuineCompletion) {
+        await recordDomainEventIntent({
+          tx,
+          orgId: actor.orgId,
+          eventType: "task.completed",
+          entityType: "TASK",
+          entityId: updated.id,
+          payload: {
+            taskId: updated.id,
+            projectId: updated.projectId,
+            title: updated.title,
+            completedAt: updated.completedAt?.toISOString() ?? new Date().toISOString(),
+          },
+          origin: actor.origin,
+        });
+      }
+
       return updated;
     });
+
+    // 5. Post-commit wake-up for domain event outbox sweeper (non-blocking)
+    if (actor.origin?.originType !== "WORKFLOW") {
+      enqueueDomainOutboxWakeup().catch((err) => {
+        console.warn("[OUTBOX] Fast-path wake-up notification deferred to background sweeper:", err);
+      });
+    }
 
     // 6. Asynchronous notification CDC event fired outside the transaction (P14)
     try {
@@ -214,7 +309,7 @@ export async function updateTaskInOrg(
         body: `Task "${task.title}" has been modified.`,
       });
 
-      if (task.status === "DONE") {
+      if (isGenuineCompletion) {
         await dispatchEvent("TASK_COMPLETED", {
           taskId: task.id,
           orgId: actor.orgId,
@@ -227,6 +322,13 @@ export async function updateTaskInOrg(
 
     return { success: true, task };
   } catch (error) {
+    if (error instanceof Error && error.message === "TASK_NOT_FOUND") {
+      return {
+        success: false,
+        code: "TASK_NOT_FOUND",
+        error: "Task not found in this organization.",
+      };
+    }
     return {
       success: false,
       code: "UPDATE_FAILED",

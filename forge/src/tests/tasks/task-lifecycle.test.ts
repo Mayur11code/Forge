@@ -20,6 +20,22 @@ jest.mock("@/lib/prisma/extended", () => ({
   },
 }));
 
+jest.mock("@/lib/prisma/db", () => ({
+  db: {
+    task: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    domainEventOutbox: {
+      create: jest.fn().mockResolvedValue({ id: "dom_1" }),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    $transaction: jest.fn(),
+  },
+}));
+
 jest.mock("@/lib/vector/outbox", () => ({
   recordVectorSyncIntent: jest.fn().mockResolvedValue({ id: "v-outbox-1" }),
 }));
@@ -121,11 +137,25 @@ describe("Interactive Task Lifecycle & Domain Events (FC-009)", () => {
 
       (prisma.$transaction as jest.Mock).mockImplementation(async (callback) => {
         const txMock = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
           task: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: taskId,
+              projectId,
+              status: TaskStatus.TODO,
+              title: "Deploy V2 Infrastructure",
+              priority: TaskPriority.HIGH,
+              assigneeId: null,
+              description: "Deploying core cluster",
+            }),
             update: jest.fn().mockResolvedValue(updatedRecord),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           },
           attachment: {
             findMany: jest.fn().mockResolvedValue([]),
+          },
+          domainEventOutbox: {
+            create: jest.fn().mockResolvedValue({ id: "dom_1" }),
           },
         };
         return callback(txMock);
@@ -172,7 +202,17 @@ describe("Interactive Task Lifecycle & Domain Events (FC-009)", () => {
 
       (prisma.$transaction as jest.Mock).mockImplementation(async (callback) => {
         const txMock = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
           task: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: taskId,
+              projectId,
+              status: TaskStatus.DONE,
+              title: "Deploy V2 Infrastructure",
+              priority: TaskPriority.HIGH,
+              assigneeId: null,
+              description: null,
+            }),
             update: jest.fn().mockImplementation((args) => {
               updatePayloadPassedToTx = args.data;
               return Promise.resolve({
@@ -185,9 +225,13 @@ describe("Interactive Task Lifecycle & Domain Events (FC-009)", () => {
                 completedAt: null,
               });
             }),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           },
           attachment: {
             findMany: jest.fn().mockResolvedValue([]),
+          },
+          domainEventOutbox: {
+            create: jest.fn().mockResolvedValue({ id: "dom_1" }),
           },
         };
         return callback(txMock);
@@ -230,7 +274,17 @@ describe("Interactive Task Lifecycle & Domain Events (FC-009)", () => {
 
       (prisma.$transaction as jest.Mock).mockImplementation(async (callback) => {
         const txMock = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
           task: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: taskId,
+              projectId,
+              status: TaskStatus.TODO,
+              title: "Deploy V2 Infrastructure",
+              priority: TaskPriority.HIGH,
+              assigneeId: null,
+              description: null,
+            }),
             update: jest.fn().mockImplementation((args) => {
               updatePayloadPassedToTx = args.data;
               return Promise.resolve({
@@ -243,9 +297,13 @@ describe("Interactive Task Lifecycle & Domain Events (FC-009)", () => {
                 completedAt: null,
               });
             }),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           },
           attachment: {
             findMany: jest.fn().mockResolvedValue([]),
+          },
+          domainEventOutbox: {
+            create: jest.fn().mockResolvedValue({ id: "dom_1" }),
           },
         };
         return callback(txMock);
@@ -272,7 +330,17 @@ describe("Interactive Task Lifecycle & Domain Events (FC-009)", () => {
 
       (prisma.$transaction as jest.Mock).mockImplementation(async (callback) => {
         const txMock = {
+          $queryRaw: jest.fn().mockResolvedValue([]),
           task: {
+            findFirst: jest.fn().mockResolvedValue({
+              id: taskId,
+              projectId,
+              status: TaskStatus.TODO,
+              title: "Deploy V2 Infrastructure",
+              priority: TaskPriority.LOW,
+              assigneeId: null,
+              description: null,
+            }),
             update: jest.fn().mockResolvedValue({
               id: taskId,
               projectId,
@@ -281,9 +349,13 @@ describe("Interactive Task Lifecycle & Domain Events (FC-009)", () => {
               priority: TaskPriority.HIGH,
               assigneeId: null,
             }),
+            updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           },
           attachment: {
             findMany: jest.fn().mockResolvedValue([]),
+          },
+          domainEventOutbox: {
+            create: jest.fn().mockResolvedValue({ id: "dom_1" }),
           },
         };
         return callback(txMock);
